@@ -61,7 +61,6 @@ mcp_server.legacy.yaml
 
 # Loose archive (review per-need)
 archive/
-dashboard/
 
 # User profile leak (sensitive)
 user_profile.md

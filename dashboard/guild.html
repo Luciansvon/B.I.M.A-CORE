@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="cache-control" content="no-store, no-cache, must-revalidate" />
+<meta http-equiv="pragma" content="no-cache" />
+<title>GUILD HALL ARENWOOD — Agent Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="guild.css?v=4" />
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" data-presets="react" src="tweaks-panel.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-data.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-state.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-api.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-sprites.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-furniture.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-pets.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-interactions.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-scene.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-panels.jsx?v=4"></script>
+<script type="text/babel" data-presets="react" src="guild-app.jsx?v=4"></script>
+<script type="text/babel" data-presets="react">
+  const _root = ReactDOM.createRoot(document.getElementById('root'));
+  _root.render(<GuildApp />);
+</script>
+</body>
+</html>
