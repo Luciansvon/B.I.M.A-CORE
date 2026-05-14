@@ -227,6 +227,12 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
         # Bersihkan baris SUCCESS dari teks tampilan agar user tidak lihat raw metadata
         display_str = re.sub(r'\nSUCCESS\|[^\n]+', '', hasil_str).strip()
 
+        # Fallback kalau strip ngosongin semua (agent reply cuma SUCCESS|...|... single line):
+        # ambil bagian <msg> setelah pipe ketiga supaya user lihat sesuatu yang bermakna.
+        if not display_str:
+            tail_msg = re.sub(r'^SUCCESS\|[^|]*\|', '', hasil_str.strip(), flags=re.MULTILINE).strip()
+            display_str = tail_msg or "✅ Tugas selesai. Cek file lampiran kalau ada."
+
         chunks = smart_chunks(display_str)
         await pesan_tunggu.edit(content=chunks[0])
         for chunk in chunks[1:]:
