@@ -5,6 +5,12 @@ Dipake intel_agent untuk task yang butuh INTERACTIVE browsing — login, click,
 form fill, SPA navigation, JS-heavy site. Read-only static fetch tetap pakai
 WebFetchTool / Fetcher existing (lebih cepat + murah).
 
+Visibility hybrid (lo bisa monitor process-nya):
+- Default: headless (gak nongol di desktop). Set `BROWSER_USE_HEADED=1` di .env
+  buat toggle visible — Chromium window muncul (butuh WSLg di Windows 11).
+- Video: tiap session di-record ke `outputs/browser_use/{timestamp}/`. Bisa lo
+  review post-hoc kalau curious agent ngapain.
+
 Pattern: mirror tools/prompt_optimizer.py (OpenAI client + OpenRouter base_url).
 """
 from __future__ import annotations
@@ -12,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime
+from pathlib import Path
 
 from crewai.tools import BaseTool
 
@@ -20,6 +28,14 @@ logger = logging.getLogger("bima_core.browser_use")
 _DEFAULT_MODEL = "deepseek/deepseek-v4-flash"  # hemat — banyak action per task
 _MAX_STEPS = 20  # cap actions per task biar gak runaway
 _OUTPUT_TRUNCATE = 4000  # avoid Discord overflow + token waste
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_VIDEO_BASE_DIR = _PROJECT_ROOT / "outputs" / "browser_use"
+
+
+def _is_headed() -> bool:
+    """Toggle via env BROWSER_USE_HEADED=1 → window Chromium visible (WSLg)."""
+    return os.environ.get("BROWSER_USE_HEADED", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 class BrowserUseTool(BaseTool):
@@ -43,10 +59,19 @@ class BrowserUseTool(BaseTool):
             return "FAILED|OPENROUTER_API_KEY gak diset"
 
         try:
-            from browser_use import Agent
+            from browser_use import Agent, BrowserProfile
             from browser_use.llm.openai.chat import ChatOpenAI
         except ImportError as e:
             return f"FAILED|browser-use gak ke-install: {e}"
+
+        # Per-session video dir + visibility setting
+        headed = _is_headed()
+        session_dir = _VIDEO_BASE_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
+        try:
+            session_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.warning(f"video dir create gagal ({e}), skip record")
+            session_dir = None
 
         try:
             llm = ChatOpenAI(
@@ -55,7 +80,12 @@ class BrowserUseTool(BaseTool):
                 base_url="https://openrouter.ai/api/v1",
                 temperature=0.1,
             )
-            agent = Agent(task=task, llm=llm)
+            profile_kwargs = {"headless": not headed}
+            if session_dir is not None:
+                profile_kwargs["record_video_dir"] = str(session_dir)
+            profile = BrowserProfile(**profile_kwargs)
+            agent = Agent(task=task, llm=llm, browser_profile=profile)
+            logger.info(f"browser-use start: headed={headed}, video_dir={session_dir}")
         except Exception as e:
             logger.exception("browser-use init error")
             return f"FAILED|init: {e}"
@@ -81,4 +111,11 @@ class BrowserUseTool(BaseTool):
         if len(result) > _OUTPUT_TRUNCATE:
             result = result[:_OUTPUT_TRUNCATE] + "\n...[truncated]"
 
-        return f"SUCCESS|browser_use|{result}"
+        # Append video hint kalau ke-record (gak attach ke Discord, just info)
+        video_hint = ""
+        if session_dir is not None:
+            videos = list(session_dir.glob("*.webm")) + list(session_dir.glob("*.mp4"))
+            if videos:
+                video_hint = f"\n\n_📹 Rekaman session: {videos[0]}_"
+
+        return f"SUCCESS|browser_use|{result}{video_hint}"
