@@ -33,6 +33,9 @@ class BimaState(TypedDict):
     # Callback untuk update status realtime ke Discord (opsional)
     progress_callback: NotRequired[Optional[ProgressCallback]]
 
+    # Discord user ID (string) — diperlukan canvas_node untuk session-per-user
+    discord_user_id: NotRequired[str]
+
 
 async def notify_progress(state: BimaState, message: str) -> None:
     """Kirim status progress ke Discord. Silent jika callback tidak ada atau gagal."""

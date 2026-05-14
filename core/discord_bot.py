@@ -218,6 +218,7 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
             konteks_waktu=konteks_waktu,
             attachment_paths=downloaded_files,
             progress_callback=update_progress,
+            discord_user_id=str(message.author.id),
         )
         
         # Simpan sesi (untuk histori dan memori)

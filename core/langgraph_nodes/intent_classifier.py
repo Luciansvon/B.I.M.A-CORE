@@ -41,6 +41,15 @@ _PROMPT_OPTIMIZE = re.compile(
     re.IGNORECASE,
 )
 
+# Canvas: PDF iterative editing. Init trigger eksplisit lewat "draft pdf" / "canvas".
+# Session-active check di-handle di intent_classifier_node sebelum regex.
+_CANVAS_INIT = re.compile(
+    r'\b(draft|iterati[fv]e?|canvas)\b.{0,30}\b(pdf|dokumen|laporan)\b'
+    r'|\b(pdf|dokumen|laporan)\b.{0,30}\b(draft|iterati[fv]e?|canvas)\b'
+    r'|\bmulai\s+(canvas|sesi\s+pdf)\b',
+    re.IGNORECASE,
+)
+
 # Kodok: code understanding di repo BIMA_CORE.
 # Branch A: verba (jelasin/cari/summary/di mana) + konteks code (file/kode/modul/path).
 # Branch B: "di mana <symbol> dipakai/dipanggil" tanpa perlu kata file.
@@ -105,6 +114,9 @@ def classify_intent(user_request: str, has_attachment: bool) -> tuple[list[str],
     if _KODOK.search(text):
         return ["kodok"], 0.88, "code understanding (kodok)"
 
+    if _CANVAS_INIT.search(text):
+        return ["canvas"], 0.90, "canvas init (PDF iterative)"
+
     if _CUACA.search(text) or _YOUTUBE.search(text):
         return ["lifestyle"], 0.88, "cuaca/youtube"
 
@@ -114,6 +126,19 @@ def classify_intent(user_request: str, has_attachment: bool) -> tuple[list[str],
 async def intent_classifier_node(state: BimaState) -> dict:
     user_request = state.get("user_request", "")
     has_attachment = bool(state.get("attachment_paths"))
+    user_id = state.get("discord_user_id", "")
+
+    # Canvas session check — kalau user punya active session, semua message
+    # routed ke canvas_node (kecuali super-override yang bakal di-handle di node-nya).
+    if user_id:
+        try:
+            from core import canvas_session
+            if canvas_session.has_active(user_id):
+                logger.info(f"[CLASSIFIER] Active canvas session user={user_id} → canvas_node")
+                return {"active_teams": ["canvas"], "is_finished": False}
+        except Exception as e:
+            logger.debug(f"[CLASSIFIER] canvas_session check error (non-fatal): {e}")
+
     teams, confidence, label = classify_intent(user_request, has_attachment)
 
     if confidence >= 0.85 and teams:
@@ -133,7 +158,7 @@ def route_from_classifier(state: BimaState) -> str:
         return "manager_node"
 
     # Same priority order as route_from_manager (observer first — single-team standalone)
-    priority = ["observer", "intel", "arsip", "seniman", "admin", "visual", "lifestyle", "kodok", "mekanik", "saham"]
+    priority = ["observer", "canvas", "intel", "arsip", "seniman", "admin", "visual", "lifestyle", "kodok", "mekanik", "saham"]
     for team in priority:
         if team in active_teams:
             return f"{team}_node"

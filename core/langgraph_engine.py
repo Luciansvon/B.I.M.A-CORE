@@ -13,6 +13,7 @@ from core.langgraph_nodes.mekanik import mekanik_node
 from core.langgraph_nodes.saham import saham_node
 from core.langgraph_nodes.observer import observer_node
 from core.langgraph_nodes.kodok import kodok_node
+from core.langgraph_nodes.canvas import canvas_node
 from core.langgraph_nodes.memory_finalizer import memory_finalizer_node
 from core.event_bus import emit
 import asyncio
@@ -94,6 +95,10 @@ def route_from_manager(state: BimaState) -> str:
         logger.info("[LANGGRAPH ROUTER] Manager → Node Kodok")
         _delegate('manager', 'kodok', reason=', '.join(active_teams))
         return "kodok_node"
+    if "canvas" in active_teams:
+        logger.info("[LANGGRAPH ROUTER] Manager → Node Canvas")
+        _delegate('manager', 'canvas', reason=', '.join(active_teams))
+        return "canvas_node"
 
     logger.info("[LANGGRAPH ROUTER] Fallback: END")
     return END
@@ -164,6 +169,7 @@ workflow.add_node("mekanik_node", make_resilient(mekanik_node, "mekanik_node"))
 workflow.add_node("saham_node", make_resilient(saham_node, "saham_node"))
 workflow.add_node("observer_node", make_resilient(observer_node, "observer_node", timeout=30))
 workflow.add_node("kodok_node", make_resilient(kodok_node, "kodok_node", timeout=120))
+workflow.add_node("canvas_node", make_resilient(canvas_node, "canvas_node", timeout=180))
 workflow.add_node("memory_finalizer_node", make_resilient(memory_finalizer_node, "memory_finalizer_node", timeout=10))
 
 # 3. Edges
@@ -184,6 +190,7 @@ workflow.add_conditional_edges(
         "saham_node": "saham_node",
         "observer_node": "observer_node",
         "kodok_node": "kodok_node",
+        "canvas_node": "canvas_node",
     }
 )
 
@@ -200,6 +207,7 @@ workflow.add_conditional_edges(
         "mekanik_node": "mekanik_node",
         "saham_node": "saham_node",
         "kodok_node": "kodok_node",
+        "canvas_node": "canvas_node",
         END: "memory_finalizer_node"
     }
 )
@@ -226,6 +234,7 @@ workflow.add_edge("admin_node", "memory_finalizer_node")
 workflow.add_edge("visual_node", "memory_finalizer_node")
 workflow.add_edge("lifestyle_node", "memory_finalizer_node")
 workflow.add_edge("kodok_node", "memory_finalizer_node")
+workflow.add_edge("canvas_node", "memory_finalizer_node")
 workflow.add_edge("mekanik_node", "memory_finalizer_node")
 workflow.add_edge("saham_node", "memory_finalizer_node")
 workflow.add_edge("observer_node", "memory_finalizer_node")
@@ -238,7 +247,7 @@ _STREAM_DEBOUNCE_S = 0.6
 _DISCORD_MAX = 1900
 
 
-async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment_paths: list = None, progress_callback=None):
+async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment_paths: list = None, progress_callback=None, discord_user_id: str = ""):
     initial_state = {
         "messages": [],
         "user_request": user_request,
@@ -249,6 +258,7 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
         "temp_data": {},
         "is_finished": False,
         "progress_callback": progress_callback,
+        "discord_user_id": discord_user_id,
     }
 
     logger.info("[LANGGRAPH] Memulai Orkestrasi...")
