@@ -41,7 +41,7 @@ GROUND TRUTH RULES (anti-hallu, WAJIB):
 
 ATURAN ROUTING (WAJIB PILIH SATU):
 1.  [ROUTE: santai]                  — Percakapan biasa, salam, atau tanya kabar.
-2.  [ROUTE: intel]                   — Butuh cari data di internet atau riset mendalam.
+2.  [ROUTE: intel]                   — Butuh cari data di internet, fetch isi URL, riset web, atau extract konten dari link.
 3.  [ROUTE: seniman]                 — Butuh buat file HTML, dashboard interaktif, atau visualisasi web.
 4.  [ROUTE: admin]                   — Butuh buat dokumen resmi: PDF, Word, atau Excel (.xlsx). 📎
 5.  [ROUTE: visual]                  — Butuh menganalisis gambar atau file yang dikirim oleh Bima.
@@ -71,7 +71,8 @@ INSTRUKSI KRITIS:
 - Jadilah kritis: jika permintaan Bima kurang detail, tanyakan detailnya sambil tetap memberikan analisis awal.
 
 PRINSIP "TANYA DULU SEBELUM ACTION":
-- Kalau Bima cuma kasih KRITERIA / KONTEKS / PREFERENSI tanpa kata kerja perintah eksplisit (cari, simpan, buat, jalankan, analisa) → DEFAULT ke [ROUTE: santai]. Ajukan opsi/pertanyaan klarifikasi dulu sebelum eksekusi.
+- Kalau Bima cuma kasih KRITERIA / KONTEKS / PREFERENSI tanpa kata kerja perintah eksplisit (cari, simpan, buat, jalankan, analisa, fetch, baca, scrape) → DEFAULT ke [ROUTE: santai].
+- Kalau request mengandung URL / link http(s)://... DAN Bima minta "fetch/baca/extract/scrape/buka/lihat isi/jelasin" → WAJIB [ROUTE: intel] (Intel punya Fetch tool buat extract konten URL). Ajukan opsi/pertanyaan klarifikasi dulu sebelum eksekusi.
   Contoh: "rentang 5-10 juta buat kuliah" → JANGAN langsung intel. Tanya dulu: "Mau langsung aku cariin di marketplace, atau ada brand/spek prioritas yang mau dipertimbangkan dulu?"
 - Untuk request rekomendasi produk/pilihan (laptop, HP, gadget, dll), JIKA Bima belum kasih kriteria tegas → diskusikan opsi dulu di [ROUTE: santai]. Action research baru dijalankan setelah Bima konfirmasi.
 - Lebih baik klarifikasi dengan pertanyaan singkat daripada eksekusi yang melenceng dari maksud Bima.
@@ -158,6 +159,15 @@ Lalu di baris berikutnya tulis jawaban analisis kritis dan hangatmu."""
 
     # Bersihkan tag rute dari teks balasan
     content = re.sub(r"\[ROUTE:\s*[a-z+]+\]", "", content, flags=re.IGNORECASE).strip()
+
+    # Fallback kalau LLM cuma stream tag tanpa narasi → Discord 50006 protector
+    if not content:
+        if next_route == "santai":
+            content = "Hai Bima ✨ Mau aku bantu apa nih?"
+        else:
+            content = f"Oke, aku bakal handle ini lewat tim {next_route}, tunggu sebentar ya."
+        logger.warning(f"[LANGGRAPH MANAGER] Empty content pasca strip ROUTE, fallback ke default")
+
     response.content = content
 
     logger.info(f"[LANGGRAPH MANAGER] Keputusan rute: {next_route.upper()} | Tim aktif: {active_teams}")
