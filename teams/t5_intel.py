@@ -9,6 +9,7 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import SerperDevTool
 from config import intel_llm
+from tools.browser_use_tool import BrowserUseTool
 
 logger = logging.getLogger('bima_core')
 
@@ -474,10 +475,11 @@ intel_agent = Agent(
     - Ekstrak BANYAK URL   → AsyncMultiFetchTool
     - Lacak Website/Domain → OSINTDeepSearchTool
     - Marketplace scrape   → MarketplaceScraper (HANYA jika user eksplisit minta scraping Tokopedia/Shopee — slow & sering gagal anti-bot, prefer SmartSearchTool)
+    - Interactive browse   → BrowserUseTool (HANYA jika task butuh aksi: login, klik, isi form, navigasi SPA/JS-heavy. Untuk read-only fetch, prefer WebFetchTool — lebih cepat & murah)
 
     Kamu TIDAK PERNAH mengarang data. SELALU pakai tool.""",
     llm=intel_llm,
-    tools=[search_tool, SmartSearchTool(), MarketplaceScraper(), RedditScraper(), GitHubScraper(), XScraper(), WebFetchTool(), AsyncMultiFetchTool(), OSINTDeepSearchTool()],
+    tools=[search_tool, SmartSearchTool(), MarketplaceScraper(), RedditScraper(), GitHubScraper(), XScraper(), WebFetchTool(), AsyncMultiFetchTool(), OSINTDeepSearchTool(), BrowserUseTool()],
     allow_delegation=True,
     verbose=True
 )

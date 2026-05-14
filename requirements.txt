@@ -21,3 +21,6 @@ apscheduler
 matplotlib
 sentence-transformers
 lancedb
+browser-use>=0.1.40
+mcpadapt
+fpdf2
