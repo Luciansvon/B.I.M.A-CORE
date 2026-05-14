@@ -1,0 +1,26 @@
+name: bima_core
+version: 0.1.0
+description: B.I.M.A Core — agentic system Anisa. Expose vault_search, memory_query, generate_pdf.
+schema: v1
+
+mcpServers:
+  - name: bima_core
+    transport: stdio
+    command: wsl.exe
+    args:
+      - -d
+      - Ubuntu
+      - --
+      - /home/bima_lucian/BIMA_CORE/bima_env/bin/python
+      - -m
+      - mcp_server.server
+    cwd: /home/bima_lucian/BIMA_CORE
+    env: {}
+
+tools:
+  - name: vault_search
+    description: Search Obsidian vault Bima — return chunk paling relevan.
+  - name: memory_query
+    description: Query semantic memory Anisa (agentmemory server di port 3111).
+  - name: generate_pdf
+    description: Generate PDF via PDFGeneratorTool (cover, TOC, multi-section).

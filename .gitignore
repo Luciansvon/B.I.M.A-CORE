@@ -1,0 +1,72 @@
+.env
+.env.local
+bima_env/
+node_modules/
+__pycache__/
+*.exe
+*.mp4
+*.zip
+*.mp3
+logs/
+outputs/
+.vscode/
+.agents/
+.claude/
+.continue/
+.cursor/
+*.Zone.Identifier
+*:Zone.Identifier
+*.pyc
+memory/
+search_index/
+repo_index/
+vault_index/
+bima_search
+whatsapp/.wwebjs_auth/
+whatsapp/.wwebjs_cache/
+whatsapp/node_modules/
+
+# Personal notes / vault (private)
+Bima_Vault/
+
+# Generated artifacts
+chart_*.png
+output_*.svg
+output_*.html
+dashboard_*.html
+diagram_*.html
+*.pdf
+canvas/
+outputs/canvas/
+
+# Test / loose files
+_tmp_*
+*.txtcat
+*.log
+flake8_*.txt
+pylint_*.txt
+check_server.py
+
+# IDE / OS
+.idea/
+.DS_Store
+Thumbs.db
+*.bak
+*.bak.*
+mcp_server.legacy.yaml
+
+# Session / state
+*_session.md
+20260[0-9]*T*.md
+
+# Loose archive (review per-need)
+archive/
+dashboard/
+
+# User profile leak (sensitive)
+user_profile.md
+claude.md
+skills-lock.json
+
+# fpdf2 build artifacts
+*.pkl

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>ANISA — Sidebar Chat UI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; font-family: 'Inter', system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  /* Animations used by the chat sidebar */
+  @keyframes anisaDot {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-4px); opacity: 1; }
+  }
+  @keyframes anisaScan {
+    0% { transform: translateY(0); opacity: 0; }
+    20% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { transform: translateY(96px); opacity: 0; }
+  }
+  @keyframes anisaProgress {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(220%); }
+  }
+  @keyframes anisaCaret {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  @keyframes anisaPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.6); opacity: 0; }
+  }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="assets/anisa-shared.jsx"></script>
+<script type="text/babel" src="assets/desktop-mock.jsx"></script>
+<script type="text/babel" src="assets/anisa-parts.jsx"></script>
+<script type="text/babel" src="assets/anisa-variations.jsx"></script>
+<script type="text/babel" src="assets/design-canvas.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+function Intro() {
+  return (
+    <div style={{
+      width: 720, padding: '28px 32px',
+      background: 'white', borderRadius: 14,
+      border: '1px solid rgba(0,0,0,0.08)',
+      fontFamily: 'Inter, sans-serif',
+      boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <AnisaMark size={36} />
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: -0.5, color: '#1a1a1a' }}>ANISA · Side chat UI</div>
+          <div style={{ fontSize: 13, color: '#6a6a6a', marginTop: 2 }}>Minimal dark mode · emerald accent · 3 variations</div>
+        </div>
+      </div>
+      <p style={{ fontSize: 13.5, lineHeight: 1.65, color: '#3a3a3a', margin: 0 }}>
+        Sidebar AI assistant yang membaca konteks layar (screenshot + caption) lalu menjawab pertanyaan kamu.
+        Background mockup pakai generic 3D editor + model kursi sebagai konteks demo "warna 3D furnitur".
+        Tiap variasi punya state switcher di atasnya — klik untuk preview <em>Empty</em>, <em>Capturing</em>, <em>Thinking</em>, <em>Reply</em>, <em>History</em>. Tombol <em>Expanded/Collapsed</em> mensimulasikan toggle. UI ini siap di-wire ke DeepSeek/OpenRouter dari sisi backend kamu.
+      </p>
+      <div style={{ display: 'flex', gap: 16, marginTop: 16, fontSize: 12, color: '#6a6a6a' }}>
+        <span><strong style={{ color: '#1a1a1a' }}>A · Edge Dock</strong> — klasik, full-height</span>
+        <span><strong style={{ color: '#1a1a1a' }}>B · Floating Card</strong> — rounded, mengambang</span>
+        <span><strong style={{ color: '#1a1a1a' }}>C · Rail + Thread</strong> — 2-kolom dengan history rail</span>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection id="intro" title="ANISA" subtitle="Side chat assistant — UI only (backend nanti)">
+        <DCArtboard id="intro" label="Brief" width={720} height={210}>
+          <Intro />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="a" title="Variation A · Edge Dock" subtitle="Sharp, full-height, attached to the right edge. Familiar & most info-dense.">
+        <DCArtboard id="a-main" label="A · Edge Dock — interactive" width={ART_W} height={ART_H + 56}>
+          <VariantArtboard Variant={VariantA} />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="b" title="Variation B · Floating Card" subtitle="Rounded, glassy, breathing room. Feels lighter, more invitation than dock.">
+        <DCArtboard id="b-main" label="B · Floating Card — interactive" width={ART_W} height={ART_H + 56}>
+          <VariantArtboard Variant={VariantB} />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="c" title="Variation C · Rail + Thread" subtitle="Always-visible thread rail + main chat. Best when you switch between many conversations.">
+        <DCArtboard id="c-main" label="C · Rail + Thread — interactive" width={ART_W} height={ART_H + 56}>
+          <VariantArtboard Variant={VariantC} />
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>ANISA · Variant B (Floating Card) — Reference</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #0a0a0b; font-family: 'Inter', system-ui, sans-serif; min-height: 100vh; overflow-x: hidden; }
+  * { box-sizing: border-box; }
+  @keyframes anisaDot {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-4px); opacity: 1; }
+  }
+  @keyframes anisaScan {
+    0% { transform: translateY(0); opacity: 0; }
+    20% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { transform: translateY(96px); opacity: 0; }
+  }
+  @keyframes anisaProgress {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(220%); }
+  }
+  @keyframes anisaCaret {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  @keyframes anisaPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.6); opacity: 0; }
+  }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="assets/anisa-shared.jsx"></script>
+<script type="text/babel" src="assets/desktop-mock.jsx"></script>
+<script type="text/babel" src="assets/anisa-parts.jsx"></script>
+<script type="text/babel" src="assets/anisa-variations.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+function StandaloneB() {
+  const [state, setState] = React.useState('reply');
+  const [collapsed, setCollapsed] = React.useState(false);
+
+  return (
+    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative', background: '#0a0a0b' }}>
+      {/* Desktop background */}
+      <DesktopMock />
+
+      {/* The Floating Card sidebar */}
+      <VariantB state={state} collapsed={collapsed} onCollapseToggle={() => setCollapsed(c => !c)} />
+
+      {/* Floating state switcher (top-left) */}
+      <div style={{
+        position: 'fixed', top: 16, left: 16, zIndex: 100,
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: 6, borderRadius: 12,
+        background: 'rgba(13,14,16,0.85)',
+        border: '1px solid #26292e',
+        backdropFilter: 'blur(12px)',
+        fontFamily: 'Inter, sans-serif',
+      }}>
+        <span style={{ fontSize: 10.5, color: '#62676f', textTransform: 'uppercase', letterSpacing: 1.4, fontWeight: 600, padding: '0 6px 0 8px' }}>
+          State
+        </span>
+        <StateSwitcher value={state} onChange={setState} />
+        <div style={{ width: 1, height: 22, background: '#26292e' }} />
+        <button onClick={() => setCollapsed(c => !c)} style={{
+          padding: '6px 12px', borderRadius: 8,
+          background: collapsed ? window.ANISA_T.accentDim : 'transparent',
+          border: `1px solid ${collapsed ? 'rgba(16,185,129,0.3)' : '#1a1d22'}`,
+          color: collapsed ? window.ANISA_T.accentText : window.ANISA_T.textSec,
+          fontSize: 11, fontFamily: 'Inter, sans-serif', fontWeight: 500,
+          cursor: 'pointer',
+        }}>
+          {collapsed ? 'Collapsed' : 'Expanded'}
+        </button>
+      </div>
+
+      {/* Handoff note bottom-left */}
+      <div style={{
+        position: 'fixed', bottom: 16, left: 16, zIndex: 100,
+        padding: '10px 14px', borderRadius: 10,
+        background: 'rgba(13,14,16,0.85)',
+        border: '1px solid #26292e',
+        backdropFilter: 'blur(12px)',
+        fontFamily: 'Inter, sans-serif',
+        maxWidth: 360,
+      }}>
+        <div style={{ fontSize: 12, color: '#e7e9ec', fontWeight: 600, letterSpacing: -0.1 }}>
+          ANISA · Variant B (Floating Card)
+        </div>
+        <div style={{ fontSize: 11.5, color: '#9aa0a8', marginTop: 4, lineHeight: 1.5 }}>
+          UI reference. Lihat <code style={{ background: '#1c1e22', padding: '1px 5px', borderRadius: 3, color: '#34d399', fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5 }}>HANDOFF.md</code> untuk panduan engineering.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<StandaloneB />);
+</script>
+</body>
+</html>

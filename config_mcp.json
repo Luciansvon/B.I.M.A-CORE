@@ -1,0 +1,99 @@
+{
+  "_schema_version": 1,
+  "_doc": "MCP servers yang di-consume BIMA_CORE. `enabled: false` di-skip saat boot. Variabel ${VAR} di-expand dari os.environ + BIMA_ROOT alias.",
+  "servers": [
+    {
+      "name": "fetch",
+      "description": "HTTP fetcher official Anthropic — extract isi URL ke text/markdown.",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": {},
+      "tools": null,
+      "attach_to": ["intel"],
+      "requires_bin": "uvx"
+    },
+    {
+      "name": "markitdown",
+      "description": "Microsoft Markitdown — convert PDF/DOCX/PPTX/XLSX ke markdown.",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["markitdown-mcp"],
+      "env": {},
+      "tools": null,
+      "attach_to": ["arsip", "visual"],
+      "requires_bin": "uvx"
+    },
+    {
+      "name": "sequential_thinking",
+      "description": "Anthropic Sequential Thinking — structured reasoning chain.",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "env": {},
+      "tools": null,
+      "attach_to": ["manager"],
+      "requires_bin": "npx"
+    },
+    {
+      "name": "memory_anthropic",
+      "description": "Anthropic Memory MCP — persistent KV memory cross-session.",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "MEMORY_FILE_PATH": "${BIMA_ROOT}/memory/anthropic_memory.json"
+      },
+      "tools": null,
+      "attach_to": ["arsip", "manager"],
+      "requires_bin": "npx"
+    },
+    {
+      "name": "filesystem",
+      "description": "Filesystem MCP — read/list/write file di scope tertentu. ⚠ ENABLE setelah pasang scope dir yang aman.",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${BIMA_ROOT}"],
+      "env": {},
+      "tools": null,
+      "attach_to": ["intel", "mekanik"],
+      "requires_bin": "npx",
+      "_note": "Default scope = BIMA_ROOT. Tambah path lain ke args kalau perlu (mis. ~/Documents)."
+    },
+    {
+      "name": "github",
+      "description": "GitHub MCP — issues, PRs, code search. ⚠ BUTUH GITHUB_PERSONAL_ACCESS_TOKEN di .env.",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "tools": null,
+      "attach_to": ["mekanik"],
+      "requires_bin": "npx",
+      "requires_env": ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    },
+    {
+      "name": "searxng",
+      "description": "SearXNG MCP — privacy-respecting metasearch. ⚠ BUTUH SEARXNG_URL di .env (instance public atau self-host).",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "mcp-searxng"],
+      "env": {
+        "SEARXNG_URL": "${SEARXNG_URL}"
+      },
+      "tools": null,
+      "attach_to": ["intel"],
+      "requires_bin": "npx",
+      "requires_env": ["SEARXNG_URL"]
+    }
+  ]
+}
