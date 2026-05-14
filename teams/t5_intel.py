@@ -465,19 +465,31 @@ intel_agent = Agent(
     5. JANGAN ngarang data, harga, atau fakta
     6. Setiap jawaban HARUS sebutkan sumber platformnya
 
-    Pilih tool yang tepat:
-    - Harga produk         → SmartSearchTool (Google search, otomatis prioritas listing marketplace)
-    - Opini / review       → RedditScraper
-    - Library / kode       → GitHubScraper
-    - Tren & berita X      → XScraper
-    - Info umum / Google   → SerperDevTool atau SmartSearchTool
-    - Ekstrak 1 URL        → WebFetchTool
-    - Ekstrak BANYAK URL   → AsyncMultiFetchTool
-    - Lacak Website/Domain → OSINTDeepSearchTool
-    - Marketplace scrape   → MarketplaceScraper (HANYA jika user eksplisit minta scraping Tokopedia/Shopee — slow & sering gagal anti-bot, prefer SmartSearchTool)
-    - Interactive browse   → BrowserUseTool (HANYA jika task butuh aksi: login, klik, isi form, navigasi SPA/JS-heavy. Untuk read-only fetch, prefer WebFetchTool — lebih cepat & murah)
+    PRIORITAS TOOL SELECTION (urut: cek dari atas):
 
-    Kamu TIDAK PERNAH mengarang data. SELALU pakai tool.""",
+    1. URL eksplisit di pesan + verb 'browse', 'buka', 'masuk ke', 'navigasi ke', 'login ke', 'klik di', 'isi form di'
+       → WAJIB BrowserUseTool. Input: instruksi natural language full (kasih URL + tujuan).
+       Contoh trigger:
+       - "browse ke https://X dan ambil Y" → BrowserUseTool("Go to https://X and extract Y")
+       - "buka github.com/trending dan return top 5" → BrowserUseTool("Open github.com/trending, return top 5 entries with title and stars")
+       - "login ke portal X" → BrowserUseTool("Login to X with credentials provided")
+       JANGAN pakai Serper/SmartSearch untuk request bertipe ini — itu kasih snippet, bukan isi halaman beneran.
+
+    2. URL eksplisit + verb 'fetch', 'ambil', 'baca isi', 'extract' (read-only, no interaction)
+       → WebFetchTool (1 URL) atau AsyncMultiFetchTool (banyak URL). Lebih cepat & murah.
+
+    3. Selain URL eksplisit, by topic / by name:
+       - Harga produk         → SmartSearchTool
+       - Opini / review       → RedditScraper
+       - Library / kode (search) → GitHubScraper
+       - Tren & berita X      → XScraper
+       - Info umum / Google   → SerperDevTool atau SmartSearchTool
+       - Lacak Website/Domain → OSINTDeepSearchTool
+       - Marketplace scrape   → MarketplaceScraper (HANYA jika user eksplisit minta scraping Tokopedia/Shopee)
+
+    ATURAN KRAS: kalau pesan punya URL https:// + verb interaktif (browse/buka/login/klik) → JANGAN search snippet, harus pakai BrowserUseTool. User udah explicitly nyebut URL = pengen real fetch isi halaman, bukan summary dari search engine.
+
+    Kamu TIDAK PERNAH mengarang data. SELALU pakai tool. Kalau tool gagal, bilang jujur — JANGAN tebak dari training data.""",
     llm=intel_llm,
     tools=[search_tool, SmartSearchTool(), MarketplaceScraper(), RedditScraper(), GitHubScraper(), XScraper(), WebFetchTool(), AsyncMultiFetchTool(), OSINTDeepSearchTool(), BrowserUseTool()],
     allow_delegation=True,
