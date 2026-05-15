@@ -40,6 +40,12 @@ def _is_headed() -> bool:
     return os.environ.get("BROWSER_USE_HEADED", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _should_record() -> bool:
+    """Toggle via env BROWSER_USE_RECORD=1 → MP4 video per session.
+    Default OFF — disk + I/O overhead. Pakai headed mode buat live monitor."""
+    return os.environ.get("BROWSER_USE_RECORD", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 class BrowserUseTool(BaseTool):
     name: str = "Browser Use Tool"
     description: str = """Interactive browser automation — login, click, fill form, navigate SPA / JS-heavy site.
@@ -66,14 +72,17 @@ class BrowserUseTool(BaseTool):
         except ImportError as e:
             return f"FAILED|browser-use gak ke-install: {e}"
 
-        # Per-session video dir + visibility setting
+        # Visibility + recording settings
         headed = _is_headed()
-        session_dir = _VIDEO_BASE_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
-        try:
-            session_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            logger.warning(f"video dir create gagal ({e}), skip record")
-            session_dir = None
+        record = _should_record()
+        session_dir = None
+        if record:
+            session_dir = _VIDEO_BASE_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
+            try:
+                session_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                logger.warning(f"video dir create gagal ({e}), skip record")
+                session_dir = None
 
         try:
             llm = ChatOpenAI(
