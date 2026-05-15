@@ -25,6 +25,9 @@ bima_search
 whatsapp/.wwebjs_auth/
 whatsapp/.wwebjs_cache/
 whatsapp/node_modules/
+whatsapp/.sessions.json
+whatsapp/.admin-overrides.json
+outputs/browser_use/profile_marketplace/
 
 # Personal notes / vault (private)
 Bima_Vault/
@@ -69,3 +72,4 @@ skills-lock.json
 
 # fpdf2 build artifacts
 *.pkl
+tools/_marketplace_login.py

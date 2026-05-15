@@ -117,6 +117,231 @@ function logout(senderId) {
 loadSessions();
 
 // ============================================================
+// ADMIN OVERRIDES (whitelist + password runtime control)
+// File overlay di atas .env — survive restart, hot-reload tiap admin command
+// ============================================================
+const ADMIN_OVERRIDES_FILE = path.join(__dirname, '.admin-overrides.json');
+
+function loadOverrides() {
+    try {
+        if (fs.existsSync(ADMIN_OVERRIDES_FILE)) {
+            return JSON.parse(fs.readFileSync(ADMIN_OVERRIDES_FILE, 'utf8'));
+        }
+    } catch (e) { log('WARN', `Gagal load admin overrides: ${e.message}`); }
+    return {};
+}
+
+function saveOverrides(data) {
+    try {
+        fs.writeFileSync(ADMIN_OVERRIDES_FILE, JSON.stringify(data, null, 2));
+        return true;
+    } catch (e) { log('ERROR', `Gagal save admin overrides: ${e.message}`); return false; }
+}
+
+function getEffectiveOwners() {
+    const ov = loadOverrides();
+    if (Array.isArray(ov.ownerNumbers)) return ov.ownerNumbers.filter(Boolean);
+    return CONFIG.ownerNumbers;
+}
+
+function getEffectivePassword() {
+    const ov = loadOverrides();
+    // String kosong = password OFF (gate disabled). Field absent = pakai env.
+    if (typeof ov.botPassword === 'string') return ov.botPassword;
+    return CONFIG.botPassword;
+}
+
+function isValidWaNumber(num) {
+    return /^628\d{8,12}$/.test((num || '').trim());
+}
+
+// ============================================================
+// ADMIN COMMAND HANDLERS — wl, password, session
+// ============================================================
+async function handleWlCommand(msg, args, senderPhone) {
+    const ov = loadOverrides();
+    const effective = getEffectiveOwners();
+    const fromOverride = Array.isArray(ov.ownerNumbers);
+    const trimmed = (args || '').trim();
+
+    if (!trimmed || trimmed === 'list') {
+        const lines = [`📋 *Whitelist* (source: ${fromOverride ? 'override' : 'env'})`];
+        if (effective.length === 0) {
+            lines.push('  _(kosong — bot terbuka untuk semua nomor)_');
+        } else {
+            effective.forEach((n, i) => lines.push(`  ${i + 1}. \`${n}\``));
+        }
+        await msg.reply(lines.join('\n'));
+        return;
+    }
+
+    const [sub, ...rest] = trimmed.split(/\s+/);
+    const num = (rest.join('') || '').trim();
+
+    if (sub === 'add') {
+        if (!isValidWaNumber(num)) {
+            await msg.reply('❌ Format salah. Pakai: `wl add 628xxx` (tanpa + atau spasi, prefix 628 wajib)');
+            return;
+        }
+        const next = [...effective];
+        if (next.includes(num)) {
+            await msg.reply(`ℹ️ Nomor \`${num}\` udah ada di whitelist.`);
+            return;
+        }
+        next.push(num);
+        if (saveOverrides({ ...ov, ownerNumbers: next })) {
+            await msg.reply(`✅ Added \`${num}\`. Whitelist sekarang ${next.length} nomor.`);
+        } else {
+            await msg.reply('❌ Gagal save override file.');
+        }
+        return;
+    }
+
+    if (sub === 'rm' || sub === 'remove') {
+        if (!num) { await msg.reply('❌ Pakai: `wl rm 628xxx`'); return; }
+        if (num === senderPhone) {
+            await msg.reply('🛑 Dilarang hapus nomor sendiri (anti-lockout). Edit `whatsapp/.admin-overrides.json` manual atau minta nomor lain.');
+            return;
+        }
+        const next = effective.filter(n => n !== num);
+        if (next.length === effective.length) {
+            await msg.reply(`ℹ️ Nomor \`${num}\` gak ada di whitelist.`);
+            return;
+        }
+        if (saveOverrides({ ...ov, ownerNumbers: next })) {
+            await msg.reply(`✅ Removed \`${num}\`. Whitelist sekarang ${next.length} nomor.`);
+        } else {
+            await msg.reply('❌ Gagal save override file.');
+        }
+        return;
+    }
+
+    if (sub === 'reset') {
+        const { ownerNumbers, ...keep } = ov;
+        if (saveOverrides(keep)) {
+            await msg.reply(`✅ Whitelist revert ke .env (${CONFIG.ownerNumbers.length} nomor).`);
+        } else {
+            await msg.reply('❌ Gagal save override file.');
+        }
+        return;
+    }
+
+    await msg.reply('❌ Sub-command gak dikenal. Pilihan: `wl`, `wl add <num>`, `wl rm <num>`, `wl reset`');
+}
+
+async function handlePasswordCommand(msg, args) {
+    const ov = loadOverrides();
+    const sub = (args || '').trim();
+    const prefix = CONFIG.triggerPrefix;
+
+    if (!sub) {
+        const effPw = getEffectivePassword();
+        const fromOverride = typeof ov.botPassword === 'string';
+        const status = effPw ? `aktif (${effPw.length} char)` : 'OFF — login gate disabled';
+        await msg.reply(
+            `🔐 *Password gate:* ${status}\n` +
+            `Source: ${fromOverride ? 'override' : 'env'}\n\n` +
+            `Ganti: \`${prefix} password <baru>\`\n` +
+            `Matiin: \`${prefix} password off\`\n` +
+            `Revert ke .env: \`${prefix} password reset\``
+        );
+        return;
+    }
+
+    if (sub === 'off') {
+        if (saveOverrides({ ...ov, botPassword: '' })) {
+            await msg.reply('✅ Password gate dimatikan. Sesi yang udah login tetep valid sampai logout.');
+        } else {
+            await msg.reply('❌ Gagal save override file.');
+        }
+        return;
+    }
+
+    if (sub === 'reset') {
+        const { botPassword, ...keep } = ov;
+        if (saveOverrides(keep)) {
+            const fallback = CONFIG.botPassword ? `aktif (${CONFIG.botPassword.length} char)` : 'OFF';
+            await msg.reply(`✅ Password revert ke .env (${fallback}).`);
+        } else {
+            await msg.reply('❌ Gagal save override file.');
+        }
+        return;
+    }
+
+    if (sub.length < 4) {
+        await msg.reply('❌ Password min 4 karakter.');
+        return;
+    }
+
+    if (saveOverrides({ ...ov, botPassword: sub })) {
+        await msg.reply(
+            `✅ Password baru udah aktif.\n` +
+            `⚠️ Sesi lama yang udah login *tetap valid* sampai logout manual.\n` +
+            `Force logout semua: \`${prefix} session kick all\``
+        );
+    } else {
+        await msg.reply('❌ Gagal save override file.');
+    }
+}
+
+async function handleSessionCommand(msg, args, senderPhone) {
+    const sub = (args || '').trim();
+
+    if (!sub || sub === 'list') {
+        const entries = [...authedSessions.entries()];
+        if (entries.length === 0) {
+            await msg.reply('📋 Gak ada session aktif.');
+            return;
+        }
+        const lines = ['📋 *Active sessions:*'];
+        entries.forEach(([jid, exp], i) => {
+            const phone = jid.replace('@c.us', '').replace('@lid', '');
+            const expStr = exp === null ? 'permanen' : `expire ${new Date(exp).toLocaleString('id-ID')}`;
+            lines.push(`  ${i + 1}. \`${phone}\` — ${expStr}`);
+        });
+        await msg.reply(lines.join('\n'));
+        return;
+    }
+
+    const [verb, target] = sub.split(/\s+/);
+
+    if (verb === 'kick') {
+        if (!target) { await msg.reply('❌ Pakai: `session kick 628xxx` atau `session kick all`'); return; }
+
+        if (target === 'all') {
+            const n = authedSessions.size;
+            authedSessions.clear();
+            saveSessions();
+            await msg.reply(`✅ Force logout semua (${n} session).`);
+            return;
+        }
+
+        if (target === senderPhone) {
+            await msg.reply('🛑 Dilarang kick diri sendiri.');
+            return;
+        }
+
+        let kicked = 0;
+        for (const jid of [...authedSessions.keys()]) {
+            const phone = jid.replace('@c.us', '').replace('@lid', '');
+            if (phone === target) {
+                authedSessions.delete(jid);
+                kicked++;
+            }
+        }
+        saveSessions();
+        if (kicked === 0) {
+            await msg.reply(`ℹ️ Nomor \`${target}\` gak ada di session list.`);
+        } else {
+            await msg.reply(`✅ Kicked \`${target}\` (${kicked} session).`);
+        }
+        return;
+    }
+
+    await msg.reply('❌ Sub-command gak dikenal. Pilihan: `session`, `session kick <num>`, `session kick all`');
+}
+
+// ============================================================
 // RATE LIMITER
 // ============================================================
 const rateLimitStore = new Map();
@@ -228,7 +453,13 @@ Kirim pesan langsung, aku proses lewat LangGraph engine.
 
 📎 Kirim file + pesan → otomatis dianalisis
 
-\`!help\` \`!ping\` \`!status\``;
+*Bot commands:* \`help\` \`ping\` \`status\` \`logout\`
+
+*Admin commands* (perlu udah login):
+\`wl\` — list whitelist
+\`wl add 628xxx\` / \`wl rm 628xxx\` / \`wl reset\`
+\`password\` — cek status / \`password <baru>\` / \`password off\` / \`password reset\`
+\`session\` — list session aktif / \`session kick 628xxx\` / \`session kick all\``;
 }
 
 // ============================================================
@@ -299,9 +530,10 @@ async function handleMessage(msg) {
         const rawId = msg.from.replace('@c.us', '').replace('@lid', '');
         const senderId = senderPhone || rawId;
 
-        if (CONFIG.ownerNumbers.length &&
-            !CONFIG.ownerNumbers.includes(senderPhone) &&
-            !CONFIG.ownerNumbers.includes(rawId)) return;
+        const effOwners = getEffectiveOwners();
+        if (effOwners.length &&
+            !effOwners.includes(senderPhone) &&
+            !effOwners.includes(rawId)) return;
 
         const text = msg.body?.trim() || '';
         const lower = text.toLowerCase();
@@ -319,9 +551,10 @@ async function handleMessage(msg) {
         // Login: "/bot login <password>"
         if (afterLower.startsWith('login')) {
             const pw = afterPrefix.substring('login'.length).trim();
-            if (!CONFIG.botPassword) {
+            const effPw = getEffectivePassword();
+            if (!effPw) {
                 await msg.reply('⚠️ Password belum di-set di server. Hubungi admin.');
-            } else if (pw === CONFIG.botPassword) {
+            } else if (pw === effPw) {
                 login(msg.from, true);
                 await msg.reply(`🔓 Login OK. Session permanen — pakai \`${prefix} logout\` kalau mau keluar.\n\nLanjut: \`${prefix} <pesan>\``);
             } else {
@@ -338,7 +571,7 @@ async function handleMessage(msg) {
         }
 
         // Gate: wajib login kalau password di-set
-        if (CONFIG.botPassword && !isAuthed(msg.from)) {
+        if (getEffectivePassword() && !isAuthed(msg.from)) {
             await msg.reply(`🔒 Login dulu: \`${prefix} login <password>\``);
             return;
         }
@@ -360,6 +593,20 @@ async function handleMessage(msg) {
                 const r = await axios.get(`${CONFIG.bridgeUrl}/health`, { timeout: 5000 });
                 await msg.reply(`📊 Backend: OK | Busy: ${r.data.busy ? 'Ya' : 'Tidak'}`);
             } catch { await msg.reply('🔌 Backend tidak merespons.'); }
+            return;
+        }
+
+        // Admin commands — semua require user udah lolos gate (whitelist + login kalo password aktif)
+        if (afterLower === 'wl' || afterLower.startsWith('wl ')) {
+            await handleWlCommand(msg, afterPrefix.substring(2).trim(), senderPhone);
+            return;
+        }
+        if (afterLower === 'password' || afterLower.startsWith('password ')) {
+            await handlePasswordCommand(msg, afterPrefix.substring(8).trim());
+            return;
+        }
+        if (afterLower === 'session' || afterLower.startsWith('session ')) {
+            await handleSessionCommand(msg, afterPrefix.substring(7).trim(), senderPhone);
             return;
         }
 

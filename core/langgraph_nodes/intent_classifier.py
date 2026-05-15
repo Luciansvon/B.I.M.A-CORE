@@ -41,6 +41,19 @@ _PROMPT_OPTIMIZE = re.compile(
     re.IGNORECASE,
 )
 
+# Image generation: trigger eksplisit "bikin/buat/generate gambar" atau slash command.
+# Cek SEBELUM generic seniman patterns supaya gen image gak ke-route ke HTML pipeline.
+_IMAGE_GEN = re.compile(
+    # Cabang A: verba + noun ("bikin gambar", "generate image", "buat ilustrasi", dll)
+    r'\b(bikin|buat|generate|render|visualis\w+|illustrat\w+|ilustras\w+)\b.{0,40}\b(gambar|image|ilustrasi|picture|art|foto|illustration)\b'
+    # Cabang B: verba khusus image gen yang udah implisit ("gambarin X", "gambarkan Y")
+    r'|\bgambar(in|kan|kn)\b'
+    r'|\billustrate\b'
+    # Cabang C: slash command
+    r'|^\s*/anisa\s+(gambar|image|foto)\b',
+    re.IGNORECASE,
+)
+
 # Canvas: PDF iterative editing. Init trigger eksplisit lewat "draft pdf" / "canvas".
 # Session-active check di-handle di intent_classifier_node sebelum regex.
 _CANVAS_INIT = re.compile(
@@ -108,6 +121,9 @@ def classify_intent(user_request: str, has_attachment: bool) -> tuple[list[str],
     if _RUN_CODE.search(text):
         return ["mekanik"], 0.90, "eksekusi kode"
 
+    if _IMAGE_GEN.search(text):
+        return ["seniman"], 0.93, "image gen"
+
     if _PROMPT_OPTIMIZE.search(text):
         return ["seniman"], 0.88, "prompt optimize/rewrite"
 
@@ -143,10 +159,14 @@ async def intent_classifier_node(state: BimaState) -> dict:
 
     if confidence >= 0.85 and teams:
         logger.info(f"[CLASSIFIER] FAST-PATH '{label}' (conf={confidence:.2f}) → teams={teams}")
-        return {
+        update: dict = {
             "active_teams": teams,
             "is_finished": False,
         }
+        # Tag generative mode supaya seniman_node tau harus branch ke image gen
+        if label == "image gen":
+            update["gen_mode"] = "image"
+        return update
     logger.info("[CLASSIFIER] No fast-path → fallback ke manager_node")
     return {}
 

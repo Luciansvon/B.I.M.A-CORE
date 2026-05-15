@@ -36,6 +36,10 @@ class BimaState(TypedDict):
     # Discord user ID (string) — diperlukan canvas_node untuk session-per-user
     discord_user_id: NotRequired[str]
 
+    # Mode generative output: "image" | "video" | None — diset oleh intent_classifier,
+    # dipakai seniman_node untuk branch ke ImageGenTool / VideoGenTool / HTML pipeline
+    gen_mode: NotRequired[str]
+
 
 async def notify_progress(state: BimaState, message: str) -> None:
     """Kirim status progress ke Discord. Silent jika callback tidak ada atau gagal."""

@@ -33,67 +33,112 @@ class MarketplaceScraper(BaseTool):
 
     def _run(self, query: str) -> str:
         results = []
-        try:
-            url = f"https://www.tokopedia.com/search?st=product&q={query.replace(' ', '%20')}"
-            page = StealthyFetcher.fetch(
-                url,
-                headless=True,
-                network_idle=True,
-                solve_cloudflare=True,
-                block_webrtc=True,
-                hide_canvas=True,
-                disable_resources=True,
-                timeout=30000,
-            )
-            scripts = page.css('script[type="application/ld+json"]')
-            for script in scripts[:3]:
-                try:
-                    data = json.loads(script.text)
-                    if isinstance(data, list):
-                        for item in data[:5]:
-                            if item.get("@type") == "Product":
-                                name = item.get("name", "")
-                                price = item.get("offers", {}).get("price", "")
-                                results.append(f"[Tokopedia] {name}: Rp {int(float(price)):,}" if price else f"[Tokopedia] {name}")
-                except (json.JSONDecodeError, ValueError, TypeError) as e:
-                    logger.debug(f"[Tokopedia] Skip script JSON-LD invalid: {e}")
-            if not results:
-                harga_els = page.css('[data-testid="spnSRPProdPrice"]')
-                nama_els = page.css('[data-testid="spnSRPProdName"]')
-                for harga, nama in zip(harga_els[:5], nama_els[:5]):
-                    results.append(f"[Tokopedia] {nama.text.strip()}: {harga.text.strip()}")
-        except Exception as e:
-            results.append(f"[Tokopedia] Gagal: {e}")
+        used_paths = []
 
-        try:
-            url = f"https://shopee.co.id/search?keyword={query.replace(' ', '%20')}"
-            page = StealthyFetcher.fetch(
-                url,
-                headless=True,
-                network_idle=True,
-                solve_cloudflare=True,
-                block_webrtc=True,
-                hide_canvas=True,
-                disable_resources=True,
-                timeout=30000,
-            )
-            scripts = page.css('script[type="application/ld+json"]')
-            for script in scripts[:3]:
-                try:
-                    data = json.loads(script.text)
-                    if isinstance(data, dict) and data.get("@type") == "ItemList":
-                        for item in data.get("itemListElement", [])[:5]:
-                            name = item.get("name", "")
-                            price = item.get("offers", {}).get("price", "")
-                            results.append(f"[Shopee] {name}: Rp {int(float(price)):,}" if price else f"[Shopee] {name}")
-                except (json.JSONDecodeError, ValueError, TypeError) as e:
-                    logger.debug(f"[Shopee] Skip script JSON-LD invalid: {e}")
-        except Exception as e:
-            results.append(f"[Shopee] Gagal: {e}")
+        platforms = [
+            ("Tokopedia", f"https://www.tokopedia.com/search?st=product&q={query.replace(' ', '%20')}", self._parse_tokopedia),
+            ("Shopee",    f"https://shopee.co.id/search?keyword={query.replace(' ', '%20')}",            self._parse_shopee),
+        ]
+
+        for platform, url, parser in platforms:
+            items = []
+            try:
+                page = StealthyFetcher.fetch(
+                    url,
+                    headless=True,
+                    network_idle=True,
+                    solve_cloudflare=True,
+                    block_webrtc=True,
+                    hide_canvas=True,
+                    disable_resources=True,
+                    timeout=30000,
+                )
+                items = parser(page)
+                logger.info(f"[MARKETPLACE] {platform} scrapling → {len(items)} item")
+            except Exception as e:
+                logger.warning(f"[MARKETPLACE] {platform} scrapling exception: {e}")
+
+            if len(items) < 2:
+                logger.warning(f"[MARKETPLACE] {platform} <2 item, fallback ke browser-use")
+                items = self._browser_fallback(platform, url, query)
+                used_paths.append(f"{platform}=browser")
+            else:
+                used_paths.append(f"{platform}=scrapling")
+
+            results.extend(items)
+
+        logger.info(f"[MARKETPLACE] Path used: {', '.join(used_paths)}")
 
         if not results:
-            return f"❌ Scraping web e-commerce diblokir atau gagal.\nInstruksi Wajib: Segera panggil Search Tool (SerperDevTool) dengan query 'harga {query} tokopedia shopee'."
-        return f"=== Marketplace: '{query}' ===\n\n" + "\n".join(results[:10]) + "\n\n💡 Harga bisa berubah sewaktu-waktu."
+            return (
+                f"❌ Marketplace scraping gagal total ({', '.join(used_paths)}).\n"
+                f"Instruksi Wajib: Segera panggil Search Tool (SerperDevTool) "
+                f"dengan query 'harga {query} tokopedia shopee'."
+            )
+        return (
+            f"=== Marketplace: '{query}' (paths: {', '.join(used_paths)}) ===\n\n"
+            + "\n".join(results[:10])
+            + "\n\n💡 Harga bisa berubah sewaktu-waktu."
+        )
+
+    def _parse_tokopedia(self, page) -> list:
+        items = []
+        scripts = page.css('script[type="application/ld+json"]')
+        for script in scripts[:3]:
+            try:
+                data = json.loads(script.text)
+                if isinstance(data, list):
+                    for item in data[:5]:
+                        if item.get("@type") == "Product":
+                            name = item.get("name", "")
+                            price = item.get("offers", {}).get("price", "")
+                            items.append(f"[Tokopedia] {name}: Rp {int(float(price)):,}" if price else f"[Tokopedia] {name}")
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                logger.debug(f"[Tokopedia] Skip script JSON-LD invalid: {e}")
+        if not items:
+            harga_els = page.css('[data-testid="spnSRPProdPrice"]')
+            nama_els = page.css('[data-testid="spnSRPProdName"]')
+            for harga, nama in zip(harga_els[:5], nama_els[:5]):
+                items.append(f"[Tokopedia] {nama.text.strip()}: {harga.text.strip()}")
+        return items
+
+    def _parse_shopee(self, page) -> list:
+        items = []
+        scripts = page.css('script[type="application/ld+json"]')
+        for script in scripts[:3]:
+            try:
+                data = json.loads(script.text)
+                if isinstance(data, dict) and data.get("@type") == "ItemList":
+                    for item in data.get("itemListElement", [])[:5]:
+                        name = item.get("name", "")
+                        price = item.get("offers", {}).get("price", "")
+                        items.append(f"[Shopee] {name}: Rp {int(float(price)):,}" if price else f"[Shopee] {name}")
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                logger.debug(f"[Shopee] Skip script JSON-LD invalid: {e}")
+        return items
+
+    def _browser_fallback(self, platform: str, url: str, query: str) -> list:
+        task = (
+            f"Buka {url}. Tunggu grid produk muncul (scroll 1x kalau perlu, max 3 scroll). "
+            f"Ambil 5 produk pertama yang relevan dengan query '{query}'. "
+            f"Return baris-per-baris persis dalam format: 'Nama Produk | Harga' (mata uang Rupiah). "
+            f"Jangan sertakan markdown, penomoran, atau penjelasan apa pun — cuma list produk."
+        )
+        try:
+            raw = BrowserUseTool()._run(task)
+        except Exception as e:
+            logger.error(f"[MARKETPLACE] {platform} browser fallback exception: {e}")
+            return []
+        if not raw.startswith("SUCCESS|"):
+            logger.error(f"[MARKETPLACE] {platform} browser fallback gagal: {raw[:120]}")
+            return []
+        body = raw.split("|", 2)[2] if raw.count("|") >= 2 else ""
+        items = []
+        for line in body.splitlines():
+            line = line.strip().lstrip("-•*0123456789. ")
+            if "|" in line and len(line) > 5:
+                items.append(f"[{platform}/browser] {line}")
+        return items[:5]
 
 # ============================================================
 # Tool 2: Reddit Scraper

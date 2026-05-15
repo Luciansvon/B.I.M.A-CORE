@@ -24,3 +24,5 @@ lancedb
 browser-use>=0.1.40
 mcpadapt
 fpdf2
+openai>=1.12.0
+numpy<2.3

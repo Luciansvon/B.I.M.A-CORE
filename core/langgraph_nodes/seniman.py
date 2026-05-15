@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 import hashlib
 from datetime import datetime
@@ -27,7 +28,81 @@ from teams.t7_html_templates import render_template
 import json
 import re
 
+async def _craft_image_prompt(user_request: str) -> str:
+    """Expand prompt singkat user jadi prompt detail buat image model.
+    Skip kalau user_request udah panjang (>120 char) atau kosong."""
+    base = (user_request or "").strip()
+    if not base or len(base) > 120:
+        return base
+    style_prefix = os.environ.get("IMAGE_GEN_STYLE_PREFIX", "").strip()
+    sys = (
+        "Kamu prompt-engineer untuk text-to-image model. Ekspand request user (Bahasa Indonesia/English) "
+        "jadi prompt detail dalam Bahasa Inggris: subject, composition, lighting, style, color palette, mood. "
+        "Output HANYA prompt akhir, satu baris, max 60 kata, no preamble, no quotes."
+    )
+    if style_prefix:
+        sys += f" Konsisten gaya: '{style_prefix}'."
+    try:
+        resp = await asyncio.to_thread(
+            seniman_llm.invoke,
+            [SystemMessage(content=sys), HumanMessage(content=base)],
+        )
+        crafted = (resp.content or "").strip().strip('"').strip("'")
+        if not crafted:
+            return base
+        if style_prefix and style_prefix.lower() not in crafted.lower():
+            crafted = f"{style_prefix}, {crafted}"
+        logger.info(f"[IMAGE_GEN] Prompt expanded: '{base[:40]}...' → '{crafted[:60]}...'")
+        return crafted
+    except Exception as e:
+        logger.warning(f"[IMAGE_GEN] Prompt expander gagal, pakai raw: {e}")
+        return base
+
+
+async def _handle_image_gen(state: BimaState) -> dict:
+    """Branch khusus untuk image generation via OpenRouter Nano Banana 2."""
+    from tools.image_gen_tool import ImageGenTool
+    from core.gen_rate_limit import check_and_consume
+
+    user_request = state.get("user_request", "")
+    user_id = state.get("discord_user_id", "anon")
+
+    # Rate limit check sebelum LLM expand (hemat token kalau capped)
+    ok, msg = check_and_consume(user_id, "image")
+    if not ok:
+        logger.info(f"[IMAGE_GEN] Rate limited user={user_id}: {msg}")
+        return {
+            "messages": [AIMessage(content=f"⏳ {msg}")],
+            "is_finished": True,
+        }
+
+    await notify_progress(state, "🎨 *Anisa lagi gambar...*")
+
+    crafted_prompt = await _craft_image_prompt(user_request)
+    result = await asyncio.to_thread(ImageGenTool()._run, crafted_prompt)
+
+    # Format reply supaya regex strip SUCCESS-line di wa_server.py / discord clean
+    # (pattern existing: "<friendly text>\nSUCCESS|<path>|<meta>")
+    if result.startswith("SUCCESS|"):
+        parts = result.split("|", 2)
+        meta = parts[2] if len(parts) >= 3 else "Gambar siap"
+        display = f"🎨 {meta}\n{result}"
+    else:
+        # FAILED|... — kasih prefix biar lebih jelas kalau gagal
+        display = f"❌ Image gen gagal — {result}"
+
+    return {
+        "messages": [AIMessage(content=display)],
+        "is_finished": True,
+    }
+
+
 async def seniman_node(state: BimaState) -> dict:
+    # Branch generative output dulu — gen_mode diset oleh intent_classifier_node
+    gen_mode = state.get("gen_mode")
+    if gen_mode == "image":
+        return await _handle_image_gen(state)
+
     user_request = state.get("user_request", "")
     realtime_context = state.get("realtime_context", "")
     temp_data = state.get("temp_data", {})
