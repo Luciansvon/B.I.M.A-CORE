@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
 from core.langgraph_nodes.llm_config import default_llm
 from teams.t5_intel import SmartSearchTool
@@ -17,7 +17,7 @@ browser_tool = BrowserUseTool()
 # Pattern: cek URL eksplisit AND minimal salah satu verb di list.
 _URL_PATTERN = re.compile(r'https?://[^\s\'"<>]+', re.IGNORECASE)
 _INTERACTIVE_VERBS = re.compile(
-    r'\b(browse|buka|navigasi|masuk\s+ke|login(?:\s+ke)?|klik|isi\s+form|scrape|extract\s+isi|scroll|interact)\b',
+    r'\b(brows\w*|buka|navigasi\w*|masuk\s+ke|login(?:\s+ke)?|klik\w*|isi\s+form|scrape|scrap\w+|extract\s+isi|scroll\w*|interact\w*|fetch|live\s+brows\w*)\b',
     re.IGNORECASE,
 )
 
