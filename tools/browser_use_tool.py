@@ -80,7 +80,16 @@ class BrowserUseTool(BaseTool):
                 base_url="https://openrouter.ai/api/v1",
                 temperature=0.1,
             )
-            profile_kwargs = {"headless": not headed}
+            # Speed-tune: matikan highlight animasi 1-detik per click (default browser-use)
+            # + minimize wait. User tetep bisa lihat cursor + klik di headed window,
+            # cuma tanpa overlay kuning yang nge-add 1s per action.
+            profile_kwargs = {
+                "headless": not headed,
+                "highlight_elements": False,
+                "interaction_highlight_duration": 0.0,
+                "wait_between_actions": 0.0,
+                "minimum_wait_page_load_time": 0.1,  # default 0.25, lebih agresif
+            }
             if session_dir is not None:
                 profile_kwargs["record_video_dir"] = str(session_dir)
             profile = BrowserProfile(**profile_kwargs)
