@@ -25,7 +25,9 @@ from crewai.tools import BaseTool
 
 logger = logging.getLogger("bima_core.browser_use")
 
-_DEFAULT_MODEL = "deepseek/deepseek-v4-flash"  # hemat — banyak action per task
+# Gemini 3.1 Flash: vision native + TTFT cepat. DeepSeek gak support vision,
+# bikin agent buta di JS-heavy SPA. Override via env BROWSER_USE_MODEL=<id>.
+_DEFAULT_MODEL = os.environ.get("BROWSER_USE_MODEL", "google/gemini-3.1-flash").strip()
 _MAX_STEPS = 20  # cap actions per task biar gak runaway
 _OUTPUT_TRUNCATE = 4000  # avoid Discord overflow + token waste
 
