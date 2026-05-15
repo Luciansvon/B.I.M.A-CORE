@@ -219,6 +219,7 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
             attachment_paths=downloaded_files,
             progress_callback=update_progress,
             discord_user_id=str(message.author.id),
+            source_channel="discord",
         )
         
         # Simpan sesi (untuk histori dan memori)

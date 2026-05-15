@@ -41,6 +41,18 @@ _PROMPT_OPTIMIZE = re.compile(
     re.IGNORECASE,
 )
 
+# Video generation: trigger eksplisit "bikin/buat/generate video" atau slash command.
+# Dicek SEBELUM _IMAGE_GEN — lebih spesifik biar "bikin video" gak ke-route ke image.
+_VIDEO_GEN = re.compile(
+    # Cabang A: verba + noun ("bikin video", "render klip", "animasiin clip")
+    r'\b(bikin|buat|generate|render|animas\w+)\b.{0,40}\b(video|klip|clip|animasi)\b'
+    # Cabang B: verba khusus implisit ("videoin X", "animasiin X", "animasikan X")
+    r'|\b(videoin|animasiin|animasikan)\b'
+    # Cabang C: slash command
+    r'|^\s*/anisa\s+(video|klip|animasi)\b',
+    re.IGNORECASE,
+)
+
 # Image generation: trigger eksplisit "bikin/buat/generate gambar" atau slash command.
 # Cek SEBELUM generic seniman patterns supaya gen image gak ke-route ke HTML pipeline.
 _IMAGE_GEN = re.compile(
@@ -121,6 +133,10 @@ def classify_intent(user_request: str, has_attachment: bool) -> tuple[list[str],
     if _RUN_CODE.search(text):
         return ["mekanik"], 0.90, "eksekusi kode"
 
+    # Video gen DULU karena lebih spesifik (kata "video" >> "gambar" prio)
+    if _VIDEO_GEN.search(text):
+        return ["seniman"], 0.93, "video gen"
+
     if _IMAGE_GEN.search(text):
         return ["seniman"], 0.93, "image gen"
 
@@ -163,9 +179,11 @@ async def intent_classifier_node(state: BimaState) -> dict:
             "active_teams": teams,
             "is_finished": False,
         }
-        # Tag generative mode supaya seniman_node tau harus branch ke image gen
+        # Tag generative mode supaya seniman_node tau harus branch ke image / video gen
         if label == "image gen":
             update["gen_mode"] = "image"
+        elif label == "video gen":
+            update["gen_mode"] = "video"
         return update
     logger.info("[CLASSIFIER] No fast-path → fallback ke manager_node")
     return {}

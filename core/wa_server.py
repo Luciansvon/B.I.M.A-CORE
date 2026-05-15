@@ -78,6 +78,7 @@ Gunakan info waktu ini saat menjawab.
             konteks_waktu=konteks_waktu,
             attachment_paths=req.attachment_paths,
             progress_callback=None,
+            source_channel="whatsapp",
         )
 
         # Simpan sesi

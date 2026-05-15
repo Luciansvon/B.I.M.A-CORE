@@ -40,6 +40,11 @@ class BimaState(TypedDict):
     # dipakai seniman_node untuk branch ke ImageGenTool / VideoGenTool / HTML pipeline
     gen_mode: NotRequired[str]
 
+    # Channel asal request — "discord" | "whatsapp" | "" (unknown).
+    # Dipakai seniman_node untuk Discord-guard di video gen (Discord 25MB limit ketat,
+    # WA 100MB lega — kalau Discord trigger video, redirect user ke WA).
+    source_channel: NotRequired[str]
+
 
 async def notify_progress(state: BimaState, message: str) -> None:
     """Kirim status progress ke Discord. Silent jika callback tidak ada atau gagal."""

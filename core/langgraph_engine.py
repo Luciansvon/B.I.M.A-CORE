@@ -247,7 +247,7 @@ _STREAM_DEBOUNCE_S = 0.6
 _DISCORD_MAX = 1900
 
 
-async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment_paths: list = None, progress_callback=None, discord_user_id: str = ""):
+async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment_paths: list = None, progress_callback=None, discord_user_id: str = "", source_channel: str = ""):
     initial_state = {
         "messages": [],
         "user_request": user_request,
@@ -259,7 +259,10 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
         "is_finished": False,
         "progress_callback": progress_callback,
         "discord_user_id": discord_user_id,
+        "source_channel": source_channel,
     }
+    if source_channel:
+        logger.info(f"[LANGGRAPH] source_channel={source_channel}")
 
     logger.info("[LANGGRAPH] Memulai Orkestrasi...")
     emit('reset', message=f'Permintaan baru: "{user_request[:80]}"')

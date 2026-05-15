@@ -59,6 +59,83 @@ async def _craft_image_prompt(user_request: str) -> str:
         return base
 
 
+async def _periodic_video_notify(state: BimaState):
+    """Push progress notify tiap ~30s selama video gen jalan (1-3 menit).
+    Cancel saat task selesai."""
+    msgs = [
+        "🎬 *Anisa lagi render video... (1-3 menit, sabar ya)*",
+        "🎬 *Masih render... bentar lagi*",
+        "🎬 *Hampir kelar... finalize MP4*",
+        "🎬 *Polling status terakhir...*",
+    ]
+    i = 0
+    try:
+        while True:
+            await notify_progress(state, msgs[min(i, len(msgs) - 1)])
+            i += 1
+            await asyncio.sleep(30)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _handle_video_gen(state: BimaState) -> dict:
+    """Branch khusus untuk video generation via OpenRouter Kling v3 Pro.
+    Discord-source guard: redirect user ke WA karena Discord 25MB limit ketat."""
+    from tools.video_gen_tool import VideoGenTool
+    from core.gen_rate_limit import check_and_consume
+
+    user_request = state.get("user_request", "")
+    user_id = state.get("discord_user_id", "anon")
+    source = (state.get("source_channel") or "").lower()
+
+    # Discord guard — redirect tanpa konsumsi rate limit slot (gak fair kalau dia gak dapet output)
+    if source == "discord":
+        logger.info(f"[VIDEO_GEN] Discord trigger (user={user_id}) → redirect ke WA")
+        return {
+            "messages": [AIMessage(content=(
+                "⚠️ Video gen output bisa lewat 25MB, gak fit Discord limit.\n"
+                "Trigger via WhatsApp aja ya — Anisa support WA juga (limit 100MB lega).\n"
+                "Format pesan sama: `bikin video <deskripsi>`."
+            ))],
+            "is_finished": True,
+        }
+
+    # Rate limit check
+    ok, msg = check_and_consume(user_id, "video")
+    if not ok:
+        logger.info(f"[VIDEO_GEN] Rate limited user={user_id}: {msg}")
+        return {
+            "messages": [AIMessage(content=f"⏳ {msg}")],
+            "is_finished": True,
+        }
+
+    await notify_progress(state, "🎬 *Anisa lagi render video... (1-3 menit, sabar ya)*")
+
+    # Spawn periodic notify (tiap 30s) supaya user gak ngerasa hang
+    notify_task = asyncio.create_task(_periodic_video_notify(state))
+    try:
+        result = await asyncio.to_thread(VideoGenTool()._run, user_request)
+    finally:
+        notify_task.cancel()
+        try:
+            await notify_task
+        except asyncio.CancelledError:
+            pass
+
+    # Format reply supaya wa_server regex strip SUCCESS line clean
+    if result.startswith("SUCCESS|"):
+        parts = result.split("|", 2)
+        meta = parts[2] if len(parts) >= 3 else "Video siap"
+        display = f"🎬 {meta}\n{result}"
+    else:
+        display = f"❌ Video gen gagal — {result}"
+
+    return {
+        "messages": [AIMessage(content=display)],
+        "is_finished": True,
+    }
+
+
 async def _handle_image_gen(state: BimaState) -> dict:
     """Branch khusus untuk image generation via OpenRouter Nano Banana 2."""
     from tools.image_gen_tool import ImageGenTool
@@ -100,6 +177,8 @@ async def _handle_image_gen(state: BimaState) -> dict:
 async def seniman_node(state: BimaState) -> dict:
     # Branch generative output dulu — gen_mode diset oleh intent_classifier_node
     gen_mode = state.get("gen_mode")
+    if gen_mode == "video":
+        return await _handle_video_gen(state)
     if gen_mode == "image":
         return await _handle_image_gen(state)
 
