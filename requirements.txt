@@ -27,3 +27,17 @@ fpdf2
 openai>=1.12.0
 numpy<2.3
 fal-client
+uvloop
+loguru
+memray
+sentry-sdk[fastapi]
+apprise
+diskcache
+rank-bm25
+stamina
+msgspec
+outlines
+psutil
+pyinstrument
+easyocr
+pymupdf4llm

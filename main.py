@@ -1,6 +1,53 @@
 import atexit
 import importlib
 import logging
+import os
+import sys
+
+import uvloop
+uvloop.install()
+
+# Sentry error tracking — no-op kalau SENTRY_DSN ga di-set di .env.
+# Set SENTRY_DSN di .env (https://sentry.io free tier 5k events/bulan) buat aktif.
+import sentry_sdk
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_DSN", ""),
+    traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+    send_default_pii=False,
+    environment=os.environ.get("BIMA_ENV", "prod"),
+)
+
+from loguru import logger as _loguru
+
+
+class _InterceptHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = _loguru.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+        _loguru.opt(depth=depth, exception=record.exc_info).bind(source=record.name).log(
+            level, record.getMessage()
+        )
+
+
+_loguru.remove()
+_loguru.add(
+    sys.stderr,
+    format=(
+        "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <7}</level> | "
+        "<cyan>{extra[source]:<24}</cyan> | {message}"
+    ),
+    level="INFO",
+    backtrace=True,
+    diagnose=False,
+)
+_loguru.configure(extra={"source": "loguru"})
+logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
 
 from core.discord_bot import run_bot
 

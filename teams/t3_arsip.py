@@ -8,12 +8,15 @@ from pathlib import Path
 from datetime import datetime
 from crewai import Agent
 from crewai.tools import BaseTool
-from sentence_transformers import SentenceTransformer
 from config import arsip_llm, OBSIDIAN_PATH
+from core.embedder import get_embedder
 
 logger = logging.getLogger('bima_core')
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+# Switch local/cloud via env EMBEDDING_BACKEND=local|cloud (default local).
+# Cloud (bge-m3) dim=1024, local (all-MiniLM-L6-v2) dim=384 — kalau ganti backend,
+# WAJIB drop & re-index folder vault_index/ supaya schema cocok.
+embedder = get_embedder("arsip")
 db = lancedb.connect(os.path.join(os.path.dirname(__file__), "../vault_index"))
 
 _reranker = None

@@ -47,7 +47,7 @@ Pengguna → Discord / WhatsApp / Web
 | Fitur | Deskripsi |
 |-------|-----------|
 | 🧠 **Multi-Agent Orchestration** | LangGraph routing otomatis ke agen yang paling relevan |
-| 🔌 **MCP Integration** | Fetch, Markitdown, GitHub, SearXNG — tools eksternal yang pluggable |
+| 🔌 **MCP Integration** | Fetch, Markitdown, Time, DuckDuckGo, Playwright, Git, SQLite, Filesystem — tools eksternal yang pluggable |
 | 💾 **Memori Jangka Panjang** | Vector store (LanceDB) + SQLite untuk konteks percakapan persisten |
 | 📊 **Real-Time Dashboard** | Guild hall pixel art (React + WebSocket) untuk visualisasi aktivitas |
 | 📄 **Document Processing** | PDF, Word, Excel, PowerPoint — baca, analisis, dan generate |
@@ -93,7 +93,7 @@ Database         │ SQLite (memori agen)
 Browser Auto     │ browser-use >= 0.1.40
 Task Scheduler   │ APScheduler
 Process Manager  │ PM2 + Cloudflare Tunnel
-Deployment       │ VPS (Ubuntu 22.04+)
+Deployment       │ WSL Ubuntu 22.04+ (local PC) atau VPS Linux
 ```
 
 ---
@@ -199,6 +199,73 @@ PM2 akan menjalankan 3 proses sekaligus:
 | `bima-tunnel` | Cloudflare Tunnel |
 | `bima-whatsapp` | WhatsApp bridge (Node.js) |
 
+### Auto-start saat Windows login (WSL setup)
+
+Kalau lo run BIMA_CORE di WSL Ubuntu (bukan VPS Linux native), butuh 2 layer biar bot otomatis nyala saat Windows login:
+
+**Layer 1 — Pastikan systemd aktif di WSL** (`/etc/wsl.conf`):
+
+```ini
+[boot]
+systemd=true
+
+[user]
+default=bima_lucian
+```
+
+Restart WSL setelah edit: `wsl --shutdown` (dari PowerShell Windows) → wait → `wsl -d Ubuntu`.
+
+**Layer 2 — PM2 systemd unit (jalanin di WSL Ubuntu):**
+
+```bash
+# Generate + install systemd service (sekali aja)
+sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u bima_lucian --hp /home/bima_lucian
+
+# Save current process list ke dump file
+pm2 save
+
+# Verify
+systemctl status pm2-bima_lucian
+```
+
+**Layer 3 — Trigger WSL boot saat Windows login** (lewat Windows Task Scheduler):
+
+```powershell
+# Buat task — jalan saat user login
+$action = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "-d Ubuntu --exec /bin/true"
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName "WSL-BIMA-Boot" -Action $action -Trigger $trigger -RunLevel Highest
+```
+
+Task ini cuma "membangunkan" WSL — begitu WSL hidup, systemd auto-start PM2, PM2 auto-resurrect proses dari dump file. Bot online tanpa manual launch.
+
+---
+
+## 🌐 PC/WSL vs VPS — kapan migrate?
+
+Saat ini lo run di **WSL Ubuntu di PC** lo. Cukup buat development + casual use, tapi ada batasan:
+
+| Aspek | WSL di PC (sekarang) | VPS Linux native |
+|---|---|---|
+| Uptime | Cuma saat PC nyala | 24/7 (~99.9% SLA) |
+| Cost | $0 | $5-10/bulan (mis. Hetzner CX11, DigitalOcean droplet) |
+| RAM | Share dgn Windows/game | Dedicated 2-8GB |
+| Latency Discord | Tergantung internet rumah | Stable datacenter |
+| Maintenance | Lo restart sendiri | Auto-update OS, snapshot, dll |
+| Setup | Udah jalan | Migrate semua (10-30 menit pakai script `deploy_vps.sh`) |
+
+**Indikator lo udah perlu migrate ke VPS:**
+- Sering bot mati karena PC dimatikan / restart Windows
+- Saham scheduler miss event krusial saat lo lagi tidur / kerja
+- Bima yg join Discord 24/7 (community bot)
+
+**Indikator masih cukup di PC:**
+- Cuma lo + 1-2 user yg pake
+- Use case furniture QC + casual chat
+- Belum ada commitment 24/7 / SLA
+
+Path migrasi: `deploy_vps.sh` udah ada di repo — jalanin di VPS Ubuntu kosong, otomatis clone repo + install deps + setup PM2 + cloudflare tunnel. Migrate ~30 menit.
+
 ---
 
 ## 📊 Dashboard
@@ -256,15 +323,86 @@ B.I.M.A-CORE/
 
 ## 🔌 MCP Tools
 
-B.I.M.A mendukung **Model Context Protocol (MCP)** untuk integrasi tools eksternal yang pluggable:
+B.I.M.A mendukung **Model Context Protocol (MCP)** untuk integrasi tools eksternal yang pluggable. Tiap MCP di-attach ke agent tertentu via `attach_to` di `config_mcp.json`.
 
-- **fetch** — Mengambil konten web
-- **markitdown** — Konversi dokumen ke Markdown
-- **memory** — Memori agen persisten
-- **github** — Integrasi GitHub repository
-- **searxng** — Search engine private
+**Enabled by default:**
 
-Tambah tool baru di `config_mcp.json`.
+| MCP | Fungsi | Attached agent |
+|-----|--------|----------------|
+| `fetch` | Ambil konten web jadi text/markdown | intel |
+| `markitdown` | Konversi PDF/DOCX/PPTX/XLSX ke Markdown | arsip, visual |
+| `sequential_thinking` | Reasoning chain terstruktur | manager (Anisa) |
+| `memory_anthropic` | Persistent KV memory cross-session | arsip, manager |
+| `time` | Current time + timezone conversion | manager, saham, lifestyle |
+| `duckduckgo` | Web search gratis tanpa API key | intel, kodok |
+| `playwright` | Browser automation + screenshot | visual, intel, seniman |
+| `git` | Log/blame/diff repo BIMA_CORE | mekanik, kodok |
+| `sqlite` | Structured store untuk log Discord + jurnal saham | arsip, saham |
+| `filesystem` | Read/write file di scope `outputs/` saja | intel, mekanik, visual, seniman |
+
+**Disabled (config-only, butuh setup tambahan):**
+
+- `github` — butuh `GITHUB_PERSONAL_ACCESS_TOKEN` di `.env`
+- `searxng` — butuh `SEARXNG_URL` (instance public atau self-host) di `.env`
+
+Tambah/edit tool di `config_mcp.json`. Restart bot supaya `MCPClientManager` reload config.
+
+---
+
+## 🛡️ Reliability & Observability
+
+| Stack | Tujuan | Setup |
+|---|---|---|
+| `uvloop` | Drop-in asyncio 2-4× speedup | Aktif otomatis di [main.py](main.py) |
+| `loguru` | Color/structured logging, replace stdlib | Aktif otomatis dgn stdlib intercept |
+| `memray` | Memory profiler (manual run) | `memray run --live bima_env/bin/python main.py` |
+| `pyinstrument` | CPU flamegraph profiler (manual run) | `pyinstrument bima_env/bin/python main.py` |
+| `sentry-sdk` | Auto-capture crash + stack trace + breadcrumb | Set `SENTRY_DSN` di `.env` (free tier 5k events/bulan) |
+| `apprise` | Multi-channel notify fallback (Telegram/ntfy/email/dll) | Set `APPRISE_URLS` di `.env` comma-separated |
+| `psutil` | System metrics (CPU/RAM/disk) | Auto via `!status` Discord command |
+| `stamina` | Retry decorator (jitter + exp backoff) | Wired di [core/embedder.py](core/embedder.py) + [core/furniture_qc.py](core/furniture_qc.py) hot path |
+| `diskcache` | Persistent disk cache (TTL built-in) | Auto-pakai buat cloud embedding cache di [core/embedder.py](core/embedder.py) |
+
+Tanpa setup `.env`, `sentry-sdk` + `apprise` jadi no-op (aman, ga error). Begitu `.env` di-isi, langsung aktif.
+
+---
+
+## 🧠 RAG Quality (Wave 3)
+
+Embedding backend switchable lokal/cloud via env `EMBEDDING_BACKEND`:
+
+| Backend | Model arsip | Model code (repo_rag) | Dim | RAM | Biaya |
+|---|---|---|---|---|---|
+| `local` (default) | `all-MiniLM-L6-v2` | `all-MiniLM-L6-v2` | 384 | ~2GB | $0 |
+| `cloud` | `baai/bge-m3` | `mistralai/codestral-embed-2505` | 1024 | ~0 | ~$0.03/bulan |
+
+**Switch ke cloud (untuk RAG Bahasa Indonesia lebih akurat):**
+
+```bash
+# 1. Set di .env
+EMBEDDING_BACKEND=cloud
+EMBED_CACHE_TTL_DAYS=30
+
+# 2. Drop existing index (dim berubah 384→1024)
+rm -rf vault_index/ repo_index/
+
+# 3. Restart bot — index auto-rebuild pakai model baru
+pm2 restart anisa-v3
+```
+
+**Hybrid search (BM25 + vector):** helper di [core/bm25_index.py](core/bm25_index.py) — `build_from_corpus()` + `BM25Index.search()` + `hybrid_merge()`. Belum di-wire ke arsip/repo_rag flow (opt-in pakai langsung kalau lo mau).
+
+---
+
+## 🛠️ Discord Commands
+
+| Command | Fungsi |
+|---|---|
+| `!saham help` | List subcommand saham (digest, watchlist, ticker, chart, portfolio, override) |
+| `!qc` + attachment PDF/PNG/JPG | **Furniture drawing QC** — review gambar kerja: dimensi, detail sambungan, view, BOM. Output: text report + markup PNG (overlay box berwarna di lokasi issue). Pakai Gemini Flash vision via OpenRouter. ⚠️ Test pakai project pribadi aja, JANGAN drawing client/perusahaan (data lewat cloud third-party). |
+| `!ocr` + image attachment | OCR EasyOCR — extract text dari image (PNG/JPG/WEBP). Support Bahasa Indonesia + English. Lazy-load model ~80MB (first call lambat, selanjutnya cepet). |
+| `!status` | Health snapshot host (PC/WSL atau VPS) — CPU/RAM/disk/load average/process count. Pakai psutil. |
+| mention `@Anisa <pesan>` | General chat → LangGraph router otomatis ke agent yg paling relevan |
 
 ---
 

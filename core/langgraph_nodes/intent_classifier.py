@@ -45,11 +45,12 @@ _PROMPT_OPTIMIZE = re.compile(
 # Dicek SEBELUM _IMAGE_GEN — lebih spesifik biar "bikin video" gak ke-route ke image.
 _VIDEO_GEN = re.compile(
     # Cabang A: verba + noun ("bikin video", "render klip", "animasiin clip")
-    r'\b(bikin|buat|generate|render|animas\w+)\b.{0,40}\b(video|klip|clip|animasi)\b'
+    # NB: "vidio" itu typo umum Bahasa Indonesia informal — masuk whitelist
+    r'\b(bikin|buat|generate|render|animas\w+)\b.{0,40}\b(video|vidio|klip|clip|animasi)\b'
     # Cabang B: verba khusus implisit ("videoin X", "animasiin X", "animasikan X")
-    r'|\b(videoin|animasiin|animasikan)\b'
+    r'|\b(videoin|vidioin|animasiin|animasikan)\b'
     # Cabang C: slash command
-    r'|^\s*/anisa\s+(video|klip|animasi)\b',
+    r'|^\s*/anisa\s+(video|vidio|klip|animasi)\b',
     re.IGNORECASE,
 )
 

@@ -11,14 +11,11 @@ from core.utils import get_waktu, smart_chunks, extract_output_files
 from core.langgraph_engine import run_langgraph_engine
 from core.saham_scheduler import start_saham_scheduler
 from core.saham_commands import handle_saham_command
+from core.furniture_qc import handle_qc_command
+from core.ocr import handle_ocr_command
 from teams.t1_manager import simpan_sesi
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)-7s | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Logging diatur di main.py (loguru + stdlib intercept). Cukup ambil logger di sini.
 logger = logging.getLogger('bima_core')
 
 load_dotenv()
@@ -108,10 +105,21 @@ async def on_ready():
         channel = client.get_channel(int(STATUS_CHANNEL_ID))
         if channel is None:
             channel = await client.fetch_channel(int(STATUS_CHANNEL_ID))
-        await channel.send(embed=_build_startup_embed())
-        logger.info(f'✅ Startup notif terkirim ke channel {STATUS_CHANNEL_ID}')
+        from core.notify import safe_notify
+        ok = await safe_notify(
+            channel,
+            embed=_build_startup_embed(),
+            content='✨ Anisa B.I.M.A Core online',
+            title='Anisa Startup',
+        )
+        if ok:
+            logger.info(f'✅ Startup notif terkirim ke channel {STATUS_CHANNEL_ID}')
+        else:
+            logger.warning('Startup notif gagal di semua channel (Discord + apprise)')
     except (discord.errors.NotFound, discord.errors.Forbidden) as e:
         logger.error(f'Channel notif tidak ditemukan / tidak ada izin: {e}')
+        from core.notify import broadcast_critical
+        await broadcast_critical(f'Channel notif Discord error: {e}', title='Anisa Startup')
     except ValueError:
         logger.error(f'BOT_STATUS_CHANNEL_ID bukan angka valid: {STATUS_CHANNEL_ID}')
     except Exception as e:
@@ -149,6 +157,26 @@ async def on_message(message):
     if perintah.lower().startswith("!saham"):
         args = perintah[6:].strip()
         await handle_saham_command(message, args, bot_client=client)
+        return
+
+    # === !qc command (furniture drawing QC) ===
+    if perintah.lower().startswith("!qc"):
+        await handle_qc_command(message, bot_client=client)
+        return
+
+    # === !ocr command (extract text dari image) ===
+    if perintah.lower().startswith("!ocr"):
+        await handle_ocr_command(message, bot_client=client)
+        return
+
+    # === !status command (VPS health snapshot) ===
+    if perintah.lower().startswith("!status"):
+        try:
+            from core.system_metrics import snapshot, format_status_text
+            snap = snapshot()
+            await message.reply(format_status_text(snap))
+        except Exception as e:
+            await message.reply(f"❌ Gagal ambil status: `{e}`")
         return
 
     # ============================================================
