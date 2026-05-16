@@ -285,14 +285,8 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
             logger.error(f"Gagal kirim pesan error ke Discord: {reply_err}")
 
 def run_bot():
-    # Start dashboard server di background thread (non-blocking)
-    try:
-        from core.dashboard_server import start_in_background
-        dashboard_port = int(os.getenv('DASHBOARD_PORT', '8000'))
-        start_in_background(host="0.0.0.0", port=dashboard_port)
-    except Exception as e:
-        logger.warning(f"Dashboard server gagal start (bot tetap jalan): {e}")
-
+    # Dashboard server start di main.py (host=127.0.0.1 loopback-only — cloudflared
+    # tunnel yg expose ke internet, ga perlu bind 0.0.0.0).
     if DISCORD_TOKEN:
         client.run(DISCORD_TOKEN)
     else:
