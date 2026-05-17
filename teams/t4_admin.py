@@ -569,10 +569,16 @@ class WordGeneratorTool(BaseTool):
             from docx.oxml import OxmlElement as _OxmlEl
             from docx.oxml.ns import qn as _qn
             section_doc = doc.sections[0]
-            section_doc.top_margin    = Cm(margins_cm.get("top", 2.54))
+            # Min top_margin 2.0cm supaya title gak nabrak header area
+            _top_cm = max(float(margins_cm.get("top", 2.54)), 2.0)
+            section_doc.top_margin    = Cm(_top_cm)
             section_doc.bottom_margin = Cm(margins_cm.get("bottom", 2.54))
             section_doc.left_margin   = Cm(margins_cm.get("left", 2.54))
             section_doc.right_margin  = Cm(margins_cm.get("right", 2.54))
+            # Explicit header/footer distance — default Word ~1.27cm, pendekkin ke 0.8cm
+            # supaya body area gak ke-"makan" header
+            section_doc.header_distance = Cm(0.8)
+            section_doc.footer_distance = Cm(0.8)
 
             # === GAYA NORMAL: font, line spacing, space after ===
             normal_style = doc.styles['Normal']
@@ -657,6 +663,9 @@ class WordGeneratorTool(BaseTool):
             # Title
             title_para = doc.add_paragraph()
             title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            title_para.paragraph_format.space_before = Pt(18)
+            title_para.paragraph_format.space_after = Pt(6)
+            title_para.paragraph_format.keep_with_next = True
             title_run = title_para.add_run(data.get("title", "Dokumen"))
             title_run.font.bold = True
             title_run.font.size = Pt(style["title_size"] + 4)
@@ -1848,6 +1857,10 @@ admin_agent = Agent(
     8. Untuk style "academic": JANGAN override font/margin/spacing kecuali Bima eksplisit minta.
     9. Untuk style "academic": WAJIB isi "abstract" dan "keywords" di JSON input.
     10. Untuk skripsi: GUNAKAN "level" di sections (1 untuk BAB, 2 untuk sub-bab, 3 untuk sub-sub-bab).
+    11. MARGIN TOP MINIMAL 2.0 cm. Jangan kasih "margins.top" < 2.0 cm — title bakal nabrak area header.
+        Default style udah aman (2.54 cm); kalau Bima minta margin custom kecil, naikin ke 2.0 cm.
+    12. TITLE MAX 80 KARAKTER. Kalau judul kepanjangan, pendekin atau pecah ke "subtitle".
+        Title panjang bakal wrap ke banyak baris dan dorong layout halaman 1.
 
     Output kamu siap dikirim ke Bima — tidak perlu diedit lagi.""",
     llm=admin_llm,

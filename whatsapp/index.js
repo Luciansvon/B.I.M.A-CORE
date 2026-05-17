@@ -66,6 +66,19 @@ if (!fs.existsSync(CONFIG.outputDir)) {
 }
 
 // ============================================================
+// STT ARMING — voice note default ignored, harus armed via "/bot stt" (TTL 60s)
+// Key: msg.from (chat ID, e.g. "62812xxx@c.us") — consistent fromMe & received.
+// ============================================================
+const STT_ARM_TTL_MS = 60 * 1000;
+const sttArmed = new Map(); // chatId (msg.from) -> expiry timestamp ms
+function isSttArmed(chatId) {
+    const exp = sttArmed.get(chatId);
+    if (!exp) return false;
+    if (exp < Date.now()) { sttArmed.delete(chatId); return false; }
+    return true;
+}
+
+// ============================================================
 // LOGGER
 // ============================================================
 function log(level, msg) {
@@ -515,10 +528,12 @@ async function handleMessage(msg) {
     try {
         const chat = await msg.getChat();
         if (chat.isGroup) return;
-        // Allow fromMe (user sendiri kirim) HANYA kalau pesan diawalin prefix — biar lu bisa pake bot dari HP utama tanpa loop ke balasan bot
+        // Allow fromMe (user sendiri kirim) HANYA kalau pesan diawalin prefix — biar lu bisa pake bot dari HP utama tanpa loop ke balasan bot.
+        // Pengecualian: voice note (ptt) bypass prefix HANYA kalau STT armed (user udah text "/bot stt" 60s terakhir).
         if (msg.fromMe) {
             const t = (msg.body || '').trim().toLowerCase();
-            if (!t.startsWith(CONFIG.triggerPrefix)) return;
+            const isPtt = msg.type === 'ptt';
+            if (!t.startsWith(CONFIG.triggerPrefix) && !(isPtt && isSttArmed(msg.from))) return;
         }
 
         // Resolve sender ke nomor telepon (handle @lid hash WhatsApp)
@@ -539,13 +554,22 @@ async function handleMessage(msg) {
         const lower = text.toLowerCase();
         const prefix = CONFIG.triggerPrefix;
 
-        // Cuma proses kalau pesan diawalin prefix
-        if (!lower.startsWith(prefix)) return;
+        // Voice note (ptt) bypass prefix HANYA kalau STT armed (user text "/bot stt" 60s terakhir).
+        // Default: voice note tanpa armed = silent ignore (gak spam transcribe semua voice).
+        // Arming key pakai msg.from (chat ID) — konsisten antara fromMe & received.
+        const isVoiceNote = msg.type === 'ptt';
+        const sttActive = isVoiceNote && isSttArmed(msg.from);
 
-        log('INFO', `${senderId}: "${text.substring(0, 80)}"`);
+        // Cuma proses kalau pesan diawalin prefix — KECUALI armed voice note
+        if (!sttActive && !lower.startsWith(prefix)) return;
 
-        // Body setelah prefix
-        const afterPrefix = text.substring(prefix.length).trim();
+        // Disarm STT setelah voice note dipakai (1 voice per arm)
+        if (sttActive) sttArmed.delete(msg.from);
+
+        log('INFO', `${senderId}: "${sttActive ? '[voice note → STT]' : text.substring(0, 80)}"`);
+
+        // Body setelah prefix (voice note armed: skip prefix strip, body kosong)
+        const afterPrefix = sttActive ? '' : text.substring(prefix.length).trim();
         const afterLower = afterPrefix.toLowerCase();
 
         // Login: "/bot login <password>"
@@ -595,6 +619,15 @@ async function handleMessage(msg) {
             } catch { await msg.reply('🔌 Backend tidak merespons.'); }
             return;
         }
+        // Arm STT 60 detik — voice note berikutnya bakal di-transcribe via faster-whisper.
+        // Anisa otomatis reply pakai voice (TTS auto-mirror) — gak perlu command terpisah buat TTS.
+        // Key: msg.from (chat ID) — konsisten antara fromMe & received messages.
+        if (['stt', 'tts', 'voice', 'suara', 'v', 'note', 'vn'].includes(afterLower)) {
+            sttArmed.set(msg.from, Date.now() + STT_ARM_TTL_MS);
+            log('INFO', `STT armed for ${msg.from} (TTL ${STT_ARM_TTL_MS / 1000}s)`);
+            await msg.reply('🎤 Voice mode aktif 60 detik. Kirim voice note — Anisa bales pakai voice juga.');
+            return;
+        }
 
         // Admin commands — semua require user udah lolos gate (whitelist + login kalo password aktif)
         if (afterLower === 'wl' || afterLower.startsWith('wl ')) {
@@ -624,14 +657,16 @@ async function handleMessage(msg) {
             if (fp) attachmentPaths.push(fp);
         }
 
-        let perintah = body || (attachmentPaths.length ? 'analisis file ini' : '');
-        if (!perintah) return;
+        // STT-active voice note: perintah kosong, backend STT yang generate dari transcript.
+        // File attachment biasa: fallback "analisis file ini" + auto-append "baca file".
+        let perintah = body || (attachmentPaths.length && !sttActive ? 'analisis file ini' : '');
+        if (!perintah && !sttActive) return;
 
-        if (attachmentPaths.length && !['gambar','foto','pdf','lihat','analisis','baca'].some(k => perintah.toLowerCase().includes(k))) {
+        if (!sttActive && attachmentPaths.length && !['gambar','foto','pdf','lihat','analisis','baca'].some(k => perintah.toLowerCase().includes(k))) {
             perintah += ' baca file';
         }
 
-        log('INFO', `→ Anisa: "${perintah.substring(0, 80)}"`);
+        log('INFO', `→ Anisa: "${perintah.substring(0, 80) || '[voice note → STT]'}"`);
 
         // Keep "typing..." indicator hidup selama LangGraph proses (re-trigger tiap 8s)
         const typingInterval = setInterval(() => {
@@ -651,12 +686,30 @@ async function handleMessage(msg) {
             return;
         }
 
-        // Kirim response (chunked)
-        const chunks = smartChunks(result.response);
-        await msg.reply(chunks[0]);
-        for (let i = 1; i < chunks.length; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            await chat.sendMessage(chunks[i]);
+        // TTS auto-mirror: kalau backend kirim voice_file (input voice → reply voice juga)
+        // voice_mode 'full'    → voice doang, skip kirim text duplicate
+        // voice_mode 'summary' → text full + voice 1-line summary
+        const voiceFile = result.voice_file;
+        const voiceMode = result.voice_mode;
+        const skipTextReply = voiceMode === 'full' && voiceFile && fs.existsSync(voiceFile);
+
+        let chunks = [];
+        if (!skipTextReply) {
+            chunks = smartChunks(result.response);
+            await msg.reply(chunks[0]);
+            for (let i = 1; i < chunks.length; i++) {
+                await new Promise(r => setTimeout(r, 500));
+                await chat.sendMessage(chunks[i]);
+            }
+        }
+
+        // Kirim voice note kalau ada
+        if (voiceFile && fs.existsSync(voiceFile)) {
+            try {
+                const voiceMedia = MessageMedia.fromFilePath(voiceFile);
+                await new Promise(r => setTimeout(r, 300));
+                await chat.sendMessage(voiceMedia, { sendAudioAsVoice: true });
+            } catch (e) { log('WARN', `Gagal kirim voice note: ${e.message}`); }
         }
 
         // Kirim output files
@@ -672,7 +725,7 @@ async function handleMessage(msg) {
             }
         }
 
-        log('INFO', `✓ ${chunks.length} chunk, ${result.output_files?.length || 0} files`);
+        log('INFO', `✓ ${chunks.length} chunk, ${result.output_files?.length || 0} files${voiceFile ? ` + voice(${voiceMode})` : ''}`);
     } catch (error) {
         log('ERROR', `${error.message}`);
         try { await msg.reply(`❌ Error: ${error.message}`); } catch {}

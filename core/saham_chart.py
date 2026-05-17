@@ -12,6 +12,7 @@ import yfinance as yf
 import pandas_ta as ta
 
 from teams.t9_saham import normalisasi_ticker
+from core.api_retry import call_with_retry
 
 logger = logging.getLogger('bima_core')
 
@@ -22,7 +23,7 @@ def make_chart(symbol: str, days: int = 60) -> Path | None:
     """Plot harga (line + SMA20/50) + RSI subplot. Return path PNG atau None."""
     ticker = normalisasi_ticker(symbol)
     try:
-        df = yf.Ticker(ticker).history(period=f"{days * 2}d")
+        df = call_with_retry(lambda: yf.Ticker(ticker).history(period=f"{days * 2}d"), label="yfinance_chart_hist")
         if df.empty or len(df) < 30:
             return None
 

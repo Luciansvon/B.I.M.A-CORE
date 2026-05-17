@@ -12,69 +12,71 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Dashboard-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![PM2](https://img.shields.io/badge/PM2-Production-2B037A?style=for-the-badge&logo=pm2&logoColor=white)](https://pm2.keymetrics.io)
 
-*Sistem multi-agent AI berbasis LangGraph yang mengorkestrasi 10 agen spesialis untuk menjadi asisten pribadi cerdas di Discord, WhatsApp, dan Web.*
+*A LangGraph-based multi-agent AI system orchestrating 10 specialized agents to be a smart personal assistant on Discord, WhatsApp, and Web.*
 
 </div>
 
 ---
 
-## 📖 Tentang Proyek
+## 📖 About the Project
 
-**B.I.M.A-CORE** adalah inti dari sistem AI asisten bernama **ANISA**. Menggunakan **LangGraph state machine**, setiap pesan pengguna dianalisis oleh intent classifier, lalu diteruskan ke agen spesialis yang paling tepat — mulai dari riset web, analisis saham, debugging kode, hingga pembuatan konten kreatif.
+**B.I.M.A-CORE** is the core of an AI assistant called **ANISA**. Using a **LangGraph state machine**, every user message is analyzed by an intent classifier, then routed to the most appropriate specialist agent — from web research, stock analysis, code debugging, to creative content generation.
 
 ```
-Pengguna → Discord / WhatsApp / Web
-                ↓
-        Intent Classifier
-                ↓
-    ┌───────────┴───────────┐
-    │   LangGraph Engine    │
-    │  (State Machine)      │
-    └───────────┬───────────┘
-                ↓
-   ┌────────────────────────┐
-   │  10 Specialized Agents │
-   │  + MCP Tool Registry   │
-   └────────────────────────┘
-                ↓
-       Memory + Response
+User → Discord / WhatsApp / Web
+            ↓
+    Intent Classifier
+            ↓
+┌───────────┴───────────┐
+│   LangGraph Engine    │
+│    (State Machine)    │
+└───────────┬───────────┘
+            ↓
+┌────────────────────────┐
+│  10 Specialized Agents │
+│  + MCP Tool Registry   │
+└────────────────────────┘
+            ↓
+     Memory + Response
 ```
 
 ---
 
-## ✨ Fitur Utama
+## ✨ Core Features
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| 🧠 **Multi-Agent Orchestration** | LangGraph routing otomatis ke agen yang paling relevan |
-| 🔌 **MCP Integration** | Fetch, Markitdown, Time, DuckDuckGo, Playwright, Git, SQLite, Filesystem — tools eksternal yang pluggable |
-| 💾 **Memori Jangka Panjang** | Vector store (LanceDB) + SQLite untuk konteks percakapan persisten |
-| 📊 **Real-Time Dashboard** | Guild hall pixel art (React + WebSocket) untuk visualisasi aktivitas |
-| 📄 **Document Processing** | PDF, Word, Excel, PowerPoint — baca, analisis, dan generate |
-| 🌐 **Web Intelligence** | Scraping marketplace, riset web, browser automation interaktif |
-| 📈 **Stock Market** | Data saham real-time, portfolio tracking, chart otomatis |
-| 📱 **Multi-Channel** | Discord, WhatsApp, REST API — semua dalam satu sistem |
+| 🧠 **Multi-Agent Orchestration** | LangGraph auto-routes to the most relevant agent |
+| 🔌 **MCP Integration** | Fetch, Markitdown, Time, Git, SQLite, sequential_thinking, memory — pluggable external tools |
+| 💾 **Long-term Memory** | Vector store (LanceDB) + SQLite for persistent conversation context |
+| 📊 **Real-time Dashboard** | Pixel-art guild hall (React + WebSocket) for activity visualization |
+| 📄 **Document Processing** | PDF, Word, Excel, PowerPoint — read, analyze, and generate |
+| 🌐 **Web Intelligence** | Marketplace scraping, web research, interactive browser automation |
+| 📈 **Stock Market** | Real-time stock data, portfolio tracking, automated charts |
+| 📱 **Multi-Channel** | Discord, WhatsApp, REST API — all in one system |
+| 🎤 **Voice In/Out** | STT via faster-whisper (Indonesian) + TTS via edge-tts (`id-ID-GadisNeural`). Auto-mirror: voice input → voice reply |
+| 🖼️ **Image-to-Image** | Upload a reference image + prompt → variations following the reference (Gemini Flash Image multimodal) |
 | 💰 **Cost-Optimized** | Dynamic model selection (DeepSeek, Gemini, Llama) via OpenRouter |
-| 🗂️ **Obsidian Vault** | Integrasi knowledge management dan pengarsipan dokumen |
+| 🗂️ **Obsidian Vault** | Knowledge management & document archiving integration |
 
 ---
 
-## 🧑‍🤝‍🧑 Roster Agen
+## 🧑‍🤝‍🧑 Agent Roster
 
-> Setiap agen memiliki kepribadian, tools, dan model LLM yang berbeda-beda.
+> Each agent has a different persona, toolset, and LLM model.
 
-| Agen | Peran | Keahlian Utama |
+| Agent | Role | Main Expertise |
 |------|-------|----------------|
-| 🎯 **Manager** | Koordinator & Router | Memahami konteks, mendistribusikan tugas, merangkum hasil |
-| 👁️ **Visual** | Analis Visual | Analisis gambar, OCR, membaca PDF visual (Gemini Vision) |
-| 🗂️ **Arsip** | Pustakawan Digital | Pengarsipan dokumen, knowledge vault, Obsidian integration |
-| ⚙️ **Admin** | Administrator Sistem | Manajemen file, task system, delegasi internal |
-| 🔍 **Intel** | Agen Intelijen | Riset web, scraping marketplace, browser automation |
-| 🌿 **Lifestyle** | Konsultan Gaya Hidup | Rekomendasi, saran hidup, pertanyaan sehari-hari |
-| 🎨 **Seniman** | Kreator Konten | Penulisan kreatif, desain konsep, konten visual |
-| 🔧 **Mekanik** | Engineer & Debugger | Coding, debugging, review kode, problem teknikal |
-| 📈 **Saham** | Analis Pasar | Analisis saham, portofolio, jadwal update otomatis |
-| 🐸 **Kodok** | Hiburan & Sosial | Humor, percakapan santai, meme |
+| 🎯 **Manager** | Coordinator & Router | Understand context, distribute tasks, summarize results |
+| 👁️ **Visual** | Visual Analyst | Image analysis, OCR, visual PDF parsing (Gemini Vision) |
+| 🗂️ **Arsip** | Digital Librarian | Document archiving, knowledge vault, Obsidian integration |
+| ⚙️ **Admin** | System Administrator | File management, task system, document generation (Word/Excel/PDF) |
+| 🔍 **Intel** | Intelligence Agent | Web research, marketplace scraping, browser automation |
+| 🌿 **Lifestyle** | Lifestyle Consultant | Recommendations, life advice, everyday questions |
+| 🎨 **Seniman** | Content Creator | Creative writing, design concepts, HTML/SVG/Mermaid + image gen + image-to-image |
+| 🔧 **Mekanik** | Engineer & Debugger | Coding, debugging, code review, technical problems |
+| 📈 **Saham** | Market Analyst | Stock analysis, portfolio, automated scheduled updates |
+| 🐸 **Kodok** | Code understanding | Repo RAG, function/class/symbol lookup, codebase summarization |
 
 ---
 
@@ -84,28 +86,30 @@ Pengguna → Discord / WhatsApp / Web
 Backend          │ Python 3.10+, FastAPI, Uvicorn
 Orchestration    │ LangGraph, LangChain
 Agent Framework  │ CrewAI
-LLM Provider     │ OpenRouter (DeepSeek v4, Gemini 2.0, Llama 3.3)
+LLM Provider     │ OpenRouter (DeepSeek v4, Gemini 3.1 Flash, Llama 3.3)
 Communication    │ Discord.py, WhatsApp-web.js (Node.js bridge)
+Voice            │ faster-whisper (STT, Indonesian) + edge-tts (TTS) + ffmpeg (OGG/Opus convert)
 Dashboard        │ React JSX (pixel art), WebSocket
-Desktop App      │ Tauri 2.x (sidebar ANISA)
+Desktop App      │ Tauri 2.x (ANISA sidebar)
 Vector Store     │ LanceDB + sentence-transformers
-Database         │ SQLite (memori agen)
+Database         │ SQLite (agent memory)
 Browser Auto     │ browser-use >= 0.1.40
 Task Scheduler   │ APScheduler
 Process Manager  │ PM2 + Cloudflare Tunnel
-Deployment       │ WSL Ubuntu 22.04+ (local PC) atau VPS Linux
+Deployment       │ WSL Ubuntu 22.04+ (local PC) or Linux VPS
 ```
 
 ---
 
-## 🚀 Instalasi
+## 🚀 Installation
 
-### Prasyarat
+### Prerequisites
 
 - Python 3.10+
 - Node.js 20+
-- Chromium (untuk browser automation)
-- PM2 (untuk production)
+- Chromium (for browser automation)
+- ffmpeg (for TTS audio conversion — `apt install ffmpeg`)
+- PM2 (for production)
 
 ### 1. Clone & Setup Environment
 
@@ -113,10 +117,10 @@ Deployment       │ WSL Ubuntu 22.04+ (local PC) atau VPS Linux
 git clone https://github.com/Luciansvon/B.I.M.A-CORE.git
 cd B.I.M.A-CORE
 
-# Buat virtual environment
+# Create virtual environment
 python3 -m venv bima_env
 source bima_env/bin/activate        # Linux/Mac
-# atau: bima_env\Scripts\activate   # Windows
+# or: bima_env\Scripts\activate     # Windows
 ```
 
 ### 2. Install Dependencies
@@ -126,45 +130,55 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. Konfigurasi Environment
+> ⚠️ First STT call downloads the `faster-whisper small` model (~390MB) to `~/.cache/huggingface`. One-time cost.
+
+### 3. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` dengan API key kamu:
+Edit `.env` with your API keys:
 
 ```env
-# ─── WAJIB ───────────────────────────────────────
+# ─── REQUIRED ───────────────────────────────────
 OPENROUTER_API_KEY=sk-or-v1-...
 DISCORD_TOKEN=your-discord-bot-token
 
-# ─── OPSIONAL ────────────────────────────────────
+# ─── OPTIONAL ───────────────────────────────────
 GEMINI_API_KEY=...
 SERPER_API_KEY=...
 TAVILY_API_KEY=...
 RAPIDAPI_KEY=...
 
-# ─── KONFIGURASI BOT ─────────────────────────────
+# ─── BOT CONFIG ─────────────────────────────────
 LLM_PROVIDER=openrouter
 EMBEDDING_PROVIDER=huggingface
 OBSIDIAN_PATH=./Bima_Vault
 DASHBOARD_PORT=8000
 DASHBOARD_API_TOKEN=your-secret-token
 
-# ─── CHANNEL DISCORD ─────────────────────────────
+# ─── DISCORD CHANNELS ───────────────────────────
 BOT_STATUS_CHANNEL_ID=...
 SAHAM_CHANNEL_ID=...
 
-# ─── WHATSAPP (OPSIONAL) ─────────────────────────
+# ─── WHATSAPP (OPTIONAL) ────────────────────────
 WA_OWNER_NUMBER=628xxxxxxxxxx
 WA_BRIDGE_URL=http://127.0.0.1:8001
+WA_BRIDGE_TOKEN=your-token
+WA_TRIGGER=/bot
+
+# ─── VOICE (OPTIONAL OVERRIDES) ─────────────────
+STT_MODEL_SIZE=small           # tiny|base|small|medium|large-v3
+STT_COMPUTE_TYPE=int8          # int8|float16|float32
+TTS_VOICE=id-ID-GadisNeural    # female Indonesian
+TTS_RATE=+0%
 ```
 
-### 4. Jalankan
+### 4. Run
 
 ```bash
-# Development (lokal)
+# Development (local)
 python main.py
 
 # Health check
@@ -179,10 +193,10 @@ python healthcheck.py
 # Install PM2 & Node.js
 npm install -g pm2
 
-# Start semua service
+# Start all services
 pm2 start ecosystem.config.js
 
-# Simpan config & enable autostart
+# Save config & enable autostart
 pm2 save
 pm2 startup
 
@@ -191,19 +205,19 @@ pm2 logs anisa-v3
 pm2 status
 ```
 
-PM2 akan menjalankan 3 proses sekaligus:
+PM2 runs 3 processes in parallel:
 
-| Proses | Deskripsi |
+| Process | Description |
 |--------|-----------|
 | `anisa-v3` | Main bot (Python) |
 | `bima-tunnel` | Cloudflare Tunnel |
 | `bima-whatsapp` | WhatsApp bridge (Node.js) |
 
-### Auto-start saat Windows login (WSL setup)
+### Auto-start on Windows login (WSL setup)
 
-Kalau lo run BIMA_CORE di WSL Ubuntu (bukan VPS Linux native), butuh 2 layer biar bot otomatis nyala saat Windows login:
+If you run BIMA_CORE on WSL Ubuntu (not native Linux VPS), you need 2 layers to auto-start the bot on Windows login:
 
-**Layer 1 — Pastikan systemd aktif di WSL** (`/etc/wsl.conf`):
+**Layer 1 — Enable systemd in WSL** (`/etc/wsl.conf`):
 
 ```ini
 [boot]
@@ -213,76 +227,76 @@ systemd=true
 default=bima_lucian
 ```
 
-Restart WSL setelah edit: `wsl --shutdown` (dari PowerShell Windows) → wait → `wsl -d Ubuntu`.
+Restart WSL after editing: `wsl --shutdown` (from PowerShell) → wait → `wsl -d Ubuntu`.
 
-**Layer 2 — PM2 systemd unit (jalanin di WSL Ubuntu):**
+**Layer 2 — PM2 systemd unit (run in WSL Ubuntu):**
 
 ```bash
-# Generate + install systemd service (sekali aja)
+# Generate + install systemd service (one-time)
 sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u bima_lucian --hp /home/bima_lucian
 
-# Save current process list ke dump file
+# Save current process list to dump file
 pm2 save
 
 # Verify
 systemctl status pm2-bima_lucian
 ```
 
-**Layer 3 — Trigger WSL boot saat Windows login** (lewat Windows Task Scheduler):
+**Layer 3 — Trigger WSL boot on Windows login** (via Windows Task Scheduler):
 
 ```powershell
-# Buat task — jalan saat user login
+# Create task — runs on user login
 $action = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "-d Ubuntu --exec /bin/true"
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 Register-ScheduledTask -TaskName "WSL-BIMA-Boot" -Action $action -Trigger $trigger -RunLevel Highest
 ```
 
-Task ini cuma "membangunkan" WSL — begitu WSL hidup, systemd auto-start PM2, PM2 auto-resurrect proses dari dump file. Bot online tanpa manual launch.
+This task simply "wakes" WSL — once WSL is up, systemd auto-starts PM2, PM2 auto-resurrects processes from dump file. Bot online without manual launch.
 
 ---
 
-## 🌐 PC/WSL vs VPS — kapan migrate?
+## 🌐 PC/WSL vs VPS — when to migrate?
 
-Saat ini lo run di **WSL Ubuntu di PC** lo. Cukup buat development + casual use, tapi ada batasan:
+Currently you run on **WSL Ubuntu on your PC**. Good enough for development + casual use, but with limitations:
 
-| Aspek | WSL di PC (sekarang) | VPS Linux native |
+| Aspect | WSL on PC (now) | Native Linux VPS |
 |---|---|---|
-| Uptime | Cuma saat PC nyala | 24/7 (~99.9% SLA) |
-| Cost | $0 | $5-10/bulan (mis. Hetzner CX11, DigitalOcean droplet) |
-| RAM | Share dgn Windows/game | Dedicated 2-8GB |
-| Latency Discord | Tergantung internet rumah | Stable datacenter |
-| Maintenance | Lo restart sendiri | Auto-update OS, snapshot, dll |
-| Setup | Udah jalan | Migrate semua (10-30 menit pakai script `deploy_vps.sh`) |
+| Uptime | Only when PC is on | 24/7 (~99.9% SLA) |
+| Cost | $0 | $5-10/month (e.g. Hetzner CX11, DigitalOcean droplet) |
+| RAM | Shared with Windows/games | Dedicated 2-8GB |
+| Discord Latency | Depends on home internet | Stable datacenter |
+| Maintenance | You restart it yourself | Auto-update OS, snapshots, etc |
+| Setup | Already running | Migrate everything (10-30 min using `deploy_vps.sh`) |
 
-**Indikator lo udah perlu migrate ke VPS:**
-- Sering bot mati karena PC dimatikan / restart Windows
-- Saham scheduler miss event krusial saat lo lagi tidur / kerja
-- Bima yg join Discord 24/7 (community bot)
+**Signs you need to migrate to VPS:**
+- Bot frequently dies because PC is turned off / Windows restart
+- Stock scheduler misses crucial events while you sleep / work
+- Bima joins Discord 24/7 (community bot)
 
-**Indikator masih cukup di PC:**
-- Cuma lo + 1-2 user yg pake
-- Use case furniture QC + casual chat
-- Belum ada commitment 24/7 / SLA
+**Signs PC is still enough:**
+- Just you + 1-2 users
+- Furniture QC + casual chat use case
+- No 24/7 / SLA commitment yet
 
-Path migrasi: `deploy_vps.sh` udah ada di repo — jalanin di VPS Ubuntu kosong, otomatis clone repo + install deps + setup PM2 + cloudflare tunnel. Migrate ~30 menit.
+Migration path: `deploy_vps.sh` is already in the repo — run it on a blank Ubuntu VPS, auto-clones repo + installs deps + sets up PM2 + Cloudflare tunnel. Migration ~30 min.
 
 ---
 
 ## 📊 Dashboard
 
-Akses dashboard real-time setelah bot berjalan:
+Access the real-time dashboard after the bot is running:
 
-| URL | Deskripsi |
+| URL | Description |
 |-----|-----------|
-| `http://localhost:8000/dashboard` | Dashboard utama |
+| `http://localhost:8000/dashboard` | Main dashboard |
 | `http://localhost:8000/dashboard/v3` | Pixel art guild hall |
 | `http://localhost:8000/metrics` | Metrics API (JSON) |
 
-Dashboard menampilkan aktivitas agen secara real-time menggunakan WebSocket — kamu bisa melihat agen mana yang sedang aktif, riwayat percakapan, dan status sistem.
+The dashboard shows agent activity in real-time via WebSocket — you can see which agent is currently active, conversation history, and system status.
 
 ---
 
-## 📁 Struktur Proyek
+## 📁 Project Structure
 
 ```
 B.I.M.A-CORE/
@@ -292,25 +306,33 @@ B.I.M.A-CORE/
 ├── requirements.txt
 ├── ecosystem.config.js        # PM2 config
 │
-├── core/                      # Engine utama
-│   ├── discord_bot.py         # Discord bot
+├── core/                      # Main engine
+│   ├── discord_bot.py         # Discord bot (handles attachments, audio auto-STT)
+│   ├── wa_server.py           # WhatsApp HTTP bridge (audio auto-STT, TTS reply)
+│   ├── stt.py                 # faster-whisper wrapper (lazy singleton)
+│   ├── tts.py                 # edge-tts + ffmpeg → OGG/Opus
+│   ├── api_retry.py           # Centralized stamina retry for external APIs
 │   ├── langgraph_engine.py    # State machine orchestration
-│   ├── langgraph_nodes/       # Node per agen
+│   ├── langgraph_nodes/       # Node per agent
 │   │   ├── state.py           # BimaState definition
 │   │   ├── manager.py
 │   │   ├── intel.py
 │   │   ├── visual.py
-│   │   ├── mekanik.py
+│   │   ├── seniman.py         # Image gen + img2img branch
 │   │   └── ...
 │   ├── dashboard_server.py    # FastAPI + WebSocket
 │   ├── mcp_client_manager.py  # MCP integration
-│   └── saham_*.py             # Modul saham
+│   └── saham_*.py             # Stock modules
 │
 ├── teams/                     # CrewAI agent definitions
 ├── tools/                     # Shared tools & plugins
+│   ├── image_gen_tool.py      # Text-to-image + image-to-image (Gemini Flash Image)
 │   ├── browser_use_tool.py    # Browser automation
 │   ├── repo_rag.py            # Repository RAG
-│   └── plugins/               # Plugin dinamis
+│   └── plugins/               # Dynamic plugins
+│
+├── whatsapp/                  # WhatsApp bridge (Node.js)
+│   └── index.js               # whatsapp-web.js client, STT arming logic
 │
 ├── dashboard/                 # Frontend pixel art (React JSX)
 │   ├── guild.html
@@ -323,108 +345,160 @@ B.I.M.A-CORE/
 
 ## 🔌 MCP Tools
 
-B.I.M.A mendukung **Model Context Protocol (MCP)** untuk integrasi tools eksternal yang pluggable. Tiap MCP di-attach ke agent tertentu via `attach_to` di `config_mcp.json`.
+B.I.M.A supports **Model Context Protocol (MCP)** for pluggable external tool integration. Each MCP is attached to a specific agent via `attach_to` in `config_mcp.json`.
 
 **Enabled by default:**
 
-| MCP | Fungsi | Attached agent |
+| MCP | Function | Attached agent |
 |-----|--------|----------------|
-| `fetch` | Ambil konten web jadi text/markdown | intel |
-| `markitdown` | Konversi PDF/DOCX/PPTX/XLSX ke Markdown | arsip, visual |
-| `sequential_thinking` | Reasoning chain terstruktur | manager (Anisa) |
+| `fetch` | Fetch web content as text/markdown | intel |
+| `markitdown` | Convert PDF/DOCX/PPTX/XLSX to Markdown | arsip, visual |
+| `sequential_thinking` | Structured reasoning chain | manager (Anisa) |
 | `memory_anthropic` | Persistent KV memory cross-session | arsip, manager |
 | `time` | Current time + timezone conversion | manager, saham, lifestyle |
-| `duckduckgo` | Web search gratis tanpa API key | intel, kodok |
-| `playwright` | Browser automation + screenshot | visual, intel, seniman |
-| `git` | Log/blame/diff repo BIMA_CORE | mekanik, kodok |
-| `sqlite` | Structured store untuk log Discord + jurnal saham | arsip, saham |
-| `filesystem` | Read/write file di scope `outputs/` saja | intel, mekanik, visual, seniman |
+| `sqlite` | Structured store for Discord log + stock journal | arsip, saham |
+| `git` | Log/blame/diff BIMA_CORE repo | mekanik, kodok |
 
-**Disabled (config-only, butuh setup tambahan):**
+**Disabled (config-only, requires extra setup):**
 
-- `github` — butuh `GITHUB_PERSONAL_ACCESS_TOKEN` di `.env`
-- `searxng` — butuh `SEARXNG_URL` (instance public atau self-host) di `.env`
+- `github` — needs `GITHUB_PERSONAL_ACCESS_TOKEN` in `.env`
+- `searxng` — needs `SEARXNG_URL` (public instance or self-host) in `.env`
+- `duckduckgo` — kept config-only (redundant with `SerperDevTool` already wired in agents)
+- `playwright` — kept config-only (redundant with `BrowserUseTool` already wired in agents)
+- `filesystem` — kept config-only (internal `FileSaverTool` covers `outputs/` scope)
 
-Tambah/edit tool di `config_mcp.json`. Restart bot supaya `MCPClientManager` reload config.
+Add/edit tools in `config_mcp.json`. Restart the bot so `MCPClientManager` reloads the config.
 
 ---
 
 ## 🛡️ Reliability & Observability
 
-| Stack | Tujuan | Setup |
+| Stack | Purpose | Setup |
 |---|---|---|
-| `uvloop` | Drop-in asyncio 2-4× speedup | Aktif otomatis di [main.py](main.py) |
-| `loguru` | Color/structured logging, replace stdlib | Aktif otomatis dgn stdlib intercept |
+| `uvloop` | Drop-in asyncio 2-4× speedup | Auto-active in [main.py](main.py) |
+| `loguru` | Color/structured logging, replaces stdlib | Auto-active with stdlib intercept |
 | `memray` | Memory profiler (manual run) | `memray run --live bima_env/bin/python main.py` |
 | `pyinstrument` | CPU flamegraph profiler (manual run) | `pyinstrument bima_env/bin/python main.py` |
-| `sentry-sdk` | Auto-capture crash + stack trace + breadcrumb | Set `SENTRY_DSN` di `.env` (free tier 5k events/bulan) |
-| `apprise` | Multi-channel notify fallback (Telegram/ntfy/email/dll) | Set `APPRISE_URLS` di `.env` comma-separated |
+| `sentry-sdk` | Auto-capture crashes + stack trace + breadcrumb | Set `SENTRY_DSN` in `.env` (free tier 5k events/month) |
+| `apprise` | Multi-channel notify fallback (Telegram/ntfy/email/etc) | Set `APPRISE_URLS` in `.env` comma-separated |
 | `psutil` | System metrics (CPU/RAM/disk) | Auto via `!status` Discord command |
-| `stamina` | Retry decorator (jitter + exp backoff) | Wired di [core/embedder.py](core/embedder.py) + [core/furniture_qc.py](core/furniture_qc.py) hot path |
-| `diskcache` | Persistent disk cache (TTL built-in) | Auto-pakai buat cloud embedding cache di [core/embedder.py](core/embedder.py) |
+| `stamina` | Retry decorator (jitter + exp backoff) | Centralized in [core/api_retry.py](core/api_retry.py) — wraps yfinance + embedder + furniture_qc |
+| `diskcache` | Persistent disk cache (TTL built-in) | Auto-used for cloud embedding cache in [core/embedder.py](core/embedder.py) |
 
-Tanpa setup `.env`, `sentry-sdk` + `apprise` jadi no-op (aman, ga error). Begitu `.env` di-isi, langsung aktif.
+Without `.env` setup, `sentry-sdk` + `apprise` become no-ops (safe, no error). Once `.env` is filled, they activate.
 
 ---
 
 ## 🧠 RAG Quality (Wave 3)
 
-Embedding backend switchable lokal/cloud via env `EMBEDDING_BACKEND`:
+Embedding backend switchable local/cloud via env `EMBEDDING_BACKEND`:
 
-| Backend | Model arsip | Model code (repo_rag) | Dim | RAM | Biaya |
+| Backend | Arsip model | Code model (repo_rag) | Dim | RAM | Cost |
 |---|---|---|---|---|---|
 | `local` (default) | `all-MiniLM-L6-v2` | `all-MiniLM-L6-v2` | 384 | ~2GB | $0 |
-| `cloud` | `baai/bge-m3` | `mistralai/codestral-embed-2505` | 1024 | ~0 | ~$0.03/bulan |
+| `cloud` | `baai/bge-m3` | `mistralai/codestral-embed-2505` | 1024 | ~0 | ~$0.03/month |
 
-**Switch ke cloud (untuk RAG Bahasa Indonesia lebih akurat):**
+**Switch to cloud (for more accurate Indonesian RAG):**
 
 ```bash
-# 1. Set di .env
+# 1. Set in .env
 EMBEDDING_BACKEND=cloud
 EMBED_CACHE_TTL_DAYS=30
 
-# 2. Drop existing index (dim berubah 384→1024)
+# 2. Drop existing index (dim changes 384→1024)
 rm -rf vault_index/ repo_index/
 
-# 3. Restart bot — index auto-rebuild pakai model baru
+# 3. Restart bot — index auto-rebuilds with new model
 pm2 restart anisa-v3
 ```
 
-**Hybrid search (BM25 + vector):** helper di [core/bm25_index.py](core/bm25_index.py) — `build_from_corpus()` + `BM25Index.search()` + `hybrid_merge()`. Belum di-wire ke arsip/repo_rag flow (opt-in pakai langsung kalau lo mau).
+**Hybrid search (BM25 + vector):** helper at [core/bm25_index.py](core/bm25_index.py) — `build_from_corpus()` + `BM25Index.search()` + `hybrid_merge()`. Not yet wired into arsip/repo_rag flow (opt-in if you want to use it).
+
+---
+
+## 🎤 Voice Pipeline (STT + TTS)
+
+### Speech-to-Text (input)
+
+- **Engine**: `faster-whisper small` (multilingual, Indonesian primary). Auto-downloaded on first call (~390MB to `~/.cache/huggingface`).
+- **Decode**: Opus/OGG voice notes via ffmpeg (no manual conversion).
+- **Tuning**: `vad_filter=True`, `beam_size=8`, plus Indonesian context `initial_prompt` to bias short-utterance recognition.
+- **Async-safe**: STT runs on a thread to avoid blocking the FastAPI / discord.py event loop.
+
+### Text-to-Speech (output)
+
+- **Engine**: `edge-tts` → Microsoft Neural Voice `id-ID-GadisNeural` (female Indonesian, free, no API key).
+- **Pipeline**: edge-tts emits MP3 → ffmpeg converts to OGG/Opus (24 kHz mono, VoIP profile) → WhatsApp accepts as native voice note (`sendAudioAsVoice: true`).
+- **Smart filter**:
+  - Reply ≤ 300 chars → full reply spoken as voice, text suppressed
+  - Reply > 300 chars → text reply + 1-line voice summary ("Anisa kirim jawaban lengkap di chat, baca dari teks ya.")
+
+### Auto-mirror
+
+- Voice in → voice out, text in → text out. No explicit user toggle needed.
+
+---
+
+## 📱 WhatsApp Commands
+
+The WA bridge requires the prefix configured in `WA_TRIGGER` (default `/bot`). Voice notes are silent-ignored by default — they must be armed first to avoid spamming the LangGraph engine with random voice notes from other chats.
+
+| Command | Function |
+|---|---|
+| `/bot <message>` | General chat — routed via LangGraph |
+| `/bot help` | Show help |
+| `/bot ping` / `/bot status` | Backend health check |
+| `/bot stt` (alias: `tts`, `voice`, `suara`, `v`, `note`, `vn`) | Arm STT for 60 seconds — the next voice note (PTT) will be transcribed |
+| `/bot login <password>` | Login (if `WA_BOT_PASSWORD` is set) |
+| `/bot logout` | Logout |
+| `/bot wl …` / `/bot password …` / `/bot session …` | Admin commands (whitelist, password rotation, session kick) |
+
+**Voice flow example:**
+
+```
+You  → /bot stt
+Bot  → 🎤 Voice mode aktif 60 detik. Kirim voice note — Anisa bales pakai voice juga.
+You  → [voice note: "halo Anisa lagi ngapain?"]
+Bot  → [voice note from Anisa, ≤ 300 chars reply]
+```
+
+Audio file attachments (e.g. `.mp3`, `.m4a` uploaded via the paperclip with `/bot` caption) are auto-transcribed without arming.
 
 ---
 
 ## 🛠️ Discord Commands
 
-| Command | Fungsi |
+| Command | Function |
 |---|---|
-| `!saham help` | List subcommand saham (digest, watchlist, ticker, chart, portfolio, override) |
-| `!qc` + attachment PDF/PNG/JPG | **Furniture drawing QC** — review gambar kerja: dimensi, detail sambungan, view, BOM. Output: text report + markup PNG (overlay box berwarna di lokasi issue). Pakai Gemini Flash vision via OpenRouter. ⚠️ Test pakai project pribadi aja, JANGAN drawing client/perusahaan (data lewat cloud third-party). |
-| `!ocr` + image attachment | OCR EasyOCR — extract text dari image (PNG/JPG/WEBP). Support Bahasa Indonesia + English. Lazy-load model ~80MB (first call lambat, selanjutnya cepet). |
-| `!status` | Health snapshot host (PC/WSL atau VPS) — CPU/RAM/disk/load average/process count. Pakai psutil. |
-| mention `@Anisa <pesan>` | General chat → LangGraph router otomatis ke agent yg paling relevan |
+| `!saham help` | List stock subcommands (digest, watchlist, ticker, chart, portfolio, override) |
+| `!qc` + PDF/PNG/JPG attachment | **Furniture drawing QC** — review working drawings: dimensions, joint details, views, BOM. Output: text report + markup PNG (colored overlay box at issue locations). Uses Gemini Flash vision via OpenRouter. ⚠️ Test with personal projects only, NOT client/company drawings (data goes through third-party cloud). |
+| `!ocr` + image attachment | OCR via EasyOCR — extract text from images (PNG/JPG/WEBP). Supports Indonesian + English. Lazy-loads model ~80MB (first call slow, subsequent fast). |
+| `!status` | Host health snapshot (PC/WSL or VPS) — CPU/RAM/disk/load average/process count. Uses psutil. |
+| mention `@Anisa <message>` | General chat → LangGraph router auto-picks the most relevant agent |
+| Audio attachment (`.ogg/.opus/.mp3/.m4a/.wav/.flac/.aac`) | Auto-transcribed via faster-whisper (no arming required on Discord — user intent is implicit via mention/DM). Voice reply attached if input was audio. |
+| Image attachment + "bikin gambar variasi" | Image-to-image (Seniman team) — generates variations following the reference |
 
 ---
 
-## 🤝 Cara Berkontribusi
+## 🤝 Contributing
 
-1. Fork repo ini
-2. Buat branch fitur: `git checkout -b fitur/nama-fitur`
-3. Commit perubahanmu: `git commit -m 'feat: tambah fitur X'`
-4. Push ke branch: `git push origin fitur/nama-fitur`
-5. Buka Pull Request
+1. Fork this repo
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Commit your changes: `git commit -m 'feat: add feature X'`
+4. Push to the branch: `git push origin feature/your-feature`
+5. Open a Pull Request
 
 ---
 
-## 📋 Lisensi
+## 📋 License
 
-Proyek ini dikembangkan untuk penggunaan pribadi dan edukasi.
+This project is developed for personal and educational use.
 
 ---
 
 <div align="center">
 
-*Dibangun dengan ❤️ menggunakan LangGraph, CrewAI, dan Python*
+*Built with ❤️ using LangGraph, CrewAI, and Python*
 
 **ANISA** — *Your Intelligent Guild Commander*
 

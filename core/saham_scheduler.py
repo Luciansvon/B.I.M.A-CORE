@@ -24,6 +24,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from teams.t9_saham import normalisasi_ticker, DecisionEngineTool
 from core.langgraph_nodes.llm_config import default_llm
+from core.api_retry import call_with_retry
 
 logger = logging.getLogger('bima_core')
 
@@ -112,10 +113,10 @@ def fetch_snapshot(symbol: str) -> dict | None:
     ticker = normalisasi_ticker(symbol)
     try:
         t = yf.Ticker(ticker)
-        df = t.history(period="3mo")
+        df = call_with_retry(lambda: t.history(period="3mo"), label="yfinance_scheduler_hist")
         if df.empty or len(df) < 30:
             return None
-        info = t.info or {}
+        info = call_with_retry(lambda: t.info, label="yfinance_scheduler_info") or {}
 
         df["RSI"] = ta.rsi(df["Close"], 14)
         macd = ta.macd(df["Close"])

@@ -11,6 +11,7 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import SerperDevTool
 from config import intel_llm  # reuse LLM intel; ganti ke saham_llm kalau nanti dibuat
+from core.api_retry import call_with_retry
 
 logger = logging.getLogger('bima_core')
 search_tool = SerperDevTool()
@@ -43,7 +44,7 @@ _TICKER_CACHE = _load_ticker_cache()
 def _probe_idx_jk(s: str) -> bool:
     """Cek apakah `{s}.JK` ada di yfinance. Return True kalau ada data."""
     try:
-        df = yf.Ticker(f"{s}.JK").history(period="5d")
+        df = call_with_retry(lambda: yf.Ticker(f"{s}.JK").history(period="5d"), label="yfinance_probe_idx")
         return not df.empty
     except Exception:
         return False
@@ -100,8 +101,8 @@ class StockQuoteTool(BaseTool):
         try:
             ticker = normalisasi_ticker(symbol)
             t = yf.Ticker(ticker)
-            info = t.info
-            hist = t.history(period="5d")
+            info = call_with_retry(lambda: t.info, label="yfinance_quote_info")
+            hist = call_with_retry(lambda: t.history(period="5d"), label="yfinance_quote_hist")
             if hist.empty:
                 return f"❌ Ticker {ticker} tidak ditemukan / tidak ada data."
 
@@ -135,7 +136,7 @@ class TechnicalAnalysisTool(BaseTool):
     def _run(self, symbol: str) -> str:
         try:
             ticker = normalisasi_ticker(symbol)
-            df = yf.Ticker(ticker).history(period="6mo")
+            df = call_with_retry(lambda: yf.Ticker(ticker).history(period="6mo"), label="yfinance_ta_hist")
             if df.empty or len(df) < 50:
                 return f"❌ Data {ticker} tidak cukup untuk analisis teknikal."
 
@@ -203,7 +204,7 @@ class FundamentalAnalysisTool(BaseTool):
     def _run(self, symbol: str) -> str:
         try:
             ticker = normalisasi_ticker(symbol)
-            info = yf.Ticker(ticker).info
+            info = call_with_retry(lambda: yf.Ticker(ticker).info, label="yfinance_fa_info")
             # yfinance kadang ga isi field 'symbol' untuk IDX, jadi fallback: cek currency/quoteType
             if not info or not (info.get("currency") or info.get("quoteType") or info.get("regularMarketPrice")):
                 return f"❌ Ticker {ticker} tidak ditemukan."
@@ -284,8 +285,8 @@ class DecisionEngineTool(BaseTool):
         try:
             ticker = normalisasi_ticker(symbol)
             t = yf.Ticker(ticker)
-            df = t.history(period="6mo")
-            info = t.info
+            df = call_with_retry(lambda: t.history(period="6mo"), label="yfinance_decision_hist")
+            info = call_with_retry(lambda: t.info, label="yfinance_decision_info")
             if df.empty or len(df) < 50:
                 return f"❌ Data tidak cukup untuk {ticker}."
 

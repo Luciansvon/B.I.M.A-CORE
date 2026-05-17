@@ -1,4 +1,5 @@
-"""ImageGenTool — text-to-image via OpenRouter (default: Gemini 3.1 Flash Image / Nano Banana 2)."""
+"""ImageGenTool — text-to-image + image-to-image via OpenRouter
+(default: Gemini 3.1 Flash Image / Nano Banana 2)."""
 from __future__ import annotations
 
 import base64
@@ -16,17 +17,32 @@ _MODEL = os.environ.get("IMAGE_GEN_MODEL", "google/gemini-3.1-flash-image-previe
 _OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 _OUTPUT_DIR.mkdir(exist_ok=True)
 
+_MIME_MAP = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+
+
+def _guess_mime(path: str) -> str:
+    return _MIME_MAP.get(Path(path).suffix.lower(), "image/png")
+
 
 class ImageGenTool(BaseTool):
     name: str = "Image Generation Tool"
     description: str = (
-        "Generate gambar dari prompt teks. Pakai HANYA kalau Bima eksplisit minta "
-        "'bikin gambar', 'gambarin', 'visualisasi', 'illustration'. "
-        "Input: prompt deskripsi gambar (Bahasa Indonesia atau English). "
+        "Generate gambar dari prompt teks ATAU dari gambar referensi (image-to-image). "
+        "Pakai HANYA kalau Bima eksplisit minta 'bikin gambar', 'gambarin', "
+        "'visualisasi', 'illustration'. Kalau dikasih reference_image_paths, "
+        "output bakal ikutin style/komposisi gambar referensi tersebut. "
+        "Input: prompt (str) + optional reference_image_paths (list[str], max 3). "
         "Output: SUCCESS|<filepath>|<message> atau FAILED|<error>."
     )
 
-    def _run(self, prompt: str) -> str:
+    def _run(self, prompt: str, reference_image_paths: list[str] | None = None) -> str:
         prompt = (prompt or "").strip()
         if not prompt:
             return "FAILED|Prompt kosong"
@@ -40,11 +56,32 @@ class ImageGenTool(BaseTool):
         except ImportError:
             return "FAILED|Package 'openai' belum terinstall — pip install openai"
 
+        # Build multimodal content kalau ada reference image (img2img mode)
+        ref_used: list[str] = []
+        if reference_image_paths:
+            content_parts: list[dict] = []
+            for img_path in reference_image_paths[:3]:  # cap 3 ref images
+                try:
+                    mime = _guess_mime(img_path)
+                    with open(img_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    })
+                    ref_used.append(img_path)
+                except Exception as e:
+                    logger.warning(f"[IMAGE_GEN] Skip ref image {img_path}: {e}")
+            content_parts.append({"type": "text", "text": prompt})
+            user_content: str | list[dict] = content_parts
+        else:
+            user_content = prompt
+
         try:
             client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
             resp = client.chat.completions.create(
                 model=_MODEL,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": user_content}],
                 extra_body={"modalities": ["image", "text"]},
             )
         except Exception as e:
@@ -88,5 +125,8 @@ class ImageGenTool(BaseTool):
             pass
 
         size_kb = len(raw) // 1024
-        logger.info(f"[IMAGE_GEN] Saved {fp} ({size_kb} KB) model={_MODEL}")
-        return f"SUCCESS|{fp}|Gambar siap ({size_kb} KB, {_MODEL.split('/')[-1]})"
+        ref_info = f" ref={len(ref_used)}" if ref_used else ""
+        mode = "img2img" if ref_used else "txt2img"
+        logger.info(f"[IMAGE_GEN] Saved {fp} ({size_kb} KB) model={_MODEL} mode={mode}{ref_info}")
+        meta_extra = f", {mode}" if ref_used else ""
+        return f"SUCCESS|{fp}|Gambar siap ({size_kb} KB, {_MODEL.split('/')[-1]}{meta_extra})"

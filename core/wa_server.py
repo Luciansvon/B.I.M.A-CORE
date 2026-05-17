@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import threading
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -19,6 +20,10 @@ logger = logging.getLogger('bima_core')
 
 # Token sederhana — harus sama dengan yang di .env
 _WA_TOKEN = os.environ.get("WA_BRIDGE_TOKEN", "").strip()
+
+# Audio extensions yang ditranscribe via STT (faster-whisper).
+# Voice note WA biasanya .ogg (Opus). Lainnya buat fleksibilitas user kirim file audio biasa.
+_AUDIO_EXTS = {".ogg", ".oga", ".opus", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
 
 app = FastAPI(title="B.I.M.A WA Bridge")
 
@@ -43,7 +48,9 @@ async def chat(req: ChatRequest):
         raise HTTPException(status_code=401, detail="Token tidak valid")
 
     message = req.message.strip()
-    if not message:
+    # Voice-only flow: message boleh kosong asal ada audio attachment (bakal di-transcribe)
+    has_audio = any(Path(p).suffix.lower() in _AUDIO_EXTS for p in req.attachment_paths)
+    if not message and not has_audio:
         return JSONResponse({"error": "Pesan kosong"}, status_code=400)
 
     with _lock:
@@ -67,16 +74,37 @@ Sekarang: {waktu}
 Gunakan info waktu ini saat menjawab.
 ================================"""
 
-        perintah = message
-        if req.attachment_paths:
-            perintah += f"\n\n[FILE_PATHS] File sudah didownload ke: {' | '.join(req.attachment_paths)}"
+        # Pisahkan audio (untuk STT) dari attachment lain (untuk visual/canvas node)
+        audio_paths = [p for p in req.attachment_paths if Path(p).suffix.lower() in _AUDIO_EXTS]
+        other_paths = [p for p in req.attachment_paths if Path(p).suffix.lower() not in _AUDIO_EXTS]
+
+        # Transcribe semua voice note via faster-whisper (lazy load)
+        transcripts: list[str] = []
+        if audio_paths:
+            from core.stt import transcribe_audio
+            for ap in audio_paths:
+                text = await asyncio.to_thread(transcribe_audio, ap, "id")
+                if text:
+                    transcripts.append(text)
+            logger.info(f"[WA-BRIDGE] STT: {len(transcripts)}/{len(audio_paths)} voice note ditranscribe")
+
+        # Compose perintah: voice transcript dulu (jadi konteks utama), terus caption text
+        perintah_parts: list[str] = []
+        if transcripts:
+            perintah_parts.append(f"[VOICE NOTE TRANSCRIPT]\n{chr(10).join(transcripts)}")
+        if message:
+            perintah_parts.append(message)
+        perintah = "\n\n".join(perintah_parts) if perintah_parts else message
+
+        if other_paths:
+            perintah += f"\n\n[FILE_PATHS] File sudah didownload ke: {' | '.join(other_paths)}"
 
         emit("reset", message=f'Permintaan baru (WA): "{message[:80]}"')
 
         hasil = await run_langgraph_engine(
             user_request=perintah,
             konteks_waktu=konteks_waktu,
-            attachment_paths=req.attachment_paths,
+            attachment_paths=other_paths,
             progress_callback=None,
             source_channel="whatsapp",
         )
@@ -94,12 +122,30 @@ Gunakan info waktu ini saat menjawab.
         output_files = extract_output_files(hasil)
         file_list = [str(f) for f in output_files[:10]]
 
+        # TTS auto-mirror: kalau input lewat voice (audio_paths kepass), reply pakai voice juga.
+        # Smart filter: reply pendek → voice full, reply panjang → text + 1 line voice summary.
+        voice_file = None
+        voice_mode = None
+        if audio_paths and display:
+            from core.tts import synthesize_voice, decide_voice_mode, TTS_SUMMARY_LINE
+            voice_mode = decide_voice_mode(display)
+            if voice_mode == "full":
+                fp = await synthesize_voice(display, slug_hint="wa")
+                if fp:
+                    voice_file = str(fp)
+            elif voice_mode == "summary":
+                fp = await synthesize_voice(TTS_SUMMARY_LINE, slug_hint="wa_sum")
+                if fp:
+                    voice_file = str(fp)
+
         emit("reset", message="Selesai (WA)")
 
         return {
             "status": "ok",
             "response": display,
             "output_files": file_list,
+            "voice_file": voice_file,
+            "voice_mode": voice_mode,
         }
 
     except Exception as e:

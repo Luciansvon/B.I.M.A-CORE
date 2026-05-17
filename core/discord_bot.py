@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import threading
 import discord
 import logging
@@ -150,7 +151,14 @@ async def on_message(message):
     if client.user in message.mentions:
         perintah = perintah.replace(f'<@{client.user.id}>', '').replace(f'<@!{client.user.id}>', '').strip()
 
-    if not perintah:
+    # Voice-only Discord upload: perintah boleh kosong asal ada audio attachment
+    _DISCORD_AUDIO_EXTS = {".ogg", ".oga", ".opus", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
+    has_audio_attachment = any(
+        Path(att.filename).suffix.lower() in _DISCORD_AUDIO_EXTS
+        for att in (message.attachments or [])
+    )
+
+    if not perintah and not has_audio_attachment:
         return
 
     # === !saham command pre-route ===
@@ -189,7 +197,8 @@ async def on_message(message):
         # Discord max 25MB; reject lebih awal supaya gak buang bandwidth
         MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
         ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
-                        ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".txt", ".md", ".json"}
+                        ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".txt", ".md", ".json",
+                        ".ogg", ".oga", ".opus", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
 
         urls = [att.url for att in message.attachments]
         attachment_info = f"\n\n[ATTACHMENT] File dari Bima: {', '.join(urls)}"
@@ -214,8 +223,30 @@ async def on_message(message):
             except Exception as e:
                 logger.error(f"Gagal download attachment {att.filename}: {e}", exc_info=True)
         
-        if not any(k in perintah.lower() for k in ['gambar', 'foto', 'pdf', 'lihat', 'analisis', 'baca', 'baca file']):
+        # Split audio (untuk STT) dari attachment lain (visual/canvas/dll)
+        audio_files = [p for p in downloaded_files if Path(p).suffix.lower() in _DISCORD_AUDIO_EXTS]
+        other_files = [p for p in downloaded_files if Path(p).suffix.lower() not in _DISCORD_AUDIO_EXTS]
+
+        # Transcribe semua audio attachment (auto, gak perlu arming)
+        if audio_files:
+            from core.stt import transcribe_audio
+            transcripts = []
+            for ap in audio_files:
+                text = await asyncio.to_thread(transcribe_audio, ap, "id")
+                if text:
+                    transcripts.append(text)
+            logger.info(f"[DISCORD STT] {len(transcripts)}/{len(audio_files)} audio ditranscribe")
+            if transcripts:
+                # Prepend transcript jadi konteks utama, caption text ke-append
+                tr_block = "[VOICE TRANSCRIPT]\n" + "\n".join(transcripts)
+                perintah = f"{tr_block}\n\n{perintah}" if perintah else tr_block
+
+        # Auto-append "baca file" cuma kalau ada non-audio attachment + perintah belum nyebut keyword
+        if other_files and not any(k in perintah.lower() for k in ['gambar', 'foto', 'pdf', 'lihat', 'analisis', 'baca', 'baca file', 'voice transcript']):
             perintah += " baca file"
+
+        # Replace downloaded_files dengan non-audio biar visual_node ga error analyze audio
+        downloaded_files = other_files
 
     perintah_lengkap = perintah + attachment_info
     if downloaded_files:
@@ -262,10 +293,30 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
             tail_msg = re.sub(r'^SUCCESS\|[^|]*\|', '', hasil_str.strip(), flags=re.MULTILINE).strip()
             display_str = tail_msg or "✅ Tugas selesai. Cek file lampiran kalau ada."
 
+        # TTS auto-mirror: kalau input lewat audio attachment, reply pakai voice juga.
+        voice_path = None
+        voice_mode = None
+        if audio_files and display_str:
+            from core.tts import synthesize_voice, decide_voice_mode, TTS_SUMMARY_LINE
+            voice_mode = decide_voice_mode(display_str)
+            if voice_mode == "full":
+                voice_path = await synthesize_voice(display_str, slug_hint="dc")
+            elif voice_mode == "summary":
+                voice_path = await synthesize_voice(TTS_SUMMARY_LINE, slug_hint="dc_sum")
+
+        # Voice "full" mode → kirim voice doang (text udah dirimkan via reply juga sbg fallback chunk[0])
+        # Voice "summary" mode → kirim text full + 1 voice short summary
         chunks = smart_chunks(display_str)
         await pesan_tunggu.edit(content=chunks[0])
         for chunk in chunks[1:]:
             await message.reply(chunk)
+
+        # Kirim voice attachment kalau ada
+        if voice_path:
+            try:
+                await message.reply(file=discord.File(str(voice_path)))
+            except Exception as e:
+                logger.warning(f"Gagal kirim TTS voice ke Discord: {e}")
 
         # Ekstrak file dari string asli (bukan display_str) agar path tetap terdeteksi
         output_files = extract_output_files(hasil_str)
