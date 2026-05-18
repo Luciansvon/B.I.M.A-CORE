@@ -1,4 +1,4 @@
-"""Text-to-speech via edge-tts (Microsoft neural voice).
+"""Text-to-speech via F5-TTS (Eempostor Indo V2 finetune).
 Output .ogg/Opus codec — kompatibel WA voice note (sendAudioAsVoice: true).
 
 Pakai:
@@ -6,12 +6,16 @@ Pakai:
     path = await synthesize_voice("Halo Bima, apa kabar?")
 
 Env override:
-    TTS_VOICE   — voice ID Microsoft (default: id-ID-GadisNeural — female Indonesia)
-    TTS_RATE    — speed offset, e.g. '+10%' atau '-5%' (default: '+0%')
-    TTS_VOLUME  — volume offset (default: '+0%')
+    TTS_MODEL_PATH  — path atau HF repo ID model F5-TTS Indo (default: Eempostor/F5-TTS-INDO-FINETUNE-V2)
+    TTS_REF_AUDIO   — path ke audio referensi untuk voice cloning (wajib untuk F5-TTS)
+    TTS_REF_TEXT    — transkrip teks dari audio referensi
+    TTS_DEVICE      — "cuda" atau "cpu" (default: "cuda")
 
-Note: edge-tts default output MP3. Untuk WA voice note compat, MP3 di-convert
-ke OGG/Opus via ffmpeg (system binary, harus ada di PATH).
+Note: F5-TTS load model per request (unload setelah selesai) untuk hemat VRAM.
+Model di-download otomatis dari HuggingFace saat pertama kali dipakai (~1.2GB).
+Output WAV di-convert ke OGG/Opus via ffmpeg untuk WA voice note compat.
+
+Fallback: kalau f5-tts tidak terinstall atau gagal, otomatis fallback ke edge-tts.
 """
 from __future__ import annotations
 
@@ -30,42 +34,75 @@ _OUTPUT_DIR.mkdir(exist_ok=True)
 TTS_FULL_MAX_CHARS = 300
 TTS_SUMMARY_LINE = "Anisa kirim jawaban lengkap di chat, baca dari teks ya."
 
+_DEFAULT_MODEL = "Eempostor/F5-TTS-INDO-FINETUNE-V2"
+_DEFAULT_REF_AUDIO = str(Path(__file__).resolve().parent.parent / "assets" / "tts_ref.wav")
+_DEFAULT_REF_TEXT = "Halo, saya Anisa, asisten AI yang siap membantu kamu."
 
-async def synthesize_voice(text: str, slug_hint: str = "anisa") -> Path | None:
-    """Generate audio file dari text. Return path .ogg (Opus codec, kompatibel WA voice note).
-    Return None kalau gagal. Async — pakai await."""
-    text = (text or "").strip()
-    if not text:
-        return None
+
+async def _synthesize_f5(text: str, wav_fp: Path) -> bool:
+    """Jalankan F5-TTS inference di thread terpisah (CPU-bound). Return True kalau sukses."""
+    model_path = os.environ.get("TTS_MODEL_PATH", _DEFAULT_MODEL)
+    ref_audio = os.environ.get("TTS_REF_AUDIO", _DEFAULT_REF_AUDIO)
+    ref_text = os.environ.get("TTS_REF_TEXT", _DEFAULT_REF_TEXT)
+    device = os.environ.get("TTS_DEVICE", "cuda")
+
+    def _run():
+        try:
+            from f5_tts.api import F5TTS
+        except ImportError:
+            logger.error("[TTS] f5-tts belum terinstall — pip install f5-tts")
+            return False
+
+        if not Path(ref_audio).exists():
+            logger.error(f"[TTS] TTS_REF_AUDIO tidak ditemukan: {ref_audio}")
+            return False
+
+        try:
+            tts = F5TTS(model=model_path, device=device)
+            tts.infer(
+                ref_file=ref_audio,
+                ref_text=ref_text,
+                gen_text=text,
+                output_file=str(wav_fp),
+            )
+            # Unload model dari VRAM setelah selesai (load per request)
+            del tts
+            import torch
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            return True
+        except Exception as e:
+            logger.error(f"[TTS] F5-TTS inference gagal: {e}", exc_info=True)
+            return False
+
+    return await asyncio.to_thread(_run)
+
+
+async def _synthesize_edge_fallback(text: str, mp3_fp: Path) -> bool:
+    """Fallback ke edge-tts kalau F5-TTS gagal."""
     try:
         import edge_tts
     except ImportError:
-        logger.error("[TTS] edge-tts belum terinstall — pip install edge-tts")
-        return None
+        logger.error("[TTS] edge-tts fallback juga tidak terinstall")
+        return False
 
     voice = os.environ.get("TTS_VOICE", "id-ID-GadisNeural")
     rate = os.environ.get("TTS_RATE", "+0%")
     volume = os.environ.get("TTS_VOLUME", "+0%")
-
-    # edge-tts limit ~5000 char per request — truncate biar gak error
-    if len(text) > 4500:
-        text = text[:4500] + " ... potong di sini."
-
-    ts = int(time.time())
-    mp3_fp = _OUTPUT_DIR / f"anisa_tts_{slug_hint}_{ts}.mp3"
-    ogg_fp = _OUTPUT_DIR / f"anisa_tts_{slug_hint}_{ts}.ogg"
-    t0 = time.time()
     try:
         communicate = edge_tts.Communicate(text, voice, rate=rate, volume=volume)
         await communicate.save(str(mp3_fp))
+        return True
     except Exception as e:
-        logger.error(f"[TTS] edge-tts synthesis gagal: {e}", exc_info=True)
-        return None
+        logger.error(f"[TTS] edge-tts fallback gagal: {e}", exc_info=True)
+        return False
 
-    # Convert MP3 → OGG/Opus untuk WA voice note compatibility (sendAudioAsVoice)
+
+async def _convert_to_ogg(src: Path, ogg_fp: Path) -> Path:
+    """Convert audio ke OGG/Opus. Return ogg_fp kalau sukses, src kalau ffmpeg gagal."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", "-i", str(mp3_fp),
+            "ffmpeg", "-y", "-i", str(src),
             "-c:a", "libopus", "-b:a", "32k", "-vbr", "on",
             "-application", "voip", "-frame_duration", "20",
             str(ogg_fp),
@@ -73,26 +110,56 @@ async def synthesize_voice(text: str, slug_hint: str = "anisa") -> Path | None:
         )
         ret = await proc.wait()
         if ret != 0 or not ogg_fp.exists():
-            logger.warning(f"[TTS] ffmpeg convert gagal (exit={ret}), fallback ke .mp3")
-            return mp3_fp  # graceful — kirim MP3 jadi audio attachment biasa
-        mp3_fp.unlink(missing_ok=True)
+            logger.warning(f"[TTS] ffmpeg convert gagal (exit={ret}), fallback ke file asli")
+            return src
+        src.unlink(missing_ok=True)
+        return ogg_fp
     except FileNotFoundError:
-        logger.warning("[TTS] ffmpeg gak ada di PATH — fallback ke .mp3 (WA bakal kirim sbg audio attachment, bukan voice note)")
-        return mp3_fp
+        logger.warning("[TTS] ffmpeg tidak ada di PATH — kirim file asli")
+        return src
+
+
+async def synthesize_voice(text: str, slug_hint: str = "anisa") -> Path | None:
+    """Generate audio file dari text. Return path .ogg (Opus codec, kompatibel WA voice note).
+    Return None kalau gagal. Async — pakai await."""
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    if len(text) > 4500:
+        text = text[:4500] + " ... potong di sini."
+
+    ts = int(time.time())
+    wav_fp = _OUTPUT_DIR / f"anisa_tts_{slug_hint}_{ts}.wav"
+    ogg_fp = _OUTPUT_DIR / f"anisa_tts_{slug_hint}_{ts}.ogg"
+    t0 = time.time()
+
+    # Coba F5-TTS dulu, fallback ke edge-tts kalau gagal
+    f5_ok = await _synthesize_f5(text, wav_fp)
+    if f5_ok and wav_fp.exists():
+        result = await _convert_to_ogg(wav_fp, ogg_fp)
+    else:
+        logger.warning("[TTS] F5-TTS gagal, fallback ke edge-tts")
+        mp3_fp = _OUTPUT_DIR / f"anisa_tts_{slug_hint}_{ts}.mp3"
+        edge_ok = await _synthesize_edge_fallback(text, mp3_fp)
+        if not edge_ok:
+            return None
+        result = await _convert_to_ogg(mp3_fp, ogg_fp)
 
     elapsed = time.time() - t0
-    size_kb = ogg_fp.stat().st_size // 1024
-    logger.info(f"[TTS] Synthesized {ogg_fp.name} ({len(text)} chars → {size_kb} KB, took {elapsed:.1f}s, voice={voice})")
+    size_kb = result.stat().st_size // 1024 if result.exists() else 0
+    logger.info(f"[TTS] Synthesized {result.name} ({len(text)} chars → {size_kb} KB, took {elapsed:.1f}s)")
 
-    # Prune old TTS files (keep 20 dari masing-masing format)
+    # Prune old TTS files
     try:
         from core.output_prune import prune_outputs
         prune_outputs(_OUTPUT_DIR, "anisa_tts_*.ogg", keep=20)
+        prune_outputs(_OUTPUT_DIR, "anisa_tts_*.wav", keep=5)
         prune_outputs(_OUTPUT_DIR, "anisa_tts_*.mp3", keep=5)
     except Exception:
         pass
 
-    return ogg_fp
+    return result if result.exists() else None
 
 
 def decide_voice_mode(reply_text: str) -> str:

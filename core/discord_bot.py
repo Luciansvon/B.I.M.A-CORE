@@ -200,6 +200,7 @@ async def on_message(message):
     # TANGKAP ATTACHMENT + AUTO-DOWNLOAD
     # ============================================================
     downloaded_files = []
+    audio_files = []
     attachment_info = ""
     
     if message.attachments:
