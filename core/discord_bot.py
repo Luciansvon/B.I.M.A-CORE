@@ -14,6 +14,7 @@ from core.saham_scheduler import start_saham_scheduler
 from core.saham_commands import handle_saham_command
 from core.furniture_qc import handle_qc_command
 from core.ocr import handle_ocr_command
+from core.music_commands import handle_music_command
 from teams.t1_manager import simpan_sesi
 
 # Logging diatur di main.py (loguru + stdlib intercept). Cukup ambil logger di sini.
@@ -185,6 +186,14 @@ async def on_message(message):
             await message.reply(format_status_text(snap))
         except Exception as e:
             await message.reply(f"❌ Gagal ambil status: `{e}`")
+        return
+
+    # === Music commands (!play, !skip, !queue, !pause, !resume, !stop, !np, !leave, !loop, !music) ===
+    _music_prefixes = ("!play", "!skip", "!queue", "!q ", "!pause", "!resume",
+                       "!stop", "!np", "!leave", "!loop", "!music", "!musik")
+    _lower = perintah.lower().strip()
+    if _lower == "!q" or _lower.startswith(_music_prefixes):
+        await handle_music_command(message, perintah)
         return
 
     # ============================================================

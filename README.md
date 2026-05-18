@@ -56,6 +56,9 @@ User → Discord / WhatsApp / Web
 | 📱 **Multi-Channel** | Discord, WhatsApp, REST API — all in one system |
 | 🎤 **Voice In/Out** | STT via faster-whisper (Indonesian) + TTS via edge-tts (`id-ID-GadisNeural`). Auto-mirror: voice input → voice reply |
 | 🖼️ **Image-to-Image** | Upload a reference image + prompt → variations following the reference (Gemini Flash Image multimodal) |
+| 🎵 **Music Bot Discord** | Stream YouTube / SoundCloud / YT Music to Discord voice channel — single track or full playlist (max 50 tracks, auto lazy-extract per track) |
+| 🕵️ **OSINT Username Scan** | Sherlock-powered username lookup across 400+ social platforms (Twitter/X, Reddit, GitHub, TikTok, Telegram, etc) |
+| 🖼️ **Image Search & Download** | Find + download images from Wikimedia Commons (license-safe) → fallback Serper Images. Usable as user-facing capability ("download logo X") and as document embed |
 | 💰 **Cost-Optimized** | Dynamic model selection (DeepSeek, Gemini, Llama) via OpenRouter |
 | 🗂️ **Obsidian Vault** | Knowledge management & document archiving integration |
 
@@ -71,7 +74,7 @@ User → Discord / WhatsApp / Web
 | 👁️ **Visual** | Visual Analyst | Image analysis, OCR, visual PDF parsing (Gemini Vision) |
 | 🗂️ **Arsip** | Digital Librarian | Document archiving, knowledge vault, Obsidian integration |
 | ⚙️ **Admin** | System Administrator | File management, task system, document generation (Word/Excel/PDF) |
-| 🔍 **Intel** | Intelligence Agent | Web research, marketplace scraping, browser automation |
+| 🔍 **Intel** | Intelligence Agent | Web research, marketplace scraping, browser automation, OSINT username scan (Sherlock), image search & download |
 | 🌿 **Lifestyle** | Lifestyle Consultant | Recommendations, life advice, everyday questions |
 | 🎨 **Seniman** | Content Creator | Creative writing, design concepts, HTML/SVG/Mermaid + image gen + image-to-image |
 | 🔧 **Mekanik** | Engineer & Debugger | Coding, debugging, code review, technical problems |
@@ -89,6 +92,8 @@ Agent Framework  │ CrewAI
 LLM Provider     │ OpenRouter (DeepSeek v4, Gemini 3.1 Flash, Llama 3.3)
 Communication    │ Discord.py, WhatsApp-web.js (Node.js bridge)
 Voice            │ faster-whisper (STT, Indonesian) + edge-tts (TTS) + ffmpeg (OGG/Opus convert)
+Discord Voice    │ davey (discord.py 3.x voice runtime) + PyNaCl + yt-dlp (YouTube/SoundCloud)
+OSINT            │ sherlock-project (400+ social platforms username scan)
 Dashboard        │ React JSX (pixel art), WebSocket
 Desktop App      │ Tauri 2.x (ANISA sidebar)
 Vector Store     │ LanceDB + sentence-transformers
@@ -108,8 +113,9 @@ Deployment       │ WSL Ubuntu 22.04+ (local PC) or Linux VPS
 - Python 3.10+
 - Node.js 20+
 - Chromium (for browser automation)
-- ffmpeg (for TTS audio conversion — `apt install ffmpeg`)
+- ffmpeg (for TTS audio conversion + music streaming — `apt install ffmpeg`)
 - PM2 (for production)
+- (Optional) `sherlock` CLI installed automatically with `sherlock-project` pip dep
 
 ### 1. Clone & Setup Environment
 
@@ -307,10 +313,12 @@ B.I.M.A-CORE/
 ├── ecosystem.config.js        # PM2 config
 │
 ├── core/                      # Main engine
-│   ├── discord_bot.py         # Discord bot (handles attachments, audio auto-STT)
+│   ├── discord_bot.py         # Discord bot (handles attachments, audio auto-STT, music pre-route)
 │   ├── wa_server.py           # WhatsApp HTTP bridge (audio auto-STT, TTS reply)
 │   ├── stt.py                 # faster-whisper wrapper (lazy singleton)
 │   ├── tts.py                 # edge-tts + ffmpeg → OGG/Opus
+│   ├── music_player.py        # Per-guild voice client + queue + yt-dlp extract
+│   ├── music_commands.py      # !play / !skip / !queue / ... handler
 │   ├── api_retry.py           # Centralized stamina retry for external APIs
 │   ├── langgraph_engine.py    # State machine orchestration
 │   ├── langgraph_nodes/       # Node per agent
@@ -327,6 +335,8 @@ B.I.M.A-CORE/
 ├── teams/                     # CrewAI agent definitions
 ├── tools/                     # Shared tools & plugins
 │   ├── image_gen_tool.py      # Text-to-image + image-to-image (Gemini Flash Image)
+│   ├── image_search_tool.py   # Wikimedia/Serper image lookup + download
+│   ├── sherlock_tool.py       # OSINT username scan (Sherlock CLI wrapper)
 │   ├── browser_use_tool.py    # Browser automation
 │   ├── repo_rag.py            # Repository RAG
 │   └── plugins/               # Dynamic plugins
@@ -439,6 +449,28 @@ pm2 restart anisa-v3
 
 ---
 
+## 🎵 Music Bot (Discord)
+
+Stream audio from YouTube / SoundCloud / YT Music to Discord voice channels. Per-guild player + queue, auto-disconnect after 5 minutes idle, FFmpeg reconnect on network blip, forced 48 kHz stereo PCM output (so playback speed is consistent — no 1.08× drift from sample-rate mismatch).
+
+| Command | Function |
+|---|---|
+| `!play <judul/URL>` | Search YouTube top-1 or direct URL. Auto-joins your current voice channel. Accepts single track OR full playlist URL (max 50 tracks, lazy-extracted per-track at play time). |
+| `!skip` | Skip current track |
+| `!queue` / `!q` | Show queue (up to 10 shown + total count) |
+| `!pause` / `!resume` | Pause / resume playback |
+| `!stop` | Clear queue + stop playback |
+| `!np` | Now playing |
+| `!leave` | Disconnect from voice channel |
+| `!loop [off\|track\|queue]` | Loop mode |
+| `!music` / `!musik` | Help |
+
+**Requirements**: bot role needs `Connect` + `Speak` voice permissions, plus channel-level access to the voice channel you're in.
+
+**Playlist behavior**: paste a YouTube playlist URL (`?list=...`) — all tracks (capped at 50) get enqueued instantly via flat metadata extraction. Each track is fresh-extracted only when it's about to play, which sidesteps URL expiration and keeps enqueue fast.
+
+---
+
 ## 📱 WhatsApp Commands
 
 The WA bridge requires the prefix configured in `WA_TRIGGER` (default `/bot`). Voice notes are silent-ignored by default — they must be armed first to avoid spamming the LangGraph engine with random voice notes from other chats.
@@ -474,9 +506,12 @@ Audio file attachments (e.g. `.mp3`, `.m4a` uploaded via the paperclip with `/bo
 | `!qc` + PDF/PNG/JPG attachment | **Furniture drawing QC** — review working drawings: dimensions, joint details, views, BOM. Output: text report + markup PNG (colored overlay box at issue locations). Uses Gemini Flash vision via OpenRouter. ⚠️ Test with personal projects only, NOT client/company drawings (data goes through third-party cloud). |
 | `!ocr` + image attachment | OCR via EasyOCR — extract text from images (PNG/JPG/WEBP). Supports Indonesian + English. Lazy-loads model ~80MB (first call slow, subsequent fast). |
 | `!status` | Host health snapshot (PC/WSL or VPS) — CPU/RAM/disk/load average/process count. Uses psutil. |
+| `!play` / `!skip` / `!queue` / `!pause` / `!resume` / `!stop` / `!np` / `!leave` / `!loop` / `!music` | Music bot — see [Music Bot section](#-music-bot-discord) above |
 | mention `@Anisa <message>` | General chat → LangGraph router auto-picks the most relevant agent |
 | Audio attachment (`.ogg/.opus/.mp3/.m4a/.wav/.flac/.aac`) | Auto-transcribed via faster-whisper (no arming required on Discord — user intent is implicit via mention/DM). Voice reply attached if input was audio. |
 | Image attachment + "bikin gambar variasi" | Image-to-image (Seniman team) — generates variations following the reference |
+| `@Anisa cek username X di sosmed` | OSINT via Sherlock — routed to Intel agent, returns list of platforms where the username is registered |
+| `@Anisa carikan logo / download foto X` | Image search & download via Wikimedia Commons (license-safe) → fallback Serper Images |
 
 ---
 
