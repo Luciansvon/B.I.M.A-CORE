@@ -73,3 +73,6 @@ skills-lock.json
 # fpdf2 build artifacts
 *.pkl
 tools/_marketplace_login.py
+
+# F5-TTS HuggingFace model cache (~1.3GB, re-downloaded on first use)
+assets/f5_tts_cache/

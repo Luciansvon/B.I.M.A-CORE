@@ -523,6 +523,8 @@ Audio file attachments (e.g. `.mp3`, `.m4a` uploaded via the paperclip with `/bo
 4. Push to the branch: `git push origin feature/your-feature`
 5. Open a Pull Request
 
+> Using an AI coding agent (Claude Code, Cursor, Aider, Codex, Windsurf, Copilot, Continue, etc.)? Read [`AGENTS.md`](AGENTS.md) first — it's the single source of truth for project context, conventions, and operating rules.
+
 ---
 
 ## 📋 License
