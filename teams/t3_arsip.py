@@ -26,7 +26,9 @@ def _get_reranker():
     global _reranker
     if _reranker is None:
         from sentence_transformers import CrossEncoder
-        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        # Force CPU — reranker cuma dipake buat RAG search, gak butuh GPU.
+        # Free ~1GB VRAM buat F5-TTS yang lebih VRAM-hungry di RTX 3050 4GB.
+        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", device="cpu")
     return _reranker
 
 

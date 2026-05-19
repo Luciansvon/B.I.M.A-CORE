@@ -30,8 +30,12 @@ logger = logging.getLogger("bima_core")
 _OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 _OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Smart filter — reply text di atas threshold ini skip TTS atau pakai summary
-TTS_FULL_MAX_CHARS = 300
+# Smart filter — reply text di atas threshold ini skip TTS atau pakai summary.
+# Configurable via env TTS_FULL_MAX_CHARS (default 800 — reply ~800 chars = voice ~50 detik).
+try:
+    TTS_FULL_MAX_CHARS = int(os.environ.get("TTS_FULL_MAX_CHARS", "800"))
+except ValueError:
+    TTS_FULL_MAX_CHARS = 800
 TTS_SUMMARY_LINE = "Anisa kirim jawaban lengkap di chat, baca dari teks ya."
 
 _DEFAULT_HF_REPO = "Eempostor/F5-TTS-INDO-FINETUNE-V2"
@@ -41,84 +45,56 @@ _DEFAULT_BASE_MODEL = "F5TTS_v1_Base"  # finetune di-train dari config base ini
 _DEFAULT_REF_AUDIO = str(Path(__file__).resolve().parent.parent / "assets" / "tts_ref.wav")
 _DEFAULT_REF_TEXT = "Halo, saya Anisa, asisten AI yang siap membantu kamu."
 
-# Cache path hasil download dari HF (dipersist supaya gak re-download tiap call)
-_HF_CACHE_DIR = Path(__file__).resolve().parent.parent / "assets" / "f5_tts_cache"
-
-
-def _ensure_f5_checkpoint() -> tuple[str, str] | None:
-    """Download checkpoint + vocab dari HuggingFace kalau belum ada di cache.
-    Return (ckpt_path, vocab_path) absolute, atau None kalau gagal."""
-    repo = os.environ.get("TTS_HF_REPO", _DEFAULT_HF_REPO)
-    ckpt_name = os.environ.get("TTS_CKPT_FILE", _DEFAULT_CKPT_FILE)
-    vocab_name = os.environ.get("TTS_VOCAB_FILE", _DEFAULT_VOCAB_FILE)
-
-    _HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError:
-        logger.error("[TTS] huggingface_hub belum terinstall")
-        return None
-
-    try:
-        ckpt_path = hf_hub_download(repo_id=repo, filename=ckpt_name, cache_dir=str(_HF_CACHE_DIR))
-        vocab_path = hf_hub_download(repo_id=repo, filename=vocab_name, cache_dir=str(_HF_CACHE_DIR))
-        return ckpt_path, vocab_path
-    except Exception as e:
-        logger.error(f"[TTS] HF download gagal ({repo}): {e}", exc_info=True)
-        return None
-
-
 async def _synthesize_f5(text: str, wav_fp: Path) -> bool:
-    """Jalankan F5-TTS inference di thread terpisah (CPU-bound). Return True kalau sukses."""
-    ref_audio = os.environ.get("TTS_REF_AUDIO", _DEFAULT_REF_AUDIO)
-    ref_text = os.environ.get("TTS_REF_TEXT", _DEFAULT_REF_TEXT)
-    device = os.environ.get("TTS_DEVICE", "cuda")
-    base_model = os.environ.get("TTS_BASE_MODEL", _DEFAULT_BASE_MODEL)
+    """Spawn F5-TTS di subprocess terisolasi (anti-crash + clean VRAM tiap call).
 
-    def _run():
+    Subprocess strategy:
+    - Crash / OOM / hang di F5-TTS subprocess GAK propagate ke anisa-v3 parent.
+    - CUDA context isolated → VRAM auto-released saat subprocess exit (no leak).
+    - Timeout 180s (handle long multi-batch reply); kill kalau lewat.
+    - Non-zero exit → return False → parent fallback ke edge-tts.
+    """
+    import sys
+
+    py = sys.executable
+    worker_module = "core.tts_worker"
+    project_root = str(Path(__file__).resolve().parent.parent)
+
+    # Env passthrough — semua TTS_* + HF_HOME (cache HuggingFace)
+    env = os.environ.copy()
+
+    cmd = [py, "-m", worker_module, text, str(wav_fp)]
+    timeout_sec = 180
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=project_root,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as e:
+        logger.error(f"[TTS] F5-TTS subprocess spawn gagal: {e}", exc_info=True)
+        return False
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        logger.error(f"[TTS] F5-TTS subprocess timeout (>{timeout_sec}s), kill")
         try:
-            from f5_tts.api import F5TTS
-        except ImportError:
-            logger.error("[TTS] f5-tts belum terinstall — pip install f5-tts")
-            return False
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        return False
 
-        if not Path(ref_audio).exists():
-            logger.error(f"[TTS] TTS_REF_AUDIO tidak ditemukan: {ref_audio}")
-            return False
+    if proc.returncode == 0 and wav_fp.exists():
+        return True
 
-        # Download checkpoint + vocab dari HF (cached setelah first call)
-        paths = _ensure_f5_checkpoint()
-        if not paths:
-            return False
-        ckpt_file, vocab_file = paths
-
-        try:
-            tts = F5TTS(
-                model=base_model,
-                ckpt_file=ckpt_file,
-                vocab_file=vocab_file,
-                device=device,
-            )
-            tts.infer(
-                ref_file=ref_audio,
-                ref_text=ref_text,
-                gen_text=text,
-                file_wave=str(wav_fp),
-            )
-            # Unload model dari VRAM/RAM setelah selesai (load per request)
-            del tts
-            try:
-                import torch
-                if device == "cuda" and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-            return True
-        except Exception as e:
-            logger.error(f"[TTS] F5-TTS inference gagal: {e}", exc_info=True)
-            return False
-
-    return await asyncio.to_thread(_run)
+    err_tail = (stderr.decode("utf-8", errors="replace") or "")[-500:].strip()
+    logger.error(f"[TTS] F5-TTS subprocess fail (exit={proc.returncode}): {err_tail}")
+    return False
 
 
 async def _synthesize_edge_fallback(text: str, mp3_fp: Path) -> bool:
