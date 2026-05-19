@@ -687,8 +687,8 @@ async function handleMessage(msg) {
         }
 
         // TTS auto-mirror: kalau backend kirim voice_file (input voice → reply voice juga)
-        // voice_mode 'full'    → voice doang, skip kirim text duplicate
-        // voice_mode 'summary' → text full + voice 1-line summary
+        // voice_mode 'full'   → voice doang, skip kirim text duplicate (reply <=80 chars)
+        // voice_mode 'opener' → text full + voice basa-basi LLM-generated (reply >80 chars)
         const voiceFile = result.voice_file;
         const voiceMode = result.voice_mode;
         const skipTextReply = voiceMode === 'full' && voiceFile && fs.existsSync(voiceFile);

@@ -304,18 +304,20 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
             display_str = tail_msg or "✅ Tugas selesai. Cek file lampiran kalau ada."
 
         # TTS auto-mirror: kalau input lewat audio attachment, reply pakai voice juga.
+        # 'full' (reply <=80 chars): voice baca lengkap. 'opener' (>80 chars): voice basa-basi + text full.
         voice_path = None
         voice_mode = None
         if audio_files and display_str:
-            from core.tts import synthesize_voice, decide_voice_mode, TTS_SUMMARY_LINE
+            from core.tts import synthesize_voice, decide_voice_mode, generate_opener
             voice_mode = decide_voice_mode(display_str)
             if voice_mode == "full":
                 voice_path = await synthesize_voice(display_str, slug_hint="dc")
-            elif voice_mode == "summary":
-                voice_path = await synthesize_voice(TTS_SUMMARY_LINE, slug_hint="dc_sum")
+            elif voice_mode == "opener":
+                opener_text = await generate_opener(display_str)
+                voice_path = await synthesize_voice(opener_text, slug_hint="dc_op")
 
-        # Voice "full" mode → kirim voice doang (text udah dirimkan via reply juga sbg fallback chunk[0])
-        # Voice "summary" mode → kirim text full + 1 voice short summary
+        # Voice "full" mode → kirim voice doang (chunks[0] tetep kirim sbg fallback display)
+        # Voice "opener" mode → kirim text full + 1 voice basa-basi context-aware
         chunks = smart_chunks(display_str)
         await pesan_tunggu.edit(content=chunks[0])
         for chunk in chunks[1:]:

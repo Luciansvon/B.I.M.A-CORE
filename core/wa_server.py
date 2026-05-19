@@ -123,18 +123,20 @@ Gunakan info waktu ini saat menjawab.
         file_list = [str(f) for f in output_files[:10]]
 
         # TTS auto-mirror: kalau input lewat voice (audio_paths kepass), reply pakai voice juga.
-        # Smart filter: reply pendek → voice full, reply panjang → text + 1 line voice summary.
+        # 'full' (reply <=80 chars): voice baca lengkap, text gak duplicate.
+        # 'opener' (reply >80 chars): voice basa-basi LLM-generated + text full.
         voice_file = None
         voice_mode = None
         if audio_paths and display:
-            from core.tts import synthesize_voice, decide_voice_mode, TTS_SUMMARY_LINE
+            from core.tts import synthesize_voice, decide_voice_mode, generate_opener
             voice_mode = decide_voice_mode(display)
             if voice_mode == "full":
                 fp = await synthesize_voice(display, slug_hint="wa")
                 if fp:
                     voice_file = str(fp)
-            elif voice_mode == "summary":
-                fp = await synthesize_voice(TTS_SUMMARY_LINE, slug_hint="wa_sum")
+            elif voice_mode == "opener":
+                opener_text = await generate_opener(display)
+                fp = await synthesize_voice(opener_text, slug_hint="wa_op")
                 if fp:
                     voice_file = str(fp)
 

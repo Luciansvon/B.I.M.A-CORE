@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import time
 from pathlib import Path
 
@@ -30,13 +31,30 @@ logger = logging.getLogger("bima_core")
 _OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 _OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Smart filter — reply text di atas threshold ini skip TTS atau pakai summary.
-# Configurable via env TTS_FULL_MAX_CHARS (default 800 — reply ~800 chars = voice ~50 detik).
+# Smart filter — voice mode handling:
+# - reply <= TTS_OPENER_MIN_CHARS (80) → 'full': voice baca lengkap, text gak dikirim duplicate
+# - reply > TTS_OPENER_MIN_CHARS → 'opener': voice baca basa-basi singkat (LLM-generated context-aware
+#   atau template fallback) + text full dikirim ke chat. Lebih natural buat reply panjang.
 try:
-    TTS_FULL_MAX_CHARS = int(os.environ.get("TTS_FULL_MAX_CHARS", "800"))
+    TTS_OPENER_MIN_CHARS = int(os.environ.get("TTS_OPENER_MIN_CHARS", "80"))
 except ValueError:
-    TTS_FULL_MAX_CHARS = 800
-TTS_SUMMARY_LINE = "Anisa kirim jawaban lengkap di chat, baca dari teks ya."
+    TTS_OPENER_MIN_CHARS = 80
+
+# Fallback templates kalau LLM opener generation gagal — variasi biar gak monoton.
+_OPENER_TEMPLATES_FALLBACK = [
+    "Sip Bim, jawaban lengkap udah aku tulis di chat ya.",
+    "Oke, semua detail udah aku siapin di teks.",
+    "Bentar Bim, baca selengkapnya di chat ya.",
+    "Aman, cek text aja ya buat detailnya.",
+    "Nih jawabannya udah gua tulis lengkap.",
+    "Beres Bim, semua udah aku jelasin di chat.",
+    "Oke, scroll chat ya buat baca lengkapnya.",
+    "Yes, jawaban full ada di teks.",
+    "Sip, gua udah jawab. Cek chat ya.",
+    "Anisa udah siapin di teks, langsung baca aja.",
+    "Oke Bima, detail lengkap di chat ya.",
+    "Mantap, jawaban udah ada di teks lengkap.",
+]
 
 _DEFAULT_HF_REPO = "Eempostor/F5-TTS-INDO-FINETUNE-V2"
 _DEFAULT_CKPT_FILE = "f5_tts_indo_v2.pt"
@@ -182,10 +200,54 @@ async def synthesize_voice(text: str, slug_hint: str = "anisa") -> Path | None:
 
 
 def decide_voice_mode(reply_text: str) -> str:
-    """Smart filter: 'full' (voice + minimal text) | 'summary' (text + 1-line voice) | 'skip'."""
+    """Voice mode dispatch:
+    - 'full': reply pendek (<=80 chars) → voice baca lengkap, text gak duplicate
+    - 'opener': reply panjang → voice basa-basi singkat + text full
+    - 'skip': empty reply
+    """
     text = (reply_text or "").strip()
     if not text:
         return "skip"
-    if len(text) <= TTS_FULL_MAX_CHARS:
+    if len(text) <= TTS_OPENER_MIN_CHARS:
         return "full"
-    return "summary"
+    return "opener"
+
+
+async def generate_opener(reply_text: str) -> str:
+    """Generate basa-basi opener voice (5-15 kata) via LLM context-aware.
+    Fallback ke template pool kalau LLM gagal / timeout / output invalid.
+
+    LLM ngebaca first 400 chars reply buat detect topik, generate opener casual
+    Anisa-style dengan ajakan baca chat. Variasi tone biar gak monoton."""
+    if not reply_text or len(reply_text) < 20:
+        return random.choice(_OPENER_TEMPLATES_FALLBACK)
+
+    context = reply_text[:400]
+    sys_prompt = (
+        "Kamu Anisa, asisten AI casual yang akrab sama Bima. Generate opener voice note "
+        "PENDEK (5-15 kata Bahasa Indonesia casual) buat reply yang bakal dikirim ke Bima. "
+        "Format: greeting singkat + sebut topik dari reply secara casual + ajakan baca chat. "
+        "Variasi tone tiap call — kadang akrab ('Oke Bim...'), kadang santai ('Sip, soal X aja...'), "
+        "kadang konfirmasi ('Aman, detail X udah aku tulis...'). "
+        "JANGAN pakai phrase monoton kayak 'baca dari teks ya'. JANGAN pakai emoji. "
+        "Output HANYA opener-nya, satu baris, tanpa kutip atau prefix."
+    )
+    try:
+        from core.langgraph_nodes.llm_config import get_langchain_llm
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        llm = get_langchain_llm("deepseek/deepseek-v4-flash")
+        resp = await asyncio.to_thread(
+            llm.invoke,
+            [SystemMessage(content=sys_prompt), HumanMessage(content=f"Reply: {context}")],
+        )
+        opener = (resp.content or "").strip().strip('"').strip("'")
+        # Sanity: opener harus reasonable length, gak boleh kosong, gak boleh paragraph
+        if not opener or len(opener) > 200 or "\n" in opener:
+            logger.warning(f"[TTS] Opener LLM output invalid, pakai template: '{opener[:80]}'")
+            return random.choice(_OPENER_TEMPLATES_FALLBACK)
+        logger.info(f"[TTS] Opener generated: '{opener}'")
+        return opener
+    except Exception as e:
+        logger.warning(f"[TTS] Opener LLM gagal, pakai template: {e}")
+        return random.choice(_OPENER_TEMPLATES_FALLBACK)
