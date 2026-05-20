@@ -29,12 +29,16 @@ def get_llm(model_name: str) -> LLM:
         base_url="https://openrouter.ai/api/v1"
     )
 
+# Model names (tanpa "openrouter/" prefix — buat OpenAI SDK langsung yg base_url-nya udah OpenRouter)
+# Dipake furniture_qc.py via OpenAI SDK, dan crewai LLM via get_llm() di bawah.
+VISUAL_MODEL_NAME = "google/gemini-3-flash-preview"
+
 try:
     # 1. MANAGER & ROUTING LLM (Paling sering dipanggil, harus termurah)
     manager_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")     # Sangat murah/gratis untuk routing santai
-    
+
     # 2. VISUAL LLM (Spesialis gambar/PDF)
-    visual_llm = get_llm("openrouter/google/gemini-3-flash-preview")
+    visual_llm = get_llm(f"openrouter/{VISUAL_MODEL_NAME}")
     
     # 3. SPESIALIS MENENGAH (Tugas umum, harga terjangkau)
     arsip_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")       

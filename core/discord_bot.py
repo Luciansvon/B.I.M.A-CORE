@@ -13,6 +13,7 @@ from core.langgraph_engine import run_langgraph_engine
 from core.saham_scheduler import start_saham_scheduler
 from core.saham_commands import handle_saham_command
 from core.furniture_qc import handle_qc_command
+from core.cutlist import handle_cutlist_command
 from core.ocr import handle_ocr_command
 from core.music_commands import handle_music_command
 from teams.t1_manager import simpan_sesi
@@ -171,6 +172,11 @@ async def on_message(message):
     # === !qc command (furniture drawing QC) ===
     if perintah.lower().startswith("!qc"):
         await handle_qc_command(message, bot_client=client)
+        return
+
+    # === !cutlist command (2D bin packing buat panel kayu) ===
+    if perintah.lower().startswith("!cutlist"):
+        await handle_cutlist_command(message)
         return
 
     # === !ocr command (extract text dari image) ===

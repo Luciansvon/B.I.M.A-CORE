@@ -62,6 +62,19 @@ async def chat(req: ChatRequest):
         _busy = True
 
     try:
+        # === Pre-route: !qc / /qc — bypass LangGraph, panggil furniture_qc langsung ===
+        lower_msg = message.lower()
+        if lower_msg.startswith("!qc") or lower_msg.startswith("/qc"):
+            from core.furniture_qc import handle_qc_wa
+            logger.info(f"[WA-BRIDGE] !qc intercept ({len(req.attachment_paths)} attachment)")
+            return await handle_qc_wa(message, req.attachment_paths)
+
+        # === Pre-route: !cutlist / /cutlist — rectpack 2D bin packing ===
+        if lower_msg.startswith("!cutlist") or lower_msg.startswith("/cutlist"):
+            from core.cutlist import handle_cutlist_wa
+            logger.info("[WA-BRIDGE] !cutlist intercept")
+            return await handle_cutlist_wa(message)
+
         from core.utils import get_waktu, extract_output_files
         from core.langgraph_engine import run_langgraph_engine
         from teams.t1_manager import simpan_sesi

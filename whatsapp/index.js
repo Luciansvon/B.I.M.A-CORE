@@ -466,6 +466,12 @@ Kirim pesan langsung, aku proses lewat LangGraph engine.
 
 📎 Kirim file + pesan → otomatis dianalisis
 
+*Special commands:*
+\`!qc\` — QC gambar kerja (PDF/PNG/JPG/DXF + caption \`!qc\`)
+\`!qc diff\` — Bandingin 2 revisi drawing (2 attachment)
+\`!cutlist\` — Cutting list optimizer (panel kayu/plywood)
+\`!cutlist last\` — Pakai BOM auto-extracted dari \`!qc\` terakhir
+
 *Bot commands:* \`help\` \`ping\` \`status\` \`logout\`
 
 *Admin commands* (perlu udah login):
