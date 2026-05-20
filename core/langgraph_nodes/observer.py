@@ -20,7 +20,7 @@ from openai import AsyncOpenAI
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel, Field
 
-from core.desktop_bridge_client import capture, ui_tree
+from core.desktop_bridge_client import capture, ui_tree, BASE_URL as _BRIDGE_URL, health as bridge_health
 from core.event_bus import emit
 from core.langgraph_nodes.state import BimaState, notify_progress
 
@@ -216,9 +216,22 @@ async def analyze_screen(
 
     cap, _, ui_text = await _capture_with_cache()
     if cap is None:
-        emit('agent_state', agent='observer', state='error', message='Bridge unreachable')
-        return ("Maaf Bima, gue gak bisa lihat screen lo sekarang — desktop bridge di Windows gak respond. "
-                "Pastiin service di `C:\\Users\\shint\\bima-desktop-bridge\\` udah jalan ya 😅")
+        # Bedain: bridge unreachable (process mati / IP shift) vs bridge alive tapi capture fail
+        from core.desktop_bridge_client import BASE_URL as current_url
+        alive = await bridge_health()
+        if alive:
+            emit('agent_state', agent='observer', state='error', message='Capture fail (bridge alive)')
+            return (
+                "Bridge desktop nyala tapi gagal capture screen — biasanya screen di-lock, "
+                "session locked, atau Windows lagi sibuk. Coba unlock screen + ulang ya 😅"
+            )
+        emit('agent_state', agent='observer', state='error', message=f'Bridge unreachable @ {current_url}')
+        return (
+            f"Maaf Bima, gue gak bisa lihat screen lo sekarang — desktop bridge `{current_url}` gak respond.\n"
+            f"Cek: (1) service `C:\\Users\\shint\\bima-desktop-bridge\\main.py` udah jalan? "
+            f"(2) port 9100 listening? `Get-NetTCPConnection -LocalPort 9100`\n"
+            f"(3) Windows Firewall allow inbound? 😅"
+        )
 
     phash = cap.get("perceptual_hash")
     title = cap.get("foreground_title") or "Unknown"
@@ -318,7 +331,9 @@ async def analyze_screen(
                     ],
                 },
             ],
-            max_retries=2,
+            # max_retries=1 bound total wall time. instructor retry sebelumnya 2x → 3 LLM call
+            # sequential, kalau Gemini lambat (cold start / region throttle) bisa >30s.
+            max_retries=1,
         )
     except Exception as e:
         logger.error(f"[observer] vision LLM gagal: {e}")

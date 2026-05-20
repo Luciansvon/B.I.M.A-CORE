@@ -4,7 +4,14 @@ Bridge harus jalan terpisah di Windows: `C:\\Users\\shint\\bima-desktop-bridge\\
 Lokasi default: WSL gateway IP, biasanya 172.25.64.1 di Hyper-V WSL2.
 
 Safe-fail: kalau bridge mati / unreachable, semua fungsi return None — bot tidak crash.
+
+Resilience:
+- `BASE_URL` di-cache, tapi re-detect otomatis kalau ConnectError (WSL gateway IP shift
+  sering kejadian setelah WSL restart / network profile change).
+- capture() & ui_tree() retry 1x dengan backoff 0.4s buat transient hiccup.
+- Differentiate timeout vs connection-refused vs HTTP error di log level INFO/WARN.
 """
+import asyncio
 import logging
 import os
 import socket
@@ -17,7 +24,7 @@ logger = logging.getLogger('bima_core')
 
 CAPTURE_TIMEOUT_S = 8.0
 TREE_TIMEOUT_S = 12.0
-HEALTH_TIMEOUT_S = 1.5
+HEALTH_TIMEOUT_S = 3.0  # naik dari 1.5 — cross-VM RTT bisa spike sesaat
 
 
 def _detect_default_bridge_url() -> str:
@@ -27,7 +34,6 @@ def _detect_default_bridge_url() -> str:
         return env_url.rstrip("/")
 
     try:
-        # `ip route show default | awk '{print $3}'`
         result = subprocess.run(
             ["ip", "route", "show", "default"],
             capture_output=True, text=True, timeout=2,
@@ -45,6 +51,20 @@ def _detect_default_bridge_url() -> str:
 BASE_URL = _detect_default_bridge_url()
 
 
+def refresh_base_url() -> str:
+    """Re-run gateway detection. Update module-level BASE_URL & return new value.
+
+    Dipanggil otomatis kalau ConnectError — WSL gateway IP sering shift setelah
+    WSL restart, dan module-level BASE_URL jadi stale sampai service di-restart.
+    """
+    global BASE_URL
+    old = BASE_URL
+    BASE_URL = _detect_default_bridge_url()
+    if BASE_URL != old:
+        logger.info(f"[desktop_bridge] BASE_URL refresh: {old} → {BASE_URL}")
+    return BASE_URL
+
+
 def _port_reachable(host: str, port: int, timeout: float = 0.5) -> bool:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
@@ -57,19 +77,64 @@ def _port_reachable(host: str, port: int, timeout: float = 0.5) -> bool:
 
 
 async def health() -> bool:
-    """Cek bridge hidup. True = ready, False = down."""
+    """Cek bridge hidup. True = ready, False = down. Log specific cause kalau fail."""
     try:
         async with httpx.AsyncClient(timeout=HEALTH_TIMEOUT_S) as c:
             r = await c.get(f"{BASE_URL}/health")
             r.raise_for_status()
             data = r.json()
             return bool(data.get("status") == "ok")
-    except Exception:
+    except httpx.ConnectError as e:
+        logger.info(f"[desktop_bridge] health ConnectError ({BASE_URL}): {e} — coba refresh IP")
+        refresh_base_url()
+        return False
+    except httpx.TimeoutException:
+        logger.info(f"[desktop_bridge] health timeout ({HEALTH_TIMEOUT_S}s @ {BASE_URL})")
+        return False
+    except Exception as e:
+        logger.debug(f"[desktop_bridge] health error: {type(e).__name__}: {e}")
         return False
 
 
+async def _post_with_retry(
+    endpoint: str, timeout: float, label: str,
+    params: dict | None = None, method: str = "POST",
+) -> Optional[dict]:
+    """Helper: 1 retry on transient errors. ConnectError triggers IP refresh."""
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                url = f"{BASE_URL}{endpoint}"
+                if method == "POST":
+                    r = await c.post(url)
+                else:
+                    r = await c.get(url, params=params or {})
+                r.raise_for_status()
+                return r.json()
+        except httpx.ConnectError as e:
+            logger.info(f"[desktop_bridge] {label} ConnectError attempt {attempt} ({BASE_URL}): {e}")
+            if attempt == 1:
+                refresh_base_url()
+                await asyncio.sleep(0.4)
+                continue
+            return None
+        except httpx.TimeoutException as e:
+            logger.info(f"[desktop_bridge] {label} timeout attempt {attempt} ({timeout}s): {e}")
+            if attempt == 1:
+                await asyncio.sleep(0.4)
+                continue
+            return None
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"[desktop_bridge] {label} HTTP {e.response.status_code}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"[desktop_bridge] {label} error: {type(e).__name__}: {e}")
+            return None
+    return None
+
+
 async def capture() -> Optional[dict]:
-    """Take screenshot + foreground window info.
+    """Take screenshot + foreground window info. 1 retry on transient fails.
 
     Return dict dengan keys:
       - screenshot_b64 (str, base64 PNG)
@@ -77,37 +142,14 @@ async def capture() -> Optional[dict]:
       - foreground_title (str | None)
       - foreground_process (str | None)
       - width, height (int)
-    None kalau bridge gak responding.
+    None kalau bridge gak responding setelah retry.
     """
-    try:
-        async with httpx.AsyncClient(timeout=CAPTURE_TIMEOUT_S) as c:
-            r = await c.post(f"{BASE_URL}/capture")
-            r.raise_for_status()
-            return r.json()
-    except (httpx.TimeoutException, httpx.HTTPError) as e:
-        logger.debug(f"[desktop_bridge] capture gagal: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"[desktop_bridge] capture error: {e}")
-        return None
+    return await _post_with_retry("/capture", CAPTURE_TIMEOUT_S, "capture")
 
 
 async def ui_tree(limit: int = 80) -> Optional[dict]:
-    """Return UI elements dari foreground window. None kalau gagal.
-
-    Return dict:
-      - foreground_title (str | None)
-      - elements (list of {name, control_type, rect})
-      - truncated (bool)
-    """
-    try:
-        async with httpx.AsyncClient(timeout=TREE_TIMEOUT_S) as c:
-            r = await c.get(f"{BASE_URL}/tree", params={"limit": limit})
-            r.raise_for_status()
-            return r.json()
-    except (httpx.TimeoutException, httpx.HTTPError) as e:
-        logger.debug(f"[desktop_bridge] ui_tree gagal: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"[desktop_bridge] ui_tree error: {e}")
-        return None
+    """Return UI elements dari foreground window. None kalau gagal setelah retry."""
+    return await _post_with_retry(
+        "/tree", TREE_TIMEOUT_S, "ui_tree",
+        params={"limit": limit}, method="GET",
+    )
