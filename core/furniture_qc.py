@@ -13,24 +13,94 @@ import base64
 import json
 import logging
 import os
+import re
 from io import BytesIO
 from pathlib import Path
 
 import discord
 import fitz  # PyMuPDF
 import httpx
+import json_repair
 import openai
 from PIL import Image, ImageDraw, ImageFont
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from config import VISUAL_MODEL_NAME
 
 logger = logging.getLogger("bima_core.furniture_qc")
 
+# Regex fallback: extract first JSON object dari raw string (handles truncated output)
+_JSON_OBJECT_RE = re.compile(r'\{[\s\S]*\}', re.DOTALL)
+
+
+def _safe_json_loads(raw: str, tag: str = "qc") -> dict:
+    """Parse JSON dengan fallback regex extraction dan json_repair.
+
+    LLM kadang balikin markdown fence, trailing text, atau truncated JSON.
+    Coba json.loads() langsung, kalau gagal coba json_repair.loads().
+    """
+    # Strip markdown fences
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = (
+            cleaned.removeprefix("```json")
+            .removeprefix("```")
+            .removesuffix("```")
+            .strip()
+        )
+    
+    # 1. Coba standard json.loads
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Coba json_repair (sangat robust untuk truncated/malformed JSON)
+    try:
+        data = json_repair.loads(cleaned)
+        if isinstance(data, dict):
+            logger.warning(f"[{tag}] JSON direct parse gagal, json_repair berhasil memulihkan data")
+            return data
+    except Exception:
+        pass
+
+    # 3. Fallback: cari JSON object pertama pakai regex
+    m = _JSON_OBJECT_RE.search(raw)
+    if m:
+        try:
+            data = json.loads(m.group())
+            logger.warning(f"[{tag}] JSON direct parse gagal, regex fallback berhasil")
+            return data
+        except json.JSONDecodeError:
+            pass
+        
+        # Coba jalankan json_repair pada regex match
+        try:
+            data = json_repair.loads(m.group())
+            if isinstance(data, dict):
+                logger.warning(f"[{tag}] JSON direct parse gagal, json_repair pada regex match berhasil")
+                return data
+        except Exception:
+            pass
+
+    # Log full raw output ke file debug agar bisa di-audit jika gagal total
+    try:
+        debug_file = Path(__file__).parent.parent / "logs" / f"failed_raw_{tag}.json"
+        debug_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(raw)
+        logger.info(f"[{tag}] Menulis raw output gagal ke {debug_file}")
+    except Exception as e:
+        logger.error(f"[{tag}] Gagal menulis debug file: {e}")
+
+    logger.error(f"[{tag}] JSON parse fail total\nRaw (500 chars): {raw[:500]}")
+    raise ValueError(f"Model balikin JSON invalid — raw output (500 chars): {raw[:500]}")
+
 OUTPUT_DIR = Path(__file__).parent.parent / "outputs"
 QC_MODEL = VISUAL_MODEL_NAME  # single source of truth: config.py
-MAX_PAGES = int(os.environ.get("QC_MAX_PAGES", "6"))
+QC_CONSOLIDATOR_MODEL = "deepseek/deepseek-v4-flash"  # Note Taker model: sangat cepat dan pintar merangkum text JSON
+MAX_PAGES = int(os.environ.get("QC_MAX_PAGES", "30"))
 TARGET_WIDTH_PX = int(os.environ.get("QC_TARGET_WIDTH_PX", "2048"))
 MAX_FILE_MB = int(os.environ.get("QC_MAX_FILE_MB", "20"))
 DISCORD_MSG_LIMIT = 1900  # safety margin di bawah 2000
@@ -101,6 +171,110 @@ OUTPUT — JSON object strict, tanpa markdown fence:
 }
 """
 
+
+PAGE_CHECKER_PROMPT = """Kamu reviewer senior gambar kerja furniture 15 tahun di workshop.
+
+Tugas: Cek halaman gambar kerja yang dilampirkan (hanya satu halaman ini), identifikasi issue yang bikin produksi salah / bingung. Untuk setiap issue, tentukan koordinat bounding box di halaman tersebut agar bisa ditandai secara visual.
+
+Sekalian extract (bila ada di halaman ini):
+- **TITLE BLOCK** — drawing#, judul, revisi, scale, author, tanggal (kalau ada di kop gambar)
+- **BOM** — daftar part dengan ukuran w×h, tebal, qty, material (kalau terbaca jelas di table BOM atau label halaman ini)
+
+CHECKLIST PRIORITAS REVIEW:
+1. **DIMENSI** — tiap part wajib ada ukuran panjang × lebar × tebal. Flag part tanpa dimensi.
+2. **DETAIL SAMBUNGAN** — sambungan (dovetail/mortise-tenon/dowel/screw/biscuit) wajib ada callout / section view. Flag sambungan tanpa detail.
+3. **VIEW** — minimum 3 view (depan/samping/atas) atau isometric/section. Flag kalau kurang.
+4. **MATERIAL & BOM** — jenis kayu, finishing, hardware (screw/hinge/handle), kuantitas. Flag yang missing.
+
+LEVEL SEVERITY:
+- **critical** — bakal bikin produksi salah/gagal
+- **warning** — produksi bisa nebak tapi rentan misinterpretasi
+- **info** — saran improvement
+
+BOUNDING BOX:
+- "bbox" = [x0, y0, x1, y1] dalam koordinat normalized 0.0-1.0 dari halaman ini.
+  x0/y0 = pojok kiri-atas area issue, x1/y1 = pojok kanan-bawah.
+  Kasih null kalau lokasi tidak jelas / issue bersifat global ke halaman.
+
+BOM RULES:
+- Cuma extract part yang JELAS terbaca dimensinya di gambar/tabel BOM pada halaman ini. JANGAN ngarang.
+- Unit dimensi = mm. Kalau gambar pake cm/inch, convert ke mm.
+- Material biar konsisten pake key salah satu: "plywood_18mm" | "plywood_12mm" | "mdf_18mm" | "mdf_12mm" | "solid_jati" | "solid_mahoni" | "other" (atau null kalau gak jelas).
+
+OUTPUT — JSON object strict, tanpa markdown fence:
+{
+  "title_block": {
+    "drawing_number": "JM-024" | null,
+    "title": "Lemari Pakaian 2-Pintu" | null,
+    "revision": "Rev.3" | null,
+    "scale": "1:20" | null,
+    "author": "Bima" | null,
+    "date": "2026-05-15" | null
+  } | null,
+  "issues": [
+    {"severity": "critical|warning|info", "category": "dimensi|sambungan|view|material|lain",
+     "location": "bagian mana di gambar (deskripsi human-readable)",
+     "bbox": [0.12, 0.34, 0.56, 0.78],
+     "issue": "apa yg salah/kurang", "suggestion": "cara fix"}
+  ],
+  "praise": ["hal yg udah bagus, kalau ada"],
+  "bom": [
+    {"name": "top panel", "width": 600, "height": 400, "thickness": 18,
+     "qty": 2, "material": "plywood_18mm"}
+  ]
+}
+"""
+
+CONSOLIDATOR_PROMPT = """Kamu adalah Kepala QC (Note Taker) senior di workshop furniture.
+Tugas kamu adalah mengonsolidasikan dan merapikan hasil review per halaman gambar kerja yang dikumpulkan oleh para Checker Agent menjadi satu laporan resmi tunggal (QCResult).
+
+Kamu akan menerima data JSON mentah yang berisi daftar temuan (issues), pujian (praise), data Title Block, dan Bill of Materials (BOM) dari masing-masing halaman.
+
+TUGAS UTAMA KONSOLIDASI:
+1. **Verdikt Akhir (overall_verdict)**:
+   - Tentukan verdict akhir proyek gambar kerja:
+     * \"rejected\": jika ada cacat yang sangat parah di banyak halaman.
+     * \"needs_revision\": jika ada temuan severity \"critical\" atau beberapa \"warning\".
+     * \"approved\": jika tidak ada cacat berat (hanya ada minor/\"info\" atau tidak ada temuan).
+2. **Ringkasan Proyek (summary)**:
+   - Tulis ringkasan laporan akhir sepanjang 1-2 kalimat bahasa Indonesia yang merangkum kondisi umum gambar kerja secara profesional.
+3. **Penyusunan Isu (issues)**:
+   - Gabungkan seluruh isu dari tiap halaman.
+   - Pastikan field \"page\" pada tiap isu disesuaikan dengan halaman asalnya (1-indexed).
+   - Singkirkan isu yang benar-benar duplikat identik.
+4. **Penyusunan Pujian (praise)**:
+   - Gabungkan seluruh poin pujian yang relevan.
+5. **Title Block Resmi (title_block)**:
+   - Pilih informasi Title Block terbaik dan terlengkap dari halaman yang ada.
+6. **Konsolidasi & Deduplikasi BOM (bom)**:
+   - Gabungkan part list dari semua halaman.
+   - Jika ada nama part dengan dimensi (width, height, thickness) dan material yang sama persis muncul di halaman berbeda, **GABUNGKAN** kuantitasnya (jumlahkan \"qty\").
+   - Pastikan penamaan material konsisten.
+
+OUTPUT — JSON object strict, tanpa markdown fence:
+{
+  "overall_verdict": "approved" | "needs_revision" | "rejected",
+  "summary": "Ringkasan laporan akhir...",
+  "title_block": {
+    "drawing_number": "...",
+    "title": "...",
+    "revision": "...",
+    "scale": "...",
+    "author": "...",
+    "date": "..."
+  } | null,
+  "issues": [
+    {"severity": "critical|warning|info", "category": "dimensi|sambungan|view|material|lain",
+     "location": "...", "page": 1, "bbox": [x0, y0, x1, y1] or null,
+     "issue": "...", "suggestion": "..."}
+  ],
+  "praise": ["..."],
+  "bom": [
+    {"name": "top panel", "width": 600, "height": 400, "thickness": 18, "qty": 2, "material": "plywood_18mm"}
+  ]
+}
+"""
+
 QC_DIFF_SYSTEM_PROMPT = """Kamu reviewer senior furniture drawing 15 tahun. Tugas: bandingin 2 revisi gambar kerja (REV_A vs REV_B) yg dilampirkan urut.
 
 Attachment urutannya: halaman REV_A dulu (1..N_a), terus halaman REV_B (N_a+1..N_a+N_b).
@@ -145,7 +319,26 @@ _FONT_PATHS = [
 
 
 class QCIssue(BaseModel):
-    severity: str
+    severity: str  # validated: critical | warning | info
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def normalize_severity(cls, v: str | None) -> str:
+        """Normalize free-form severity ke 3 level standar."""
+        v_lower = str(v or "info").lower().strip()
+        if v_lower in ("critical", "crit", "error", "high", "blocker"):
+            return "critical"
+        if v_lower in ("warning", "warn", "medium", "moderate"):
+            return "warning"
+        return "info"
+
+    @field_validator("category", "location", "issue", "suggestion", mode="before")
+    @classmethod
+    def normalize_string_fields(cls, v: str | None) -> str:
+        if v is None:
+            return ""
+        return str(v).strip()
+
     category: str
     location: str
     issue: str
@@ -171,6 +364,14 @@ class BomPart(BaseModel):
     qty: int = 1
     material: str | None = None  # plywood_18mm / mdf_18mm / solid_jati / ...
 
+
+
+class PageQCResult(BaseModel):
+    page_number: int
+    title_block: TitleBlock | None = None
+    issues: list[QCIssue] = Field(default_factory=list)
+    praise: list[str] = Field(default_factory=list)
+    bom: list[BomPart] = Field(default_factory=list)
 
 class QCResult(BaseModel):
     overall_verdict: str
@@ -229,6 +430,29 @@ def _load_material_prices() -> dict[str, float]:
 _MATERIAL_PRICES_PER_M2 = _load_material_prices()
 _PRICE_FALLBACK = _MATERIAL_PRICES_PER_M2.get("other", 100000.0)
 
+# Fuzzy prefix → default thickness. LLM sering balikin "plywood" tanpa suffix.
+_MATERIAL_FUZZY: dict[str, str] = {
+    "plywood": "plywood_18mm",
+    "mdf": "mdf_18mm",
+    "solid": "solid_jati",
+    "kayu": "solid_jati",
+    "multiplex": "plywood_18mm",
+}
+
+
+def _resolve_material_price(mat_key: str) -> float:
+    """Lookup harga material dengan fuzzy fallback.
+
+    Urutan: exact match → prefix fuzzy → fallback 'other'.
+    """
+    if mat_key in _MATERIAL_PRICES_PER_M2:
+        return _MATERIAL_PRICES_PER_M2[mat_key]
+    # Fuzzy: cek apakah mat_key match prefix (e.g. "plywood" → "plywood_18mm")
+    for prefix, default_key in _MATERIAL_FUZZY.items():
+        if mat_key.startswith(prefix):
+            return _MATERIAL_PRICES_PER_M2.get(default_key, _PRICE_FALLBACK)
+    return _PRICE_FALLBACK
+
 
 def _estimate_cost_from_bom(bom: list[BomPart]) -> dict:
     """Calc material cost estimate dari BOM. Return breakdown + total IDR."""
@@ -239,8 +463,8 @@ def _estimate_cost_from_bom(bom: list[BomPart]) -> dict:
         if part.width <= 0 or part.height <= 0 or part.qty <= 0:
             continue
         area_m2 = (part.width * part.height / 1_000_000.0) * part.qty
-        mat_key = (part.material or "other").lower()
-        price = _MATERIAL_PRICES_PER_M2.get(mat_key, _PRICE_FALLBACK)
+        mat_key = (part.material or "other").lower().strip()
+        price = _resolve_material_price(mat_key)
         cost = area_m2 * price
         total_area_m2 += area_m2
         total_cost += cost
@@ -512,6 +736,15 @@ def _annotate_pdf(pdf_bytes: bytes, result: QCResult) -> bytes:
         for page_idx, page in enumerate(doc):
             page_num = page_idx + 1
             if page_num > MAX_PAGES:
+                # Log issue yang ada di halaman di luar cap
+                overflow_issues = [
+                    i for i in result.issues if i.page > MAX_PAGES
+                ]
+                if overflow_issues:
+                    logger.warning(
+                        f"[qc] {len(overflow_issues)} issue di halaman >{MAX_PAGES} "
+                        f"gak dapet annotation visual (MAX_PAGES={MAX_PAGES})"
+                    )
                 break
             page_issues = [
                 i for i in result.issues
@@ -625,18 +858,7 @@ async def review_diff_from_bytes(
 
     completion = await asyncio.to_thread(_call_vision)
     raw = (completion.choices[0].message.content or "").strip()
-    if raw.startswith("```"):
-        raw = (
-            raw.removeprefix("```json")
-            .removeprefix("```")
-            .removesuffix("```")
-            .strip()
-        )
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error(f"[qc-diff] JSON parse fail: {e}\nRaw: {raw[:500]}")
-        raise ValueError(f"Model balikin JSON invalid: {e}")
+    data = _safe_json_loads(raw, tag="qc-diff")
     return QCDiffResult(**data)
 
 
@@ -705,10 +927,174 @@ def _make_markup_artifacts(
     return []
 
 
+
+def _extract_pdf_page_text(pdf_bytes: bytes, page_num: int) -> str | None:
+    """Coba extract text native dari halaman PDF menggunakan pdfplumber.
+    
+    Cuma dapet hasil kalau PDF-nya berbasis vektor (bukan raster scan).
+    """
+    import pdfplumber
+    try:
+        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+            if page_num - 1 < len(pdf.pages):
+                page = pdf.pages[page_num - 1]
+                text = page.extract_text()
+                if text and text.strip():
+                    return text.strip()
+    except Exception as e:
+        logger.debug(f"[qc] pdfplumber extract failed for page {page_num}: {e}")
+    return None
+
+
+def _crop_bottom_right(img_b64: str) -> str | None:
+    """Memotong 35% area kanan-bawah halaman (area Kop/BOM standar) untuk zoom resolusi tinggi."""
+    try:
+        img = Image.open(BytesIO(base64.b64decode(img_b64)))
+        W, H = img.size
+        # Crop dari x=0.6*W ke W, dan y=0.5*H ke H (area kanan bawah)
+        left = int(0.6 * W)
+        top = int(0.5 * H)
+        cropped = img.crop((left, top, W, H))
+        
+        buf = BytesIO()
+        cropped.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        logger.debug(f"[qc] Failed to crop bottom-right area: {e}")
+        return None
+
+
+async def _call_page_checker(
+    client: OpenAI,
+    img_b64: str,
+    page_num: int,
+    content_type: str,
+    semaphore: asyncio.Semaphore,
+    dxf_facts: dict | None = None,
+    vector_text: str | None = None,
+    crop_b64: str | None = None,
+    ref_memory: str | None = None,
+) -> dict:
+    """Checker Agent: Vision call untuk 1 halaman gambar kerja."""
+    prompt = PAGE_CHECKER_PROMPT
+    if dxf_facts is not None and page_num == 1:
+        facts_blob = json.dumps(dxf_facts, indent=2, default=str)
+        prompt += (
+            "\n\n=== FAKTA DXF (GROUND TRUTH — JANGAN KONTRADIKSI) ===\n"
+            f"{facts_blob}\n\n"
+            "Gunakan data dimensi & layer di atas buat verify drawing."
+        )
+
+    if vector_text:
+        prompt += (
+            "\n\n=== NATIVE TEXT / DIMENSI TERDETEKSI (GROUND TRUTH) ===\n"
+            f"{vector_text}\n\n"
+            "Gunakan teks/dimensi di atas untuk membantu verifikasi gambar kerja pada halaman ini."
+        )
+
+    if ref_memory:
+        prompt += (
+            "\n\n=== REFERENSI GAMBAR APPROVED DARI INGATAN (PEMBANDING STANDAR) ===\n"
+            f"{ref_memory}\n\n"
+            "Gunakan referensi gambar kerja yang sudah disetujui di atas sebagai pembanding standar/dimensi jika tipe furniture sejenis."
+        )
+
+    content_parts = [
+        {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{img_b64}"}}
+    ]
+
+    if crop_b64:
+        content_parts.append(
+            {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{crop_b64}"}}
+        )
+        prompt += (
+            "\n\nCatatan: Kami melampirkan dua gambar untuk halaman ini.\n"
+            "1. Gambar pertama: halaman penuh.\n"
+            "2. Gambar kedua: potongan (zoom) resolusi tinggi dari area kanan-bawah (Kop/Title Block & BOM).\n"
+            "Gunakan gambar kedua untuk melihat detail teks kop & BOM yang kecil dengan lebih jelas."
+        )
+
+    content_parts.append({"type": "text", "text": prompt})
+
+    import stamina
+
+    @stamina.retry(on=_RETRYABLE_EXC, attempts=3, wait_initial=2, wait_max=15)
+    def _call_vision():
+        return client.chat.completions.create(
+            model=QC_MODEL,
+            messages=[{"role": "user", "content": content_parts}],
+            max_tokens=1500,
+            response_format={"type": "json_object"},
+        )
+
+    async with semaphore:
+        logger.info(f"[qc] Checker sedang memeriksa Halaman {page_num}...")
+        completion = await asyncio.to_thread(_call_vision)
+        raw = (completion.choices[0].message.content or "").strip()
+        try:
+            data = _safe_json_loads(raw, tag=f"qc-page-{page_num}")
+        except Exception as e:
+            logger.error(f"[qc-page-{page_num}] Gagal parse JSON hasil checker: {e}. Menggunakan fallback data kosong.")
+            data = {
+                "title_block": None,
+                "issues": [
+                    {
+                        "severity": "warning",
+                        "category": "lain",
+                        "location": f"Halaman {page_num}",
+                        "issue": f"Gagal menganalisis halaman {page_num} secara otomatis (VLM parse error: {e})",
+                        "suggestion": "Silakan periksa halaman ini secara manual.",
+                        "page": page_num,
+                    }
+                ],
+                "praise": [],
+                "bom": [],
+            }
+        # Inject page number ke data hasil
+        data["page_number"] = page_num
+        # Pastikan list issues memiliki page number yang benar
+        if "issues" in data and isinstance(data["issues"], list):
+            for issue in data["issues"]:
+                if isinstance(issue, dict):
+                    issue["page"] = page_num
+        return data
+
+
+async def _consolidate_results(client: OpenAI, page_results: list[dict]) -> dict:
+    """Note Taker Agent: Mengonsolidasikan semua hasil Checker per halaman menjadi QCResult."""
+    logger.info("[qc] Note Taker sedang mengonsolidasikan hasil pemeriksaan...")
+    
+    # Buat input teks payload yang rapi berisi data per halaman
+    consolidator_payload = {
+        "description": "Berikut adalah data mentah hasil pemeriksaan per halaman oleh Checker Agent.",
+        "pages_results": page_results
+    }
+    payload_str = json.dumps(consolidator_payload, indent=2, default=str)
+    
+    import stamina
+
+    @stamina.retry(on=_RETRYABLE_EXC, attempts=3, wait_initial=2, wait_max=15)
+    def _call_consolidator():
+        return client.chat.completions.create(
+            model=QC_CONSOLIDATOR_MODEL,
+            messages=[
+                {"role": "system", "content": CONSOLIDATOR_PROMPT},
+                {"role": "user", "content": payload_str}
+            ],
+            max_tokens=2500,
+            response_format={"type": "json_object"},
+        )
+
+    completion = await asyncio.to_thread(_call_consolidator)
+    raw = (completion.choices[0].message.content or "").strip()
+    data = _safe_json_loads(raw, tag="qc-consolidate")
+    return data
+
+
 async def _review_from_bytes(
     file_bytes: bytes, filename: str
 ) -> tuple[QCResult, list[str], bytes | None]:
-    """Core review: bytes → render → vision API → parse.
+    """Core review: bytes → render → vision API per halaman secara paralel → konsolidasi.
 
     Dipakai bareng oleh Discord (URL download) dan WA (local file).
     Return: (QCResult, images_b64 per halaman, pdf_bytes_or_None).
@@ -742,58 +1128,89 @@ async def _review_from_bytes(
     if not images_b64:
         raise ValueError("Tidak ada halaman/image yg bisa dibaca dari file")
 
-    content_parts: list[dict] = [
-        {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{img}"}}
-        for img in images_b64
-    ]
-    content_parts.append({"type": "text", "text": QC_SYSTEM_PROMPT})
-
-    # DXF: kasih ground-truth fakta ke vision LLM — akurasi dimensi 100%, gak halu
-    if dxf_facts is not None:
-        facts_blob = json.dumps(dxf_facts, indent=2, default=str)
-        content_parts.append({
-            "type": "text",
-            "text": (
-                "\n\n=== FAKTA DXF (GROUND TRUTH — JANGAN KONTRADIKSI) ===\n"
-                f"{facts_blob}\n\n"
-                "Gunakan data dimensi & layer di atas buat verify drawing. "
-                "Cek apakah ada part yg ke-render tanpa DIMENSION entity (= flag missing dimensi). "
-                "Cek konsistensi naming layer vs BOM."
-            ),
-        })
-
     client = OpenAI(
         api_key=os.environ.get("OPENROUTER_API_KEY"),
         base_url="https://openrouter.ai/api/v1",
     )
 
-    import stamina
-
-    @stamina.retry(on=_RETRYABLE_EXC, attempts=3, wait_initial=2, wait_max=15)
-    def _call_vision():
-        return client.chat.completions.create(
-            model=QC_MODEL,
-            messages=[{"role": "user", "content": content_parts}],
-            max_tokens=4000,  # BOM + title_block extraction butuh ruang ekstra
-            response_format={"type": "json_object"},
-        )
-
-    completion = await asyncio.to_thread(_call_vision)
-    raw = (completion.choices[0].message.content or "").strip()
-    # Beberapa model tetap bungkus markdown fence — strip ```json ... ``` atau ``` ... ```
-    if raw.startswith("```"):
-        raw = (
-            raw.removeprefix("```json")
-            .removeprefix("```")
-            .removesuffix("```")
-            .strip()
-        )
-
+    # 1. Jalankan Checker Agent untuk tiap halaman secara paralel (max 5 paralel sekaligus via Semaphore)
+    # Semantic recall dari agentmemory untuk mencari referensi gambar kerja sejenis yang pernah disetujui (Approved)
+    ref_memory = ""
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error(f"[qc] JSON parse fail: {e}\nRaw: {raw[:500]}")
-        raise ValueError(f"Model balikin JSON invalid: {e}")
+        from core import agentmemory_client
+        ref_memory = await agentmemory_client.recall(f"Referensi Gambar Kerja sejenis {filename}", limit=2)
+        if ref_memory:
+            logger.info(f"[qc] Berhasil memanggil referensi ingatan untuk {filename}")
+    except Exception as e:
+        logger.debug(f"[qc] Gagal recall memory referensi: {e}")
+
+    semaphore = asyncio.Semaphore(5)
+    tasks = []
+    for idx, img_b64 in enumerate(images_b64, start=1):
+        # Extract native text if PDF
+        vector_text = None
+        if pdf_bytes:
+            vector_text = await asyncio.to_thread(_extract_pdf_page_text, pdf_bytes, idx)
+            
+        # Crop bottom-right area (heuristics zoom)
+        crop_b64 = await asyncio.to_thread(_crop_bottom_right, img_b64)
+
+        tasks.append(
+            _call_page_checker(
+                client=client,
+                img_b64=img_b64,
+                page_num=idx,
+                content_type=content_type,
+                semaphore=semaphore,
+                dxf_facts=dxf_facts if idx == 1 else None,
+                vector_text=vector_text,
+                crop_b64=crop_b64,
+                ref_memory=ref_memory if ref_memory else None,
+            )
+        )
+
+    logger.info(f"[qc] Memulai Checker Agent paralel untuk {len(images_b64)} halaman...")
+    page_results = await asyncio.gather(*tasks)
+
+    # 2. Jalankan Note Taker Agent / Consolidator untuk merangkum hasil halaman menjadi QCResult final
+    data = await _consolidate_results(client, page_results)
+
+    # Simpan hasil review yang APPROVED (tidak ada isu) ke ingatan sebagai referensi pengecekan seterusnya
+    if data.get("overall_verdict") == "approved":
+        try:
+            from core import agentmemory_client
+            from memory import memory_engine
+            
+            title_block = data.get("title_block") or {}
+            title = title_block.get("title") or "Unknown Title"
+            dwg_num = title_block.get("drawing_number") or "Unknown"
+            bom_list = data.get("bom") or []
+            
+            bom_text = ""
+            for p in bom_list:
+                thickness_str = f" t={p.get('thickness')}mm" if p.get('thickness') else ""
+                bom_text += f"- {p.get('name')}: {p.get('width')}x{p.get('height')}mm{thickness_str} (Qty: {p.get('qty')}, Material: {p.get('material')})\n"
+            
+            memory_content = (
+                f"[REFERENSI GAMBAR KERJA APPROVED]\n"
+                f"File: {filename}\n"
+                f"Judul: {title}\n"
+                f"Drawing Number: {dwg_num}\n"
+                f"BOM:\n{bom_text}\n"
+                f"Status: APPROVED (Tanpa Issue). Gunakan struktur dimensi dan material di atas sebagai "
+                f"referensi/standar untuk furniture sejenis di masa depan."
+            )
+            
+            # 1. Simpan ke semantic agentmemory
+            await agentmemory_client.save(f"Simpan referensi gambar kerja approved {filename}", memory_content)
+            
+            # 2. Simpan ke database fakta local
+            fact_key = f"Referensi Gambar QC: {title} ({dwg_num})"
+            memory_engine.add_fact(fact_key, f"File: {filename}, BOM: {len(bom_list)} parts, Status: Approved")
+            
+            logger.info(f"[qc] Berhasil menyimpan referensi gambar '{title}' ke memori.")
+        except Exception as e:
+            logger.warning(f"[qc] Gagal menyimpan referensi gambar ke memori: {e}")
 
     return QCResult(**data), images_b64, pdf_bytes
 
@@ -1048,8 +1465,17 @@ async def _review_one_discord_attachment(message, att) -> None:
         result, images_b64, pdf_bytes = await review_attachment(att.url, att.filename)
         text = format_result_for_discord(result)
         if len(text) > DISCORD_MSG_LIMIT:
-            text = text[: DISCORD_MSG_LIMIT - 30] + "\n\n... _(terpotong)_"
-        await progress.edit(content=text)
+            # Kirim full text sebagai file, tampilkan ringkasan di message
+            full_bytes = text.encode("utf-8")
+            short = text[: DISCORD_MSG_LIMIT - 80] + "\n\n... _(terpotong — full report di file attachment)_"
+            await progress.edit(content=short)
+            await message.channel.send(
+                content="📄 Full QC report (terlalu panjang buat 1 message):",
+                file=discord.File(BytesIO(full_bytes), filename=f"qc_report_{att.filename}.txt"),
+                reference=message,
+            )
+        else:
+            await progress.edit(content=text)
 
         try:
             artifacts = await asyncio.to_thread(

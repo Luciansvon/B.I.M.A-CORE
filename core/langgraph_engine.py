@@ -1,4 +1,6 @@
 import logging
+import os
+from pathlib import Path
 from langgraph.graph import StateGraph, END
 from core.langgraph_nodes.state import BimaState
 from core.langgraph_nodes.manager import manager_node
@@ -15,6 +17,7 @@ from core.langgraph_nodes.observer import observer_node
 from core.langgraph_nodes.kodok import kodok_node
 from core.langgraph_nodes.canvas import canvas_node
 from core.langgraph_nodes.memory_finalizer import memory_finalizer_node
+from core.langgraph_nodes.context_summarizer import context_summarizer_node, should_summarize
 from core.event_bus import emit
 import asyncio
 from langchain_core.messages import AIMessage
@@ -171,9 +174,18 @@ workflow.add_node("observer_node", make_resilient(observer_node, "observer_node"
 workflow.add_node("kodok_node", make_resilient(kodok_node, "kodok_node", timeout=120))
 workflow.add_node("canvas_node", make_resilient(canvas_node, "canvas_node", timeout=180))
 workflow.add_node("memory_finalizer_node", make_resilient(memory_finalizer_node, "memory_finalizer_node", timeout=10))
+workflow.add_node("context_summarizer_node", make_resilient(context_summarizer_node, "context_summarizer_node", timeout=30))
 
 # 3. Edges
-workflow.set_entry_point("classifier_node")
+# T1-E: Conditional entry — summarize older messages kalau > threshold, baru ke classifier
+workflow.set_conditional_entry_point(
+    should_summarize,
+    {
+        "context_summarizer_node": "context_summarizer_node",
+        "classifier_node": "classifier_node",
+    },
+)
+workflow.add_edge("context_summarizer_node", "classifier_node")
 
 workflow.add_conditional_edges(
     "classifier_node",
@@ -240,14 +252,77 @@ workflow.add_edge("saham_node", "memory_finalizer_node")
 workflow.add_edge("observer_node", "memory_finalizer_node")
 workflow.add_edge("memory_finalizer_node", END)
 
-# 4. Compile Graph
+# 4. Compile Graph (fallback: no checkpointing — overridden per-loop oleh _ensure_app())
 bima_app = workflow.compile()
+
+# === Async checkpointing state (T1-A) ===
+# Per-event-loop cache: WA bridge (uvicorn port 8001) + Discord bot + dashboard
+# semua jalan di event loop berbeda. AsyncSqliteSaver pakai asyncio.Lock yang
+# bound ke loop tempat dia di-instantiate — kalau dipakai di loop lain → RuntimeError.
+# Solusi: tiap event loop punya compiled app + aiosqlite connection sendiri.
+_CHECKPOINT_DB = Path(__file__).parent.parent / "memory" / "checkpoints.db"
+_app_by_loop: dict[int, object] = {}
+_conn_by_loop: dict[int, object] = {}
+
+
+async def _ensure_app():
+    """Get atau create compiled app untuk event loop aktif. Idempotent + loop-safe."""
+    global bima_app
+    loop_id = id(asyncio.get_running_loop())
+    if loop_id in _app_by_loop:
+        return _app_by_loop[loop_id]
+
+    if os.environ.get("ENABLE_CHECKPOINTING", "true").lower() != "true":
+        app = workflow.compile()
+        _app_by_loop[loop_id] = app
+        bima_app = app
+        return app
+
+    try:
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        _CHECKPOINT_DB.parent.mkdir(exist_ok=True)
+        conn = await aiosqlite.connect(str(_CHECKPOINT_DB))
+        saver = AsyncSqliteSaver(conn)
+        app = workflow.compile(checkpointer=saver)
+        _conn_by_loop[loop_id] = conn
+        _app_by_loop[loop_id] = app
+        bima_app = app
+        logger.info(f"[LANGGRAPH] ✅ Per-loop checkpointing aktif (loop_id={loop_id}) → {_CHECKPOINT_DB.name}")
+        return app
+    except Exception as e:
+        logger.error(f"[LANGGRAPH] Init checkpointer gagal (loop_id={loop_id}), fallback non-checkpoint: {e}", exc_info=True)
+        app = workflow.compile()
+        _app_by_loop[loop_id] = app
+        bima_app = app
+        return app
+
+
+async def init_engine():
+    """Backward-compat — ensure app untuk Discord on_ready loop."""
+    await _ensure_app()
+
+
+async def shutdown_engine():
+    """Close SEMUA per-loop checkpoint connections."""
+    for loop_id, conn in list(_conn_by_loop.items()):
+        try:
+            await conn.close()
+            logger.info(f"[LANGGRAPH] Closed checkpoint connection (loop_id={loop_id})")
+        except Exception as e:
+            logger.warning(f"[LANGGRAPH] Close conn error (loop_id={loop_id}): {e}")
+    _conn_by_loop.clear()
+    _app_by_loop.clear()
+
 
 _STREAM_DEBOUNCE_S = 0.6
 _DISCORD_MAX = 1900
 
 
 async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment_paths: list = None, progress_callback=None, discord_user_id: str = "", source_channel: str = ""):
+    # T1-A: progress_callback TIDAK masuk state — function gak msgpack-serializable,
+    # akan crash checkpointer aput(). Register ke module dict, lookup di notify_progress.
     initial_state = {
         "messages": [],
         "user_request": user_request,
@@ -257,10 +332,13 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
         "active_teams": [],
         "temp_data": {},
         "is_finished": False,
-        "progress_callback": progress_callback,
         "discord_user_id": discord_user_id,
         "source_channel": source_channel,
     }
+    _engine_thread_id = f"{discord_user_id or 'anon'}_{source_channel or 'unknown'}"
+    if progress_callback:
+        from core.langgraph_nodes.state import register_progress_callback
+        register_progress_callback(_engine_thread_id, progress_callback)
     if source_channel:
         logger.info(f"[LANGGRAPH] source_channel={source_channel}")
 
@@ -272,8 +350,24 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
     stream_buffer = ""
     last_emit_t = 0.0
 
+    # T1-A: thread_id buat checkpoint continuity (per user + channel)
+    # Kalau checkpointer aktif, state percakapan persist antar restart bot.
+    thread_id = f"{discord_user_id or 'anon'}_{source_channel or 'unknown'}"
+    config: dict = {"configurable": {"thread_id": thread_id}}
+
+    # T1-D: attach CostTracker callback kalau cost guardrails aktif
+    if os.environ.get("ENABLE_COST_GUARDRAILS", "false").lower() == "true" and discord_user_id:
+        try:
+            from core.langgraph_nodes.llm_config import CostTracker
+            config["callbacks"] = [CostTracker(discord_user_id)]
+        except Exception as e:
+            logger.warning(f"[LANGGRAPH] CostTracker attach gagal (non-fatal): {e}")
+
+    # T1-A fix: ensure app untuk event loop aktif (WA/Dashboard/Discord punya loop terpisah)
+    app = await _ensure_app()
+
     try:
-        async for event in bima_app.astream_events(initial_state, version="v2"):
+        async for event in app.astream_events(initial_state, version="v2", config=config):
             kind = event.get("event")
             if kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
@@ -281,7 +375,9 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
                 if token:
                     stream_buffer += token
                     emit('llm_token', token=token)
-                    if progress_callback:
+                    # T2-C: gate Discord streaming behind flag (default true)
+                    streaming_enabled = os.environ.get("ENABLE_STREAMING_DISCORD", "true").lower() == "true"
+                    if progress_callback and streaming_enabled and len(stream_buffer) > 100:
                         now = asyncio.get_event_loop().time()
                         if now - last_emit_t > _STREAM_DEBOUNCE_S:
                             last_emit_t = now
@@ -299,12 +395,17 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
     except Exception as e:
         logger.error(f"[LANGGRAPH] astream_events error, fallback ke ainvoke: {e}", exc_info=True)
         try:
-            final_state = await bima_app.ainvoke(initial_state)
+            final_state = await app.ainvoke(initial_state, config=config)
         except Exception as e2:
             logger.error(f"[LANGGRAPH] ainvoke fallback juga gagal: {e2}", exc_info=True)
     finally:
         logger.info("[LANGGRAPH] Orkestrasi Selesai!")
         emit('reset', message='Orkestrasi selesai, semua agent kembali idle')
+        try:
+            from core.langgraph_nodes.state import unregister_progress_callback
+            unregister_progress_callback(_engine_thread_id)
+        except Exception:
+            pass
 
     if final_state is None:
         if stream_buffer:

@@ -29,6 +29,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
+# T2-A: Slash command tree (untuk /private start|stop opt-in thread isolation)
+from discord import app_commands
+tree = app_commands.CommandTree(client)
+
 OUTPUT_DIR = Path(__file__).parent.parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -37,6 +41,81 @@ _rate_limit = {}
 
 # Anti-duplikat startup notif (Discord on_ready bisa fire ulang saat reconnect)
 _startup_notified = False
+
+# T2-A: Per-user private thread mapping (in-memory; persistence opsional via SQLite nanti)
+# user_id (int) → discord_thread_id (int)
+_private_threads: dict[int, int] = {}
+
+
+@tree.command(name="private", description="Mulai/akhiri dedicated thread privat dengan Anisa")
+@app_commands.describe(action="Pilih 'start' untuk buka thread privat, 'stop' untuk akhiri")
+@app_commands.choices(action=[
+    app_commands.Choice(name="start", value="start"),
+    app_commands.Choice(name="stop", value="stop"),
+])
+async def private_cmd(interaction: discord.Interaction, action: app_commands.Choice[str]):
+    if os.environ.get("ENABLE_THREAD_ISOLATION", "true").lower() != "true":
+        await interaction.response.send_message(
+            "🔒 Fitur thread isolation disabled. Set `ENABLE_THREAD_ISOLATION=true` di .env.",
+            ephemeral=True,
+        )
+        return
+
+    user_id = interaction.user.id
+    if action.value == "start":
+        if user_id in _private_threads:
+            await interaction.response.send_message(
+                f"✨ Lu udah punya thread privat aktif: <#{_private_threads[user_id]}>",
+                ephemeral=True,
+            )
+            return
+        try:
+            channel = interaction.channel
+            if not isinstance(channel, discord.TextChannel):
+                await interaction.response.send_message(
+                    "⚠️ `/private` cuma bisa dipakai di text channel biasa (bukan DM/thread).",
+                    ephemeral=True,
+                )
+                return
+            thread = await channel.create_thread(
+                name=f"Anisa × {interaction.user.display_name}",
+                type=discord.ChannelType.private_thread,
+                invitable=False,
+                reason="User opt-in private isolation via /private",
+            )
+            await thread.add_user(interaction.user)
+            _private_threads[user_id] = thread.id
+            await interaction.response.send_message(
+                f"✨ Thread privat aktif: {thread.mention}. Lanjutin obrolan di sana ya.",
+                ephemeral=True,
+            )
+            try:
+                await thread.send(
+                    f"Hai {interaction.user.mention}! Ini thread privat lu sama Anisa. "
+                    f"Context isolated dari channel utama — ketik `/private` stop kalau mau akhirin."
+                )
+            except Exception:
+                pass
+            logger.info(f"[PRIVATE] user={user_id} thread={thread.id} created")
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "⚠️ Bot ga punya izin bikin private thread di channel ini.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.error(f"[PRIVATE] start gagal user={user_id}: {e}", exc_info=True)
+            await interaction.response.send_message(f"⚠️ Gagal bikin thread: `{e}`", ephemeral=True)
+    elif action.value == "stop":
+        thread_id = _private_threads.pop(user_id, None)
+        if not thread_id:
+            await interaction.response.send_message(
+                "Lu lagi gak punya thread privat aktif.", ephemeral=True
+            )
+            return
+        await interaction.response.send_message(
+            "✨ Thread privat di-stop. Kembali ke channel mode biasa.", ephemeral=True
+        )
+        logger.info(f"[PRIVATE] user={user_id} thread={thread_id} stopped")
 
 
 def _build_startup_embed() -> discord.Embed:
@@ -86,10 +165,38 @@ async def on_ready():
         return
     _startup_notified = True
 
+    # T1-A: Init async checkpointer (idempotent, no-op kalau ENABLE_CHECKPOINTING=false)
+    try:
+        from core.langgraph_engine import init_engine
+        await init_engine()
+    except Exception as e:
+        logger.error(f'Gagal init checkpoint engine (bot tetap jalan tanpa persistence): {e}', exc_info=True)
+
+    # T2-A: Sync slash command tree (sekali per startup; idempotent)
+    try:
+        synced = await tree.sync()
+        logger.info(f'[TREE] Slash commands synced: {len(synced)}')
+    except Exception as e:
+        logger.warning(f'[TREE] Sync slash commands gagal (non-fatal): {e}')
+
     try:
         start_saham_scheduler(client)
     except Exception as e:
         logger.error(f'Gagal start saham scheduler: {e}', exc_info=True)
+
+    # T1-G: Briefing scheduler (opt-in via ENABLE_BRIEFING=true)
+    try:
+        from core.briefing_scheduler import start_briefing_scheduler
+        start_briefing_scheduler(client)
+    except Exception as e:
+        logger.error(f'Gagal start briefing scheduler: {e}', exc_info=True)
+
+    # Observability scheduler (opt-in via ENABLE_OBSERVABILITY=true)
+    try:
+        from core.observability_scheduler import start_observability_scheduler
+        start_observability_scheduler(client)
+    except Exception as e:
+        logger.error(f'Gagal start observability scheduler: {e}', exc_info=True)
 
     def _warmup_reranker():
         try:
@@ -274,6 +381,16 @@ Sekarang: {waktu_sekarang}
 Gunakan info waktu ini saat menjawab pertanyaan tentang hari ini, sekarang, atau waktu terkini.
 Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
 ================================"""
+
+    # T1-D: Daily LLM cost guardrail — block kalau user sudah lewat budget hari ini
+    try:
+        from core.gen_rate_limit import check_daily_cost
+        allowed, err_msg = check_daily_cost(str(message.author.id))
+        if not allowed:
+            await message.reply(err_msg)
+            return
+    except Exception as e:
+        logger.debug(f"[cost_guard] check skipped (non-fatal): {e}")
 
     try:
         logger.info(f"LangGraph Engine mengolah permintaan: {perintah}")

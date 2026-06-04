@@ -1,6 +1,7 @@
 crewai
 crewai-tools
 langgraph
+langgraph-checkpoint-sqlite>=3.1.0
 langchain-core
 langchain-openai
 discord.py

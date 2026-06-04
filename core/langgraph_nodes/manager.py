@@ -23,6 +23,13 @@ async def manager_node(state: BimaState) -> dict:
         if agentmem_block else ""
     )
 
+    # T1-E: Ringkasan percakapan panjang dari context_summarizer_node (kalau ada)
+    convo_summary = state.get("conversation_summary", "") or ""
+    summary_section = (
+        f"=== RINGKASAN PERCAKAPAN SEBELUMNYA (di luar 6 message terakhir) ===\n{convo_summary}\n=== AKHIR RINGKASAN ===\n\n"
+        if convo_summary else ""
+    )
+
     system_prompt = f"""Kamu adalah ANISA, Chief Orchestrator B.I.M.A Core.
 Persona: Rendah hati (humble), kritis dalam berpikir, sangat analitis, namun tetap hangat dan ekspresif.
 Emoji: HANYA pakai ✨ sekali-kali (max 1-2 per reply). JANGAN pakai emoji lain (🖐️, 👋, 🎉, 😊, dll) — overuse emoji bikin reply norak.
@@ -37,7 +44,7 @@ ANTI-HALLU FITUR SISTEM (WAJIB):
 
 {realtime_context}
 
-{agentmem_section}=== HISTORI PERCAKAPAN TERAKHIR ===
+{summary_section}{agentmem_section}=== HISTORI PERCAKAPAN TERAKHIR ===
 {get_recent_context(5)}
 ===================================
 

@@ -174,6 +174,7 @@ def index_vault():
             db.create_table("vault", data=new_docs, mode='overwrite')
             _ensure_fts_index()
             print(f"[ARSIP] {len(new_docs)} chunk dari {n_new} catatan berhasil diindex (full).")
+            _rebuild_bm25_index()
         except Exception as e:
             print(f"[ARSIP] Gagal create tabel vault: {e}")
         return
@@ -191,8 +192,31 @@ def index_vault():
         if new_docs or paths_to_refresh:
             _ensure_fts_index()
         print(f"[ARSIP] Re-index: {n_new} file baru, {n_updated} file diupdate, {n_skipped} file di-skip (unchanged).")
+        _rebuild_bm25_index()
     except Exception as e:
         print(f"[ARSIP] Incremental update gagal: {e}")
+
+
+def _rebuild_bm25_index():
+    try:
+        tbl = db.open_table("vault")
+        df = tbl.to_pandas()
+        if not df.empty:
+            items = []
+            for _, row in df.iterrows():
+                chunk = row['chunk_id'] if 'chunk_id' in row.index else 0
+                items.append({
+                    "id": f"{row['path']}::{chunk}",
+                    "content": row['content']
+                })
+            from core.bm25_index import build_from_corpus
+            bm25_idx = build_from_corpus(items)
+            bm25_path = Path(os.path.dirname(__file__)) / "../search_index/bm25.pkl"
+            bm25_idx.save(bm25_path)
+            print(f"[ARSIP] BM25 index built and saved with {len(items)} items.")
+    except Exception as e:
+        print(f"[ARSIP] Gagal build BM25 index: {e}")
+
 
 
 def _rrf_fuse(rankings: list[list[str]], k: int = 60) -> dict:
@@ -229,20 +253,46 @@ def search_vault(query: str, top_k: int = 3) -> str:
         chunk = row['chunk_id'] if 'chunk_id' in row.index else 0
         return f"{row['path']}::{chunk}"
 
-    candidates: list = []
+    bm25_path = Path(os.path.dirname(__file__)) / "../search_index/bm25.pkl"
+    bm25_hits = []
+    if bm25_path.exists():
+        try:
+            from core.bm25_index import BM25Index
+            bm25_idx = BM25Index.load(bm25_path)
+            bm25_hits = bm25_idx.search(query, top_k=fetch_k)
+        except Exception as e:
+            logger.warning(f"[ARSIP] Gagal load/search BM25 index: {e}")
+
+    vector_hits = []
+    for _, r in dense_df.iterrows():
+        dist = r.get('_distance', 0.0)
+        score = 1.0 / (1.0 + dist)
+        vector_hits.append((_doc_id(r), score))
+
+    from core.bm25_index import hybrid_merge
+    merged_hits = hybrid_merge(vector_hits, bm25_hits, w_vector=0.6, w_bm25=0.4, top_k=fetch_k)
+
+    all_rows: dict = {}
+    for _, r in dense_df.iterrows():
+        all_rows[_doc_id(r)] = r
     if fts_df is not None and not fts_df.empty:
-        all_rows: dict = {}
-        for _, r in dense_df.iterrows():
-            all_rows[_doc_id(r)] = r
         for _, r in fts_df.iterrows():
             all_rows.setdefault(_doc_id(r), r)
-        dense_ids = [_doc_id(r) for _, r in dense_df.iterrows()]
-        fts_ids = [_doc_id(r) for _, r in fts_df.iterrows()]
-        scores = _rrf_fuse([dense_ids, fts_ids])
-        ranked_ids = sorted(scores, key=scores.get, reverse=True)
-        candidates = [all_rows[i] for i in ranked_ids[:fetch_k]]
-    else:
-        candidates = [r for _, r in dense_df.iterrows()]
+
+    for doc_id, _ in merged_hits:
+        if doc_id not in all_rows:
+            parts = doc_id.split("::")
+            if len(parts) == 2:
+                path_part, chunk_part = parts
+                safe_path = path_part.replace("'", "''")
+                try:
+                    rows = tbl.search().where(f"path = '{safe_path}' AND chunk_id = {chunk_part}").limit(1).to_pandas()
+                    if not rows.empty:
+                        all_rows[doc_id] = rows.iloc[0]
+                except Exception as e:
+                    logger.warning(f"[ARSIP] Gagal query row {doc_id} dari DB: {e}")
+
+    candidates = [all_rows[doc_id] for doc_id, _ in merged_hits if doc_id in all_rows]
 
     if not candidates:
         return "Tidak ada catatan relevan ditemukan di vault."

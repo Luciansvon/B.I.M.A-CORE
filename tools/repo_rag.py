@@ -308,6 +308,7 @@ def build_index(full_rebuild: bool = False) -> dict:
     except Exception as e:
         logger.error(f"[repo_rag] incremental update gagal: {e}")
 
+    _rebuild_bm25_index(db)
     elapsed = time.time() - t0
     logger.info(
         f"[repo_rag] incremental: new={n_new}, updated={n_updated}, skipped={n_skipped}, "
@@ -321,6 +322,30 @@ def build_index(full_rebuild: bool = False) -> dict:
         "chunks_added": n_chunks,
         "elapsed_s": elapsed,
     }
+
+
+def _rebuild_bm25_index(db):
+    try:
+        if not _table_exists(db, _TABLE_NAME):
+            return
+        tbl = db.open_table(_TABLE_NAME)
+        df = tbl.to_pandas()
+        if not df.empty:
+            items = []
+            for _, row in df.iterrows():
+                chunk = row['chunk_id'] if 'chunk_id' in row.index else 0
+                items.append({
+                    "id": f"{row['path']}::{chunk}",
+                    "content": row['content']
+                })
+            from core.bm25_index import build_from_corpus
+            bm25_idx = build_from_corpus(items)
+            bm25_path = _INDEX_DIR / "bm25.pkl"
+            bm25_idx.save(bm25_path)
+            logger.info(f"[repo_rag] BM25 index built and saved with {len(items)} items.")
+    except Exception as e:
+        logger.warning(f"[repo_rag] Gagal build BM25 index: {e}")
+
 
 
 # --- Retriever ---
@@ -337,15 +362,62 @@ def search_repo(query: str, top_k: int = 5, path_filter: str | None = None) -> l
         logger.warning(f"[repo_rag] connect db gagal: {e}")
         return []
 
+    fetch_k = top_k * 4
+
     embedder = _get_embedder()
     try:
         query_vec = embedder.encode(query).tolist()
-        df = tbl.search(query_vec).limit(top_k * 4).to_pandas()
+        dense_df = tbl.search(query_vec).limit(fetch_k).to_pandas()
     except Exception as e:
         logger.error(f"[repo_rag] search gagal: {e}", exc_info=True)
         return []
 
-    rows = df.to_dict("records")
+    def _doc_id(row) -> str:
+        return f"{row['path']}::{row['chunk_id']}"
+
+    # BM25 Search
+    bm25_path = _INDEX_DIR / "bm25.pkl"
+    bm25_hits = []
+    if bm25_path.exists():
+        try:
+            from core.bm25_index import BM25Index
+            bm25_idx = BM25Index.load(bm25_path)
+            bm25_hits = bm25_idx.search(query, top_k=fetch_k)
+        except Exception as e:
+            logger.warning(f"[repo_rag] Gagal load/search BM25 index: {e}")
+
+    # Build vector hits
+    vector_hits = []
+    for _, r in dense_df.iterrows():
+        dist = r.get('_distance', 0.0)
+        score = 1.0 / (1.0 + dist)
+        vector_hits.append((_doc_id(r), score))
+
+    # Hybrid merge
+    from core.bm25_index import hybrid_merge
+    merged_hits = hybrid_merge(vector_hits, bm25_hits, w_vector=0.6, w_bm25=0.4, top_k=fetch_k)
+
+    # Collect all rows as dict
+    all_rows = {}
+    for _, r in dense_df.iterrows():
+        all_rows[_doc_id(r)] = r.to_dict()
+
+    # Fetch missing rows from LanceDB
+    for doc_id, _ in merged_hits:
+        if doc_id not in all_rows:
+            parts = doc_id.split("::")
+            if len(parts) == 2:
+                path_part, chunk_part = parts
+                safe_path = path_part.replace("'", "''")
+                try:
+                    rows = tbl.search().where(f"path = '{safe_path}' AND chunk_id = {chunk_part}").limit(1).to_pandas()
+                    if not rows.empty:
+                        all_rows[doc_id] = rows.iloc[0].to_dict()
+                except Exception as e:
+                    logger.warning(f"[repo_rag] Gagal query row {doc_id} dari DB: {e}")
+
+    rows = [all_rows[doc_id] for doc_id, _ in merged_hits if doc_id in all_rows]
+
     if path_filter:
         pf = path_filter.lower().replace("\\", "/")
         rows = [r for r in rows if pf in r["rel_path"].lower()]

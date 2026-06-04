@@ -7,6 +7,27 @@ logger = logging.getLogger('bima_core')
 
 ProgressCallback = Callable[[str], Awaitable[None]]
 
+# T1-A fix: callback registry — disimpan di sini biar gak masuk state (function gak
+# msgpack-serializable, akan crash checkpointer aput()). Key = thread_id.
+_progress_callbacks: dict[str, ProgressCallback] = {}
+
+
+def register_progress_callback(thread_id: str, cb: Optional[ProgressCallback]) -> None:
+    if cb is None or not thread_id:
+        return
+    _progress_callbacks[thread_id] = cb
+
+
+def unregister_progress_callback(thread_id: str) -> None:
+    if thread_id:
+        _progress_callbacks.pop(thread_id, None)
+
+
+def _derive_thread_id_from_state(state) -> str:
+    user_id = state.get("discord_user_id") or "anon"
+    channel = state.get("source_channel") or "unknown"
+    return f"{user_id}_{channel}"
+
 # Ini adalah "Otak Pusat" atau papan tulis bersama untuk agen-agen kita.
 # Setiap kali agen bekerja, mereka akan membaca dan memperbarui State ini.
 class BimaState(TypedDict):
@@ -30,7 +51,11 @@ class BimaState(TypedDict):
     # Apakah tugas sudah selesai dan siap dikirim ke Discord?
     is_finished: bool
 
-    # Callback untuk update status realtime ke Discord (opsional)
+    # Callback untuk update status realtime ke Discord (opsional).
+    # DEPRECATED di state: function gak msgpack-serializable → checkpoint crash.
+    # Pakai register_progress_callback(thread_id, cb) sebelum invoke graph, lookup
+    # otomatis via notify_progress(). Field disimpan untuk backward-compat path lain
+    # (e.g. canvas_node manual injection), tapi run_langgraph_engine() tidak isi field ini.
     progress_callback: NotRequired[Optional[ProgressCallback]]
 
     # Discord user ID (string) — diperlukan canvas_node untuk session-per-user
@@ -45,10 +70,22 @@ class BimaState(TypedDict):
     # WA 100MB lega — kalau Discord trigger video, redirect user ke WA).
     source_channel: NotRequired[str]
 
+    # T1-E: Conversation summary — diisi context_summarizer_node kalau messages > threshold.
+    # Manager + agen pakai field ini untuk konteks panjang tanpa harus parse semua history.
+    conversation_summary: NotRequired[str]
+
 
 async def notify_progress(state: BimaState, message: str) -> None:
-    """Kirim status progress ke Discord. Silent jika callback tidak ada atau gagal."""
+    """Kirim status progress ke Discord. Silent jika callback tidak ada atau gagal.
+
+    Resolusi callback (urutan):
+    1. State `progress_callback` (legacy path; sekarang biasanya kosong)
+    2. Module-level `_progress_callbacks[thread_id]` (T1-A fix)
+    """
     cb = state.get("progress_callback")
+    if cb is None:
+        thread_id = _derive_thread_id_from_state(state)
+        cb = _progress_callbacks.get(thread_id)
     if cb is None:
         return
     try:
