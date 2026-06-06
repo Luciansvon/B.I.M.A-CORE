@@ -1,6 +1,7 @@
 crewai
 crewai-tools
 langgraph
+langgraph-checkpoint-sqlite>=3.1.0
 langchain-core
 langchain-openai
 discord.py
@@ -48,3 +49,4 @@ sherlock-project>=0.15.0
 yt-dlp>=2024.10.0
 PyNaCl>=1.5.0
 davey>=0.1.5
+headroom>=0.2.0

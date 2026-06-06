@@ -4,7 +4,7 @@ import re
 from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
-from core.langgraph_nodes.llm_config import default_llm
+from core.langgraph_nodes.llm_config import default_llm, compress_context
 from memory.memory_engine import get_recent_context
 from core import agentmemory_client
 
@@ -18,9 +18,20 @@ async def manager_node(state: BimaState) -> dict:
 
     # Episodic recall dari agentmemory (semantic). Empty string kalau server down.
     agentmem_block = await agentmemory_client.recall(user_request, 5)
+    # Headroom: compress recall block (sering panjang, banyak redundansi)
+    agentmem_block = compress_context(agentmem_block, target_ratio=0.4)
     agentmem_section = (
         f"=== INGATAN AGENTMEMORY (semantic recall) ===\n{agentmem_block}\n=== AKHIR INGATAN ===\n\n"
         if agentmem_block else ""
+    )
+
+    # T1-E: Ringkasan percakapan panjang dari context_summarizer_node (kalau ada)
+    convo_summary = state.get("conversation_summary", "") or ""
+    # Headroom: compress conversation summary
+    convo_summary = compress_context(convo_summary, target_ratio=0.5)
+    summary_section = (
+        f"=== RINGKASAN PERCAKAPAN SEBELUMNYA (di luar 6 message terakhir) ===\n{convo_summary}\n=== AKHIR RINGKASAN ===\n\n"
+        if convo_summary else ""
     )
 
     system_prompt = f"""Kamu adalah ANISA, Chief Orchestrator B.I.M.A Core.
@@ -37,8 +48,8 @@ ANTI-HALLU FITUR SISTEM (WAJIB):
 
 {realtime_context}
 
-{agentmem_section}=== HISTORI PERCAKAPAN TERAKHIR ===
-{get_recent_context(5)}
+{summary_section}{agentmem_section}=== HISTORI PERCAKAPAN TERAKHIR ===
+{compress_context(get_recent_context(5), target_ratio=0.5)}
 ===================================
 
 GROUND TRUTH RULES (anti-hallu, WAJIB):
@@ -49,7 +60,7 @@ GROUND TRUTH RULES (anti-hallu, WAJIB):
 
 ATURAN ROUTING (WAJIB PILIH SATU):
 1.  [ROUTE: santai]                  — Percakapan biasa, salam, atau tanya kabar.
-2.  [ROUTE: intel]                   — Butuh cari data di internet, fetch isi URL, riset web, atau extract konten dari link.
+2.  [ROUTE: intel]                   — Butuh cari data di internet, fetch isi URL, riset web, buat/draf/posting Threads, atau analisis postingan viral / belajar tren.
 3.  [ROUTE: seniman]                 — Butuh buat file HTML, dashboard interaktif, atau visualisasi web.
 4.  [ROUTE: admin]                   — Butuh buat dokumen resmi: PDF, Word, atau Excel (.xlsx). 📎
 5.  [ROUTE: visual]                  — Butuh menganalisis gambar atau file yang dikirim oleh Bima.
@@ -73,7 +84,7 @@ INSTRUKSI KRITIS:
 - Jika Bima minta dibuatkan file PDF, Excel, atau Word → pilih rute yang mengandung 'admin'.
 - Jika Bima minta dashboard, HTML, atau visualisasi → pilih rute yang mengandung 'seniman'.
 - Jika Bima minta simpan ke vault/arsip → pilih rute yang mengandung 'arsip'.
-- Jika Bima tanya tentang data yang belum kamu tahu → pilih rute yang mengandung 'intel'.
+- Jika Bima tanya tentang data yang belum kamu tahu atau minta dibuatkan/diposting tulisan ke Threads → pilih rute yang mengandung 'intel'.
 - Jika data sudah ada di konteks/histori dan Bima minta buat dokumen → TIDAK perlu 'intel', langsung ke tim yang sesuai.
 - Jika Bima minta BEBERAPA hal sekaligus → gabungkan rute yang relevan.
 - Jadilah kritis: jika permintaan Bima kurang detail, tanyakan detailnya sambil tetap memberikan analisis awal.

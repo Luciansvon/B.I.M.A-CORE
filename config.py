@@ -19,7 +19,7 @@ _api_key = os.environ.get("OPENROUTER_API_KEY")
 if not _api_key:
     print("[CONFIG] ⚠️  OPENROUTER_API_KEY tidak ditemukan di .env!")
 else:
-    print(f"[CONFIG] ✅ API Key terdeteksi: {_api_key[:12]}...")
+    print(f"[CONFIG] ✅ API Key terdeteksi ({len(_api_key)} chars)")
 
 # Inisialisasi LLM secara terpusat
 def get_llm(model_name: str) -> LLM:
@@ -31,7 +31,7 @@ def get_llm(model_name: str) -> LLM:
 
 # Model names (tanpa "openrouter/" prefix — buat OpenAI SDK langsung yg base_url-nya udah OpenRouter)
 # Dipake furniture_qc.py via OpenAI SDK, dan crewai LLM via get_llm() di bawah.
-VISUAL_MODEL_NAME = "google/gemini-3-flash-preview"
+VISUAL_MODEL_NAME = "google/gemini-3.5-flash"
 
 try:
     # 1. MANAGER & ROUTING LLM (Paling sering dipanggil, harus termurah)

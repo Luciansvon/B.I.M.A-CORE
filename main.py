@@ -113,6 +113,16 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"agentmemory gagal start (bot tetap jalan, fallback SQLite): {e}")
 
+    # Verify MCP Security (Bumblebee Audit)
+    try:
+        from config import MCP_CLIENTS_CONFIG
+        from core.mcp_security import verify_and_alert_mcp
+        if not verify_and_alert_mcp(MCP_CLIENTS_CONFIG):
+            logger.error("[SECURITY] Sistem dinonaktifkan karena konfigurasi MCP tidak aman!")
+            sys.exit(1)
+    except Exception as e:
+        logger.warning(f"[SECURITY] Gagal melakukan audit keamanan MCP: {e}")
+
     # Init MCP client manager — consume MCP server eksternal (fetch, markitdown, dll)
     try:
         from config import BASE_DIR, MCP_CLIENTS_CONFIG
@@ -122,5 +132,38 @@ if __name__ == "__main__":
         atexit.register(shutdown_manager)
     except Exception as e:
         logger.warning(f"MCP client gagal init (bot tetap jalan tanpa MCP eksternal): {e}")
+
+    # Plugin system — custom tools dari tools/plugins/ ke mekanik agent
+    if os.environ.get("ENABLE_PLUGINS", "true").lower() == "true":
+        try:
+            from tools.plugin_loader import load_plugins
+            from teams.t8_mekanik import mekanik_agent
+            plugin_tools = load_plugins()
+            if plugin_tools:
+                mekanik_agent.tools.extend(plugin_tools)
+                tool_names = [getattr(t, "name", "?") for t in plugin_tools]
+                logger.info(f"[plugins] {len(plugin_tools)} custom tool(s) → mekanik: {tool_names}")
+        except Exception as e:
+            logger.warning(f"Plugin loader gagal (bot tetap jalan tanpa custom plugins): {e}")
+
+    # T1-A: Register shutdown hook untuk close checkpoint connection saat exit.
+    # atexit jalanin sync, wrap async shutdown_engine() dalam asyncio.run() guard.
+    def _shutdown_checkpoint_engine():
+        try:
+            import asyncio as _asyncio
+            from core.langgraph_engine import shutdown_engine
+            try:
+                loop = _asyncio.get_event_loop()
+                if loop.is_running():
+                    # Event loop masih jalan (rare di atexit) — schedule task
+                    loop.create_task(shutdown_engine())
+                else:
+                    _asyncio.run(shutdown_engine())
+            except RuntimeError:
+                # No loop di thread ini — bikin baru
+                _asyncio.run(shutdown_engine())
+        except Exception as e:
+            logger.warning(f"Shutdown checkpoint engine error (non-fatal): {e}")
+    atexit.register(_shutdown_checkpoint_engine)
 
     run_bot()

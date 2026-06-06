@@ -25,7 +25,7 @@ module.exports = {
     {
       name: "bima-tunnel",
       script: "cloudflared",
-      args: "tunnel --protocol http2 --url http://localhost:8000",
+      args: "tunnel --config /dev/null --protocol http2 --url http://127.0.0.1:8000",
       cwd: "/home/bima_lucian/BIMA_CORE",
       watch: false,
       log_date_format: "YYYY-MM-DD HH:mm:ss",

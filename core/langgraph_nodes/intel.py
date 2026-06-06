@@ -1,17 +1,19 @@
 import asyncio
 import logging
 import re
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
 from core.langgraph_nodes.llm_config import default_llm
 from teams.t5_intel import SmartSearchTool
 from tools.browser_use_tool import BrowserUseTool
+from tools.last30days_tool import Last30DaysResearchTool
 from memory.memory_engine import get_recent_context
 
 logger = logging.getLogger('bima_core')
 
 search_tool = SmartSearchTool()
 browser_tool = BrowserUseTool()
+last30days_tool = Last30DaysResearchTool()
 
 # Trigger short-circuit ke BrowserUseTool: pesan punya URL https?:// PLUS verb interaktif.
 # Pattern: cek URL eksplisit AND minimal salah satu verb di list.
@@ -65,6 +67,12 @@ _SITE_CATALOG = [
      'https://x.com/search?q={q}', 'https://x.com'),
 ]
 
+# Pattern deteksi riset sosial media / trend 30 hari terakhir
+_LAST30DAYS_PATTERN = re.compile(
+    r'\b(trend\w*|viral|sentimen|opini|apa\s+kata|kata\s+komunitas|last\s+30\s+days|30\s+hari\s+terakhir|vs|versus)\b',
+    re.IGNORECASE
+)
+
 # Stopwords yang di-strip pas extract query dari text (id + en mix)
 _QUERY_STOPWORDS = {
     'ke', 'di', 'dan', 'untuk', 'cari', 'carikan', 'produk', 'keyword', 'about', 'tentang',
@@ -107,6 +115,47 @@ async def intel_node(state: BimaState) -> dict:
     await notify_progress(state, "🔍 *Tim Intel lagi cari info di internet...*")
     user_request = state.get("user_request", "")
     realtime_context = state.get("realtime_context", "")
+
+    # === Jalur Pembuatan/Draft/Posting/Balas/Analisa Threads ===
+    is_threads_post_req = any(kw in user_request.lower() for kw in ["threads", "postingan", "buat postingan", "post ke", "posting tentang", "balas komentar", "bales komentar", "reply comment", "analisa viral", "belajar viral", "analisis viral"])
+    if is_threads_post_req:
+        await notify_progress(state, "🚀 *Tim Intel sedang merencanakan tindakan Threads...*")
+        from teams.t5_intel import intel_agent
+        from crewai import Task, Crew
+        
+        task = Task(
+            description=f"""{realtime_context}
+            
+            Bima meminta: '{user_request}'
+            
+            Tugasmu:
+            1. Jika Bima meminta untuk menganalisis postingan/tren viral atau belajar dari tulisan tertentu, gunakan ViralAnalysisTool untuk menganalisisnya secara mendalam dan menyimpannya ke memori.
+            2. Jika Bima meminta untuk membalas komentar tertentu, gunakan ThreadsReplyToCommentTool untuk membuat draf balasan, meminta persetujuan Bima, dan mempostingnya.
+            3. Jika meminta postingan Threads baru, pertama-tama cari berita/fakta terbaru jika diperlukan menggunakan search tool (SmartSearchTool atau SerperDevTool), lalu gunakan ThreadsDraftAndPostTool untuk membuat draf postingan (berdasarkan fakta tersebut), meminta persetujuan Bima, dan mempublikasikannya. Pastikan Anda meneruskan semua instruksi/kriteria gaya bahasa khusus dari Bima (seperti "jangan pake strip -", "tambahin emot", "sarkas", dll.) ke dalam parameter input topic alat tersebut agar draf yang dihasilkan mematuhinya.
+            4. Laporkan hasil akhir tindakan dengan detail dan jelas (termasuk link jika sukses atau status persetujuan Bima).""",
+            expected_output="Hasil akhir pengerjaan tindakan Threads (posting/balas/analisa).",
+            agent=intel_agent
+        )
+        
+        crew = Crew(
+            agents=[intel_agent],
+            tasks=[task],
+            verbose=True
+        )
+        
+        from core.permission_gate import current_user_id
+        user_id = state.get("discord_user_id", "anon")
+        current_user_id.set(user_id)
+        
+        hasil_raw = await asyncio.to_thread(crew.kickoff)
+        hasil_str = str(hasil_raw)
+        
+        logger.info(f"[LANGGRAPH INTEL] Threads task selesai: {hasil_str[:150]}...")
+        
+        return {
+            "messages": [AIMessage(content=hasil_str)],
+            "is_finished": True
+        }
 
     # === Short-circuit ke BrowserUseTool ===
     # Trigger jalur 1: URL eksplisit + verb interaktif (existing).
@@ -192,6 +241,68 @@ async def intel_node(state: BimaState) -> dict:
             # Browser gagal — log + fallback ke search path biasa
             logger.warning(f"[LANGGRAPH INTEL] Browser fail, fallback ke search: {browser_result[:120]}")
             await notify_progress(state, "⚠️ *Browser gagal, fallback ke search engine...*")
+
+    # === Jalur Riset Lintas Platform (last30days-skill) ===
+    if _LAST30DAYS_PATTERN.search(user_request):
+        await notify_progress(state, "📊 *Anisa sedang meriset opini & sentimen di Reddit, X, HN, dan web...*")
+        
+        # Ekstrak topik pencarian menggunakan LLM
+        prompt_topic = f"""=== HISTORI PERCAKAPAN TERAKHIR ===
+{get_recent_context(3)}
+===================================
+Permintaan terbaru Bima: '{user_request}'
+
+Tugasmu: Ekstrak topik/kata kunci pencarian utama (1-3 kata bersih tanpa embel-embel penjelasan apa pun) untuk riset di media sosial.
+HANYA TULIS TOPIK UTAMANYA SAJA."""
+        
+        topic_response = await asyncio.to_thread(
+            default_llm.invoke, [HumanMessage(content=prompt_topic)]
+        )
+        extracted_topic = topic_response.content.strip().strip("'\"")
+        logger.info(f"[LANGGRAPH INTEL] Menjalankan riset last30days untuk topik: '{extracted_topic}'")
+        
+        # Jalankan tool (mock otomatis dideteksi di dalam tool jika berjalan di unit test pytest)
+        try:
+            res = await asyncio.to_thread(last30days_tool._run, topic=extracted_topic)
+            if res.startswith("SUCCESS|"):
+                parts = res.split("|", 2)
+                html_path = parts[1]
+                compact_md = parts[2]
+                
+                system_prompt = f"""Kamu adalah Agen Intel B.I.M.A Core.
+{realtime_context}
+
+Berikan analisis mendalam dan rangkuman sentimen dari data riset media sosial/web berikut kepada Bima.
+Fokus pada konsensus komunitas, perbedaan pendapat (jika perbandingan/vs), dan tren utama.
+Jawab dengan gaya asisten (Anisa) yang profesional namun hangat. Informasikan bahwa laporan visual HTML lengkap telah dilampirkan.
+
+Data Riset:
+{compact_md}"""
+                
+                final_response = await asyncio.to_thread(
+                    default_llm.invoke,
+                    [SystemMessage(content=system_prompt), HumanMessage(content=user_request)]
+                )
+                
+                # Append SUCCESS line so that Discord bot automatically attaches the HTML report
+                final_response.content += f"\nSUCCESS|{html_path}|HTML Brief"
+                
+                temp_data = dict(state.get("temp_data", {}))
+                temp_data["last_search_result"] = compact_md
+                temp_data["last_30days_html_brief"] = html_path
+                
+                active_teams = state.get("active_teams", [])
+                has_downstream = any(t in active_teams for t in ["seniman", "admin", "arsip"])
+                
+                return {
+                    "messages": [final_response],
+                    "is_finished": not has_downstream,
+                    "temp_data": temp_data
+                }
+            else:
+                logger.warning(f"[LANGGRAPH INTEL] Riset last30days gagal: {res}. Fallback ke search biasa.")
+        except Exception as e:
+            logger.error(f"[LANGGRAPH INTEL] Exception pada riset last30days: {e}", exc_info=True)
 
     prompt_search = f"""{realtime_context}
 

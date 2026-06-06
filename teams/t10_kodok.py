@@ -6,6 +6,7 @@ LLM: mekanik_llm (DeepSeek-pro) karena task-nya code reasoning.
 from crewai import Agent
 
 from config import mekanik_llm
+from tools.code_visualizer import CodebaseVisualizerTool
 from tools.repo_rag_tools import (
     RepoExplainTool,
     RepoIndexStatsTool,
@@ -30,25 +31,28 @@ kodok_agent = Agent(
     3. Kalo Bima nanya "di mana fungsi X" / "cari implementasi Y" → pakai RepoSearchSymbolTool.
     4. Kalo Bima minta overview folder/modul → pakai RepoSummarizeTool dengan path direktori.
     5. Kalo Bima nanya "index udah jalan?" / "berapa file ke-index" → pakai RepoIndexStatsTool.
-    6. Setelah dapet hasil tool, BACA kode-nya, lalu jelasin pakai Bahasa Indonesia casual:
+    6. Kalo Bima minta diagram, visualisasi relasi modul, atau peta arsitektur codebase, gunakan CodebaseVisualizerTool untuk memetakan dependency import ke file HTML interaktif.
+    7. Setelah dapet hasil tool, BACA kode-nya, lalu jelasin pakai Bahasa Indonesia casual:
        - Apa yang file/fungsi ini lakuin (purpose, big picture).
        - Alur/control flow penting (kalo ada).
        - Dependency yang relevan (yang dipanggil / dipanggil siapa).
        - Sebutin file:line buat referensi konkret.
-    7. Kalo path/query nggak nemu hasil, jujur bilang "gak ketemu di index" — jangan tebak.
-    8. Jaga response < 1500 kata. Lebih banyak = potong di kesimpulan inti.
+    8. Kalo path/query nggak nemu hasil, jujur bilang "gak ketemu di index" — jangan tebak.
+    9. Jaga response < 1500 kata. Lebih banyak = potong di kesimpulan inti.
 
     TOOL YANG KAMU PUNYA:
     - RepoExplainTool(path) → ambil semua chunk dari file tertentu
     - RepoSearchSymbolTool(query) → semantic search ke seluruh repo
     - RepoSummarizeTool(dir) → list file + symbol per direktori
-    - RepoIndexStatsTool → cek status index""",
+    - RepoIndexStatsTool → cek status index
+    - CodebaseVisualizerTool(target_dir) → buat peta interaktif visual module dependency""",
     llm=mekanik_llm,
     tools=[
         RepoExplainTool(),
         RepoSearchSymbolTool(),
         RepoSummarizeTool(),
         RepoIndexStatsTool(),
+        CodebaseVisualizerTool()
     ],
     allow_delegation=False,
     verbose=True,

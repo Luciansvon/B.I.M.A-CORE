@@ -104,7 +104,11 @@ def parse_cutlist_input(
             qty = int(m.group(4)) if m.group(4) else 1
             if w <= 0 or h <= 0 or qty <= 0:
                 continue
-            if w > panel[0] and w > panel[1]:
+            # Cek KEDUA dimensi: part harus muat di panel (rotation diizinkan,
+            # jadi cukup cek min dimension part ≤ min panel dan max ≤ max)
+            part_min, part_max = min(w, h), max(w, h)
+            panel_min, panel_max = min(panel[0], panel[1]), max(panel[0], panel[1])
+            if part_min > panel_min or part_max > panel_max:
                 raise ValueError(
                     f"Part `{name}` {w:.0f}×{h:.0f} lebih besar dari panel "
                     f"{panel[0]:.0f}×{panel[1]:.0f} — gak akan muat."
@@ -323,7 +327,9 @@ def _solve_from_cached_bom(
             if w <= 0 or h <= 0 or qty <= 0:
                 skipped.append(name)
                 continue
-            if w > panel[0] and w > panel[1]:
+            part_min, part_max = min(w, h), max(w, h)
+            panel_min, panel_max = min(panel[0], panel[1]), max(panel[0], panel[1])
+            if part_min > panel_min or part_max > panel_max:
                 skipped.append(f"{name} (terlalu besar)")
                 continue
             parts.append(CutPart(name=name, width=w, height=h, qty=qty))

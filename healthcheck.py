@@ -68,7 +68,7 @@ critical_packages = [
     ("scrapling", "Scrapling (web scraping + parsing)"),
     ("sentence_transformers", "Sentence Transformers (embeddings)"),
     ("lancedb", "LanceDB (vector store)"),
-    ("fpdf2", "FPDF2 (PDF generation)"),
+    ("fpdf", "FPDF2 (PDF generation)"),
     ("docx", "python-docx (Word generation)"),
     ("pptx", "python-pptx (PowerPoint)"),
     ("openpyxl", "OpenPyXL (Excel)"),

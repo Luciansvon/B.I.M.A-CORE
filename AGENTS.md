@@ -252,3 +252,5 @@ For external API call sites, use `core/api_retry.py:call_with_retry()` to wrap w
 ## When in doubt
 
 Ask Bima. He wrote the rules deliberately. He'd rather you ask than guess wrong.
+
+masukan semua kesalahan dan solusi nya ke file error_solutions.md
