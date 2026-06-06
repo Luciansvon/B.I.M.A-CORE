@@ -8,6 +8,39 @@ load_dotenv()
 
 logger = logging.getLogger('bima_core')
 
+
+# === Headroom Context Compression ===
+# Compress tool output / memory recall / long context sebelum masuk LLM.
+# Gate di balik ENABLE_HEADROOM=true. No-op kalau disabled atau headroom gak terinstall.
+def compress_context(text: str, target_ratio: float = 0.4) -> str:
+    """Compress context via Headroom CCR. Return text as-is kalau disabled/error.
+
+    Args:
+        text: raw context string (bisa panjang — agentmemory recall, recent history, dll)
+        target_ratio: target compression ratio (0.4 = compress ke ~40% panjang asli)
+
+    Returns:
+        Compressed text kalau headroom aktif, original text kalau tidak.
+    """
+    if not text or len(text) < 200:
+        return text  # gak perlu compress teks pendek
+    if os.environ.get("ENABLE_HEADROOM", "false").lower() != "true":
+        return text
+    try:
+        from headroom import compress
+        compressed = compress(text, target_ratio=target_ratio)
+        if compressed and len(compressed) < len(text):
+            saved_pct = (1 - len(compressed) / len(text)) * 100
+            logger.debug(f"[HEADROOM] Compressed {len(text)}→{len(compressed)} chars ({saved_pct:.0f}% saved)")
+            return compressed
+        return text
+    except ImportError:
+        logger.debug("[HEADROOM] headroom not installed, skip compression")
+        return text
+    except Exception as e:
+        logger.debug(f"[HEADROOM] Compression failed (non-fatal): {e}")
+        return text
+
 # Menggunakan OpenRouter API (sesuai config.py Anda yang lama)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 

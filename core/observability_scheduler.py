@@ -82,7 +82,7 @@ async def _check_observability(client) -> None:
         if ch is None:
             return
 
-        cpu_usage = psutil.cpu_percentage(interval=1)
+        cpu_usage = psutil.cpu_percent(interval=1)
         ram = psutil.virtual_memory()
         ram_usage = ram.percent
 

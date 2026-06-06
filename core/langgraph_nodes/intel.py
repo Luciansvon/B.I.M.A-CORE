@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
 from core.langgraph_nodes.llm_config import default_llm
 from teams.t5_intel import SmartSearchTool
@@ -115,6 +115,47 @@ async def intel_node(state: BimaState) -> dict:
     await notify_progress(state, "🔍 *Tim Intel lagi cari info di internet...*")
     user_request = state.get("user_request", "")
     realtime_context = state.get("realtime_context", "")
+
+    # === Jalur Pembuatan/Draft/Posting/Balas/Analisa Threads ===
+    is_threads_post_req = any(kw in user_request.lower() for kw in ["threads", "postingan", "buat postingan", "post ke", "posting tentang", "balas komentar", "bales komentar", "reply comment", "analisa viral", "belajar viral", "analisis viral"])
+    if is_threads_post_req:
+        await notify_progress(state, "🚀 *Tim Intel sedang merencanakan tindakan Threads...*")
+        from teams.t5_intel import intel_agent
+        from crewai import Task, Crew
+        
+        task = Task(
+            description=f"""{realtime_context}
+            
+            Bima meminta: '{user_request}'
+            
+            Tugasmu:
+            1. Jika Bima meminta untuk menganalisis postingan/tren viral atau belajar dari tulisan tertentu, gunakan ViralAnalysisTool untuk menganalisisnya secara mendalam dan menyimpannya ke memori.
+            2. Jika Bima meminta untuk membalas komentar tertentu, gunakan ThreadsReplyToCommentTool untuk membuat draf balasan, meminta persetujuan Bima, dan mempostingnya.
+            3. Jika meminta postingan Threads baru, pertama-tama cari berita/fakta terbaru jika diperlukan menggunakan search tool (SmartSearchTool atau SerperDevTool), lalu gunakan ThreadsDraftAndPostTool untuk membuat draf postingan (berdasarkan fakta tersebut), meminta persetujuan Bima, dan mempublikasikannya. Pastikan Anda meneruskan semua instruksi/kriteria gaya bahasa khusus dari Bima (seperti "jangan pake strip -", "tambahin emot", "sarkas", dll.) ke dalam parameter input topic alat tersebut agar draf yang dihasilkan mematuhinya.
+            4. Laporkan hasil akhir tindakan dengan detail dan jelas (termasuk link jika sukses atau status persetujuan Bima).""",
+            expected_output="Hasil akhir pengerjaan tindakan Threads (posting/balas/analisa).",
+            agent=intel_agent
+        )
+        
+        crew = Crew(
+            agents=[intel_agent],
+            tasks=[task],
+            verbose=True
+        )
+        
+        from core.permission_gate import current_user_id
+        user_id = state.get("discord_user_id", "anon")
+        current_user_id.set(user_id)
+        
+        hasil_raw = await asyncio.to_thread(crew.kickoff)
+        hasil_str = str(hasil_raw)
+        
+        logger.info(f"[LANGGRAPH INTEL] Threads task selesai: {hasil_str[:150]}...")
+        
+        return {
+            "messages": [AIMessage(content=hasil_str)],
+            "is_finished": True
+        }
 
     # === Short-circuit ke BrowserUseTool ===
     # Trigger jalur 1: URL eksplisit + verb interaktif (existing).

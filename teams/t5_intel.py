@@ -13,6 +13,7 @@ from tools.browser_use_tool import BrowserUseTool
 from tools.sherlock_tool import SherlockTool
 from tools.image_search_tool import ImageSearchTool
 from tools.last30days_tool import Last30DaysResearchTool
+from core.threads_commands import ThreadsDraftAndPostTool, ViralAnalysisTool
 
 logger = logging.getLogger('bima_core')
 
@@ -542,7 +543,7 @@ intel_agent = Agent(
 
     Kamu TIDAK PERNAH mengarang data. SELALU pakai tool. Kalau tool gagal, bilang jujur — JANGAN tebak dari training data.""",
     llm=intel_llm,
-    tools=[search_tool, SmartSearchTool(), Last30DaysResearchTool(), MarketplaceScraper(), RedditScraper(), GitHubScraper(), XScraper(), WebFetchTool(), AsyncMultiFetchTool(), OSINTDeepSearchTool(), BrowserUseTool(), SherlockTool(), ImageSearchTool()],
+    tools=[search_tool, SmartSearchTool(), Last30DaysResearchTool(), MarketplaceScraper(), RedditScraper(), GitHubScraper(), XScraper(), WebFetchTool(), AsyncMultiFetchTool(), OSINTDeepSearchTool(), BrowserUseTool(), SherlockTool(), ImageSearchTool(), ThreadsDraftAndPostTool(), ViralAnalysisTool()],
     allow_delegation=True,
     verbose=True
 )

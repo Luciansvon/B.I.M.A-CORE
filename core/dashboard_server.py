@@ -146,7 +146,7 @@ def _humanize_size(num_bytes: int) -> str:
 
 
 @app.get("/api/outputs")
-async def list_outputs(limit: int = 30, kind: str = ""):
+async def list_outputs(limit: int = 30, kind: str = "", _auth: str = Depends(require_auth)):
     """List file di outputs/ urut berdasar mtime desc.
     Query param `kind`: filter by ekstensi family (pdf/docx/xlsx/html/img/svg).
     """
@@ -183,13 +183,30 @@ async def list_outputs(limit: int = 30, kind: str = ""):
 
 
 @app.get("/outputs/{filename}")
-async def serve_output(filename: str):
-    """Serve file dari outputs/ (untuk preview HTML/PDF/img di dashboard)."""
+async def serve_output(filename: str, credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security)):
+    """Serve file dari outputs/ (untuk preview HTML/PDF/img di dashboard).
+    PENTING: File gambar untuk postingan media sosial (anisa_img_* / threads_*)
+    bisa diakses publik tanpa auth agar Threads API bisa download gambarnya.
+    """
     # Sanitasi: cegah path traversal
     safe_name = Path(filename).name
+    
+    # Cek apakah file ini gambar publik untuk postingan Threads
+    is_public_img = safe_name.startswith("anisa_img_") or safe_name.startswith("threads_")
+    
+    if not is_public_img:
+        # Validasi Bearer token untuk file dokumen sensitif lainnya
+        if credentials is None or credentials.credentials != _API_TOKEN:
+            raise HTTPException(status_code=401, detail="Token tidak valid atau tidak diberikan.")
+            
     fpath = OUTPUTS_DIR / safe_name
     if not fpath.exists() or not fpath.is_file():
-        return JSONResponse({"error": "not found"}, status_code=404)
+        # Fallback ke gallery_cache
+        gallery_fpath = OUTPUTS_DIR / "gallery_cache" / safe_name
+        if gallery_fpath.exists() and gallery_fpath.is_file():
+            fpath = gallery_fpath
+        else:
+            return JSONResponse({"error": "not found"}, status_code=404)
     return FileResponse(fpath)
 
 
@@ -700,7 +717,7 @@ async def websocket_endpoint(ws: WebSocket, token: str = Query(default="")):
 
 def _run(host: str, port: int):
     """Blocking. Dipanggil di thread baru."""
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
+    config = uvicorn.Config(app, host=host, port=port, log_level="info", access_log=True)
     server = uvicorn.Server(config)
     asyncio.run(server.serve())
 

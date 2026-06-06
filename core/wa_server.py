@@ -44,7 +44,13 @@ async def chat(req: ChatRequest):
     global _busy
 
     # Auth check
-    if _WA_TOKEN and req.token != _WA_TOKEN:
+    global _WA_TOKEN
+    if not _WA_TOKEN:
+        import secrets
+        _WA_TOKEN = secrets.token_urlsafe(32)
+        logger.critical("[WA-BRIDGE] ⚠️ WA_BRIDGE_TOKEN tidak diset di .env! Menggunakan token acak sementara demi keamanan.")
+
+    if req.token != _WA_TOKEN:
         raise HTTPException(status_code=401, detail="Token tidak valid")
 
     message = req.message.strip()

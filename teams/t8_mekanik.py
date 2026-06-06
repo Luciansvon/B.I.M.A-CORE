@@ -28,6 +28,9 @@ class CodeExecutorTool(BaseTool):
     Input: kode Python yang ingin dieksekusi."""
 
     def _run(self, code: str) -> str:
+        from core.permission_gate import check_permission_sync
+        if not check_permission_sync("Eksekusi Kode Python", f"Menjalankan script Python:\n{code}"):
+            return "❌ AKSES DITOLAK: Tindakan tidak disetujui oleh Bima."
         try:
             # Tulis ke temp file
             with tempfile.NamedTemporaryFile(
@@ -92,6 +95,9 @@ class AutoRetryTool(BaseTool):
     Input: kode Python yang ingin dieksekusi dan di-debug otomatis."""
 
     def _run(self, code: str) -> str:
+        from core.permission_gate import check_permission_sync
+        if not check_permission_sync("Debug & Eksekusi Kode (Auto-Retry)", f"Menjalankan dan men-debug script Python otomatis:\n{code}"):
+            return "❌ AKSES DITOLAK: Tindakan tidak disetujui oleh Bima."
         max_retry = 5
         current_code = code
         history = []
@@ -233,6 +239,9 @@ class FileSaverTool(BaseTool):
             if "|" not in input_str:
                 return "Format salah. Gunakan: 'nama_file|konten'"
             filename, content = input_str.split("|", 1)
+            from core.permission_gate import check_permission_sync
+            if not check_permission_sync("Menulis/Menyimpan File", f"Menyimpan file '{filename.strip()}' dengan isi:\n{content}"):
+                return "❌ AKSES DITOLAK: Tindakan tidak disetujui oleh Bima."
             filepath = OUTPUT_DIR / filename.strip()
             filepath.write_text(content.strip(), encoding="utf-8")
             return f"SUCCESS|{filepath}|File berhasil disimpan: {filename.strip()}"
@@ -252,6 +261,10 @@ class GitAutomationTool(BaseTool):
         try:
             parts = command_str.split('|', 1)
             cmd = parts[0].strip().lower()
+            if cmd in ['commit', 'push']:
+                from core.permission_gate import check_permission_sync
+                if not check_permission_sync("Git Automation", f"Menjalankan perintah Git: {command_str}"):
+                    return "❌ AKSES DITOLAK: Tindakan tidak disetujui oleh Bima."
             
             if cmd == 'status':
                 result = subprocess.run(["git", "status"], capture_output=True, text=True, cwd=str(BASE_DIR))

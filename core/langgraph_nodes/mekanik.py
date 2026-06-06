@@ -59,6 +59,10 @@ async def mekanik_node(state: BimaState) -> dict:
         verbose=True
     )
 
+    from core.permission_gate import current_user_id
+    user_id = state.get("discord_user_id", "anon")
+    current_user_id.set(user_id)
+
     hasil_raw = await asyncio.to_thread(crew.kickoff)
     hasil_str = str(hasil_raw)
 

@@ -113,6 +113,16 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"agentmemory gagal start (bot tetap jalan, fallback SQLite): {e}")
 
+    # Verify MCP Security (Bumblebee Audit)
+    try:
+        from config import MCP_CLIENTS_CONFIG
+        from core.mcp_security import verify_and_alert_mcp
+        if not verify_and_alert_mcp(MCP_CLIENTS_CONFIG):
+            logger.error("[SECURITY] Sistem dinonaktifkan karena konfigurasi MCP tidak aman!")
+            sys.exit(1)
+    except Exception as e:
+        logger.warning(f"[SECURITY] Gagal melakukan audit keamanan MCP: {e}")
+
     # Init MCP client manager — consume MCP server eksternal (fetch, markitdown, dll)
     try:
         from config import BASE_DIR, MCP_CLIENTS_CONFIG

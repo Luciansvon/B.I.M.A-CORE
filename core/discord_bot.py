@@ -46,6 +46,10 @@ _startup_notified = False
 # user_id (int) → discord_thread_id (int)
 _private_threads: dict[int, int] = {}
 
+# Debounce store untuk DM revision (mencegah resolve terlalu cepat saat masih ngetik)
+_dm_debounce_timers: dict[str, asyncio.Task] = {}  # user_id -> debounce task
+_dm_debounce_texts: dict[str, str] = {}              # user_id -> latest revision text
+
 
 @tree.command(name="private", description="Mulai/akhiri dedicated thread privat dengan Anisa")
 @app_commands.describe(action="Pilih 'start' untuk buka thread privat, 'stop' untuk akhiri")
@@ -160,6 +164,10 @@ async def on_ready():
     logger.info(f'✨ B.I.M.A Core FULL SYSTEM online sebagai {client.user}!')
     logger.info('8 Team + Memory + Real-time + File Reader siap tempur! 🚀')
 
+    # Register main event loop for permission gate
+    from core.permission_gate import set_main_loop
+    set_main_loop(asyncio.get_running_loop())
+
     if _startup_notified:
         logger.info('Reconnect terdeteksi, skip startup notif duplikat')
         return
@@ -190,6 +198,13 @@ async def on_ready():
         start_briefing_scheduler(client)
     except Exception as e:
         logger.error(f'Gagal start briefing scheduler: {e}', exc_info=True)
+
+    # Threads posting scheduler (opt-in via ENABLE_THREADS_AUTO=true)
+    try:
+        from core.threads_scheduler import start_threads_scheduler
+        start_threads_scheduler(client)
+    except Exception as e:
+        logger.error(f'Gagal start threads scheduler: {e}', exc_info=True)
 
     # Observability scheduler (opt-in via ENABLE_OBSERVABILITY=true)
     try:
@@ -242,6 +257,92 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # DM Interception for pending approvals (revision gate)
+    # Debounce 5 detik: kalau Bima kirim DM lagi dalam 5 detik, teks baru replace teks lama
+    # PENTING: Revisi TIDAK auto-approve. Harus tetap klik 👍/👎 setelah preview revisi.
+    if isinstance(message.channel, discord.DMChannel):
+        from core.permission_gate import get_pending_req_id_by_user, resolve_approval_with_revision, resolve_approval
+        req_id = get_pending_req_id_by_user(str(message.author.id))
+        if req_id:
+            revised_text = message.content.strip()
+            user_id_str = str(message.author.id)
+            
+            # Cek jika input text adalah perintah pembatalan / tolak
+            cancel_keywords = {"tolak", "batal", "cancel", "no", "reject", "jangan", "pembatalan", "tidak"}
+            clean_text = re.sub(r'[^\w\s]', '', revised_text.lower()).strip()
+            if clean_text in cancel_keywords:
+                logger.info(f"[DM_APPROVAL] Bima membatalkan request {req_id} via pesan teks: '{revised_text}'")
+                if user_id_str in _dm_debounce_timers:
+                    _dm_debounce_timers[user_id_str].cancel()
+                    _dm_debounce_timers.pop(user_id_str, None)
+                _dm_debounce_texts.pop(user_id_str, None)
+                resolve_approval(req_id, False)
+                await message.reply("❌ **Tindakan dibatalkan/ditolak oleh Bima.**")
+                return
+
+            # Simpan revisi terbaru + cancel timer sebelumnya (last-write-wins)
+            if user_id_str in _dm_debounce_timers:
+                _dm_debounce_timers[user_id_str].cancel()
+            _dm_debounce_texts[user_id_str] = revised_text
+            
+            async def _finalize_revision(uid: str, rid: str):
+                """Setelah 5 detik tanpa pesan baru, generate preview revisi dan kirim
+                pesan BARU dengan 👍/👎 untuk persetujuan eksplisit.
+                TIDAK auto-approve — Bima harus klik reaksi."""
+                await asyncio.sleep(5)
+                final_revision_input = _dm_debounce_texts.pop(uid, revised_text)
+                _dm_debounce_timers.pop(uid, None)
+                
+                # Lookup the original draft from the stored approval message
+                original_draft = None
+                for msg_id, (stored_req_id, stored_uid, action_type, details) in _discord_approval_messages.items():
+                    if stored_req_id == rid:
+                        original_draft = details
+                        break
+                
+                # Generate revised draft preview using smart revision
+                try:
+                    from core.threads_commands import apply_smart_revision
+                    if original_draft:
+                        revised_draft = await apply_smart_revision(original_draft, final_revision_input)
+                    else:
+                        revised_draft = final_revision_input
+                except Exception as e:
+                    logger.error(f"[DM_REVISION] Gagal generate smart revision: {e}")
+                    revised_draft = final_revision_input
+                
+                # Simpan revised text untuk nanti di-consume saat approved
+                from core.permission_gate import _revised_texts
+                _revised_texts[uid] = revised_draft
+                
+                # Kirim preview revisi sebagai pesan BARU dengan 👍/👎
+                # User HARUS klik reaksi untuk approve/reject
+                try:
+                    user = await client.fetch_user(int(uid))
+                    if user:
+                        dm_channel = user.dm_channel or await user.create_dm()
+                        preview_msg = await dm_channel.send(
+                            f"📝 **DRAF REVISI THREADS** 📝\n\n"
+                            f"Hasil revisi berdasarkan masukan lu:\n\n"
+                            f"{revised_draft[:1800]}\n\n"
+                            f"👍 **Setuju & Publish**  |  👎 **Tolak/Batal**\n"
+                            f"💬 Atau **balas lagi** buat revisi ulang!"
+                        )
+                        await preview_msg.add_reaction("👍")
+                        await preview_msg.add_reaction("👎")
+                        
+                        # Register pesan baru ini di approval messages (pakai req_id yang sama)
+                        _discord_approval_messages[preview_msg.id] = (rid, uid, "THREADS_POST", revised_draft)
+                        logger.info(f"[DM_REVISION] Preview revisi terkirim ke {uid}, menunggu 👍/👎 eksplisit")
+                except Exception as e:
+                    logger.error(f"[DM_REVISION] Gagal kirim preview revisi ke DM: {e}")
+            
+            task = asyncio.create_task(_finalize_revision(user_id_str, req_id))
+            _dm_debounce_timers[user_id_str] = task
+            
+            await message.reply("📝 **Revisi diterima!** Tunggu 5 detik — kalau lu mau nambah/ganti, kirim lagi aja...")
+            return
+
     # Rate limit: max 1 request per 3 detik per user
     uid = message.author.id
     now_ts = datetime.now().timestamp()
@@ -274,6 +375,13 @@ async def on_message(message):
     if perintah.lower().startswith("!saham"):
         args = perintah[6:].strip()
         await handle_saham_command(message, args, bot_client=client)
+        return
+
+    # === !threads command pre-route ===
+    if perintah.lower().startswith("!threads"):
+        args = perintah[8:].strip()
+        from core.threads_commands import handle_threads_command
+        await handle_threads_command(message, args, bot_client=client)
         return
 
     # === !qc command (furniture drawing QC) ===
@@ -469,6 +577,118 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
             await message.reply(f"Aduh Bima sayang, ada error: `{e}`")
         except Exception as reply_err:
             logger.error(f"Gagal kirim pesan error ke Discord: {reply_err}")
+
+# ============================================================
+# INTERACTIVE PERMISSION GATE INTEGRATION
+# ============================================================
+from core.permission_gate import register_send_handler, resolve_approval
+
+_discord_approval_messages = {} # message_id -> (req_id, user_id, action_type, details)
+
+async def send_discord_approval(req_id: str, discord_user_id: str, action_type: str, details: str, attachment_paths: list[str] = None) -> bool:
+    try:
+        user = await client.fetch_user(int(discord_user_id))
+        if not user:
+            logger.warning(f"[PERMISSION_GATE] User {discord_user_id} not found.")
+            return False
+        
+        dm_channel = user.dm_channel or await user.create_dm()
+        if action_type == "BOM_APPROVAL":
+            msg_text = (
+                f"📋 **PERSETUJUAN DAFTAR BAHAN (BOM) & HARGA** 📋\n\n"
+                f"Anisa mendeteksi permintaan penulisan BOM ke slide.\n"
+                f"Silakan tinjau rincian daftar bahan berikut:\n\n"
+                f"{details[:1500]}\n\n"
+                f"Apakah draf BOM di atas sudah benar untuk dimasukkan ke slide presentasi?\n"
+                f"👍 **Setuju (Approve)**  |  👎 **Tolak (Reject)**"
+            )
+        elif action_type == "SLIDE_PREVIEW_APPROVAL":
+            msg_text = (
+                f"🎨 **TINJAUAN PREVIEW SLIDE PRESENTASI** 🎨\n\n"
+                f"Anisa telah selesai menyusun draf visual slide presentasi.\n"
+                f"Silakan tinjau gambar preview di bawah:\n\n"
+                f"{details[:1500]}\n\n"
+                f"Apakah desain slide di atas sudah oke untuk dicompile final?\n"
+                f"👍 **Setuju (Approve & Compile)**  |  👎 **Revisi (Reject)**"
+            )
+        elif action_type in ("THREADS_POST", "THREADS_REPLY"):
+            msg_text = (
+                f"📝 **DRAF POSTINGAN THREADS** 📝\n\n"
+                f"Anisa udah buatin draf postingan buat Threads lu:\n\n"
+                f"{details[:1800]}\n\n"
+                f"👍 **Setuju & Publish**  |  👎 **Tolak**\n"
+                f"💬 Atau **balas langsung** di sini buat revisi draftnya!"
+            )
+        else:
+            msg_text = (
+                f"⚠️ **IZIN AKSES SISTEM DETEKSI** ⚠️\n\n"
+                f"Anisa mendeteksi tindakan tingkat sistem berikut:\n"
+                f"• **Tindakan**: `{action_type}`\n"
+                f"• **Detail**:\n```python\n{details[:1200]}\n```\n\n"
+                f"Apakah kamu mengizinkan tindakan ini?\n"
+                f"👍 **Setuju**  |  👎 **Tolak**"
+            )
+        
+        files = [discord.File(str(fp)) for fp in attachment_paths] if attachment_paths else None
+        msg = await dm_channel.send(msg_text, files=files)
+        await msg.add_reaction("👍")
+        await msg.add_reaction("👎")
+        
+        _discord_approval_messages[msg.id] = (req_id, discord_user_id, action_type, details)
+        return True
+    except Exception as e:
+        logger.error(f"[PERMISSION_GATE] Gagal kirim DM approval ke {discord_user_id}: {e}", exc_info=True)
+        return False
+
+register_send_handler(send_discord_approval)
+
+@client.event
+async def on_raw_reaction_add(payload):
+    if payload.user_id == client.user.id:
+        return
+    msg_id = payload.message_id
+    if msg_id in _discord_approval_messages:
+        req_id, target_user_id, action_type, details = _discord_approval_messages[msg_id]
+        if str(payload.user_id) == target_user_id:
+            emoji_str = str(payload.emoji)
+            
+            # Fetch message since it might be uncached (especially after restarts)
+            try:
+                channel = client.get_channel(payload.channel_id)
+                if not channel:
+                    channel = await client.fetch_channel(payload.channel_id)
+                message = await channel.fetch_message(msg_id)
+            except Exception as e:
+                logger.error(f"Gagal fetch message untuk raw reaction: {e}")
+                return
+                
+            if emoji_str == "👍":
+                resolve_approval(req_id, True)
+                try:
+                    if action_type == "BOM_APPROVAL":
+                        await message.edit(content=f"✅ **BOM DISETUJUI BIMA**\n\n{details[:1200]}\n\nStatus: Disetujui.")
+                    elif action_type == "SLIDE_PREVIEW_APPROVAL":
+                        await message.edit(content=f"✅ **PREVIEW SLIDE DISETUJUI BIMA**\n\n{details[:1200]}\n\nStatus: Disetujui, sedang memproses compile final...")
+                    elif action_type in ("THREADS_POST", "THREADS_REPLY"):
+                        await message.edit(content=f"✅ **DRAF THREADS DISETUJUI BIMA**\n\n{details[:1800]}\n\nStatus: Sukses dipublikasikan.")
+                    else:
+                        await message.edit(content=f"✅ **TINDAKAN DISETUJUI BIMA**\n```python\n# {action_type}\n{details[:500]}\n```\nStatus: Sukses disetujui.")
+                except Exception as e:
+                    logger.warning(f"Gagal edit approval message: {e}")
+            elif emoji_str == "👎":
+                resolve_approval(req_id, False)
+                try:
+                    if action_type == "BOM_APPROVAL":
+                        await message.edit(content=f"❌ **BOM DITOLAK BIMA**\n\n{details[:1200]}\n\nStatus: Ditolak.")
+                    elif action_type == "SLIDE_PREVIEW_APPROVAL":
+                        await message.edit(content=f"❌ **PREVIEW SLIDE DITOLAK BIMA**\n\n{details[:1200]}\n\nStatus: Ditolak (butuh revisi).")
+                    elif action_type in ("THREADS_POST", "THREADS_REPLY"):
+                        await message.edit(content=f"❌ **DRAF THREADS DIBATALKAN**\n\n{details[:1800]}\n\nStatus: Batal/Ditolak.")
+                    else:
+                        await message.edit(content=f"❌ **TINDAKAN DITOLAK BIMA**\n```python\n# {action_type}\n{details[:500]}\n```\nStatus: Pembatalan.")
+                except Exception as e:
+                    logger.warning(f"Gagal edit approval message: {e}")
+
 
 def run_bot():
     # Dashboard server start di main.py (host=127.0.0.1 loopback-only — cloudflared

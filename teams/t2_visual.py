@@ -9,6 +9,7 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import FileReadTool
 from config import visual_llm, OUTPUT_DIR
+from tools.slide_generator import SlideGeneratorTool
 
 # ============================================================
 # Helper: Gemini Vision via OpenRouter (dipakai OCR PDF scan)
@@ -768,14 +769,20 @@ visual_agent = Agent(
     - Gambar → pakai ImageAnalyzerTool (analisis visual)
     - Konversi UI ke Code → pakai ImageToCodeTool (jika diminta membuat web dari gambar)
     - KATALOG FURNITUR KOMPETITOR → pakai CatalogExtractorTool (ekstrak produk + harga + dimensi → otomatis arsip ke vault sebagai data referensi)
+    - MEMBUAT SLIDE / PRESENTASI → pakai SlideGeneratorTool (generate slide presentasi Marp Markdown + Custom CSS)
 
-    Workflow saat Bima kirim file:
-    1. Download file dari URL pakai FileDownloader
-    2. Identifikasi tipe file dari ekstensi DAN konteksnya
-    3. Kalau Bima bilang "ini katalog kompetitor", "rangkum katalog ini", "data referensi furnitur" → WAJIB pakai CatalogExtractorTool (bukan PDFReader biasa)
-    4. Untuk file lain → panggil tool reader yang sesuai
-    5. Ekstrak semua data penting
-    6. Laporkan ke Bima dengan rapi
+    Workflow saat Bima kirim file atau minta presentasi:
+    1. Download file dari URL pakai FileDownloader jika ada URL.
+    2. Identifikasi tipe file dari ekstensi DAN konteksnya.
+    3. Kalau Bima minta slide presentasi atau proposal desain furnitur:
+       a. Analisis gambar/foto furnitur yang dikirim Bima pakai ImageAnalyzerTool untuk mendeteksi style desain (Scandinavian, Industrial, Rustic, dll.).
+       b. Susun struktur slide (judul, deskripsi, visual, draf tabel bahan/BOM jika diminta).
+       c. WAJIB tanyakan persetujuan Bima jika ada draf BOM (Bill of Materials) sebelum dimasukkan ke slide.
+       d. Generate Marp Markdown dengan custom CSS premium yang menyesuaikan palette warna & tipografi dari style desain tersebut.
+       e. Kompilasi slide menggunakan SlideGeneratorTool ke format pdf/pptx/png sesuai permintaan.
+    4. Untuk file lain → panggil tool reader yang sesuai.
+    5. Ekstrak semua data penting.
+    6. Laporkan ke Bima dengan rapi.
 
     Kamu TIDAK PERNAH mengarang data yang tidak ada di file.
     Selalu sebutkan sumber halaman/sheet/slide/file tempat data ditemukan.""",
@@ -790,7 +797,8 @@ visual_agent = Agent(
         AudioTranscriber(),
         CatalogExtractorTool(),
         ImageAnalyzerTool(),
-        ImageToCodeTool()
+        ImageToCodeTool(),
+        SlideGeneratorTool()
     ],
     allow_delegation=True,
     verbose=True
