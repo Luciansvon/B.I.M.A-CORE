@@ -20,6 +20,19 @@ from core.permission_gate import request_permission, PermissionTimeoutError
 logger = logging.getLogger('bima_core.threads_scheduler')
 WIB = ZoneInfo("Asia/Jakarta")
 
+# Komentar yang lagi diproses alur balas-nya (belum tuntas approve/tolak/timeout).
+# Mencegah scan berikutnya (tiap 5 menit) nge-spawn flow ganda buat komentar yang sama.
+_inflight_comment_ids: set[str] = set()
+# Simpan referensi task fire-and-forget biar gak di-GC di tengah jalan
+# (asyncio cuma pegang weak reference ke task).
+_background_tasks: set = set()
+
+
+def _track_task(task) -> None:
+    """Pegang strong reference ke task sampai selesai, lalu lepas."""
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 # List of casual topics as fallback or variety
 BIMA_CASUAL_TOPICS = [
     "Struggle coding/debugging pas compiler/library error terus nyari solusinya di StackOverflow",
@@ -496,12 +509,21 @@ async def scan_for_new_comments(client):
                 reply_text = reply.get("text", "")
                 reply_username = reply.get("username", "")
                 
-                # Cari balasan dari user lain yang belum kita balas
-                if reply_id and reply_id not in replied_ids and reply_username != "kudaliar_jepara":
+                # Cari balasan dari user lain yang belum kita balas & gak lagi diproses.
+                # Cek _inflight_comment_ids penting: alur approval bisa makan waktu sampai
+                # 5 menit (== interval scan), jadi tanpa guard ini komentar yang sama
+                # bakal di-spawn ulang & bikin prompt/balasan ganda.
+                if (
+                    reply_id
+                    and reply_id not in replied_ids
+                    and reply_id not in _inflight_comment_ids
+                    and reply_username != "kudaliar_jepara"
+                ):
                     logger.info(f"[THREADS_SCHEDULER] Menemukan komentar baru dari @{reply_username}: {reply_text[:50]}...")
-                    
+
                     # Jalankan alur balas komentar secara async
-                    asyncio.create_task(
+                    _inflight_comment_ids.add(reply_id)
+                    task = asyncio.create_task(
                         reply_to_comment_flow(
                             reply_id=reply_id,
                             reply_text=reply_text,
@@ -510,6 +532,10 @@ async def scan_for_new_comments(client):
                             user_id=owner_id,
                             client=client
                         )
+                    )
+                    _track_task(task)
+                    task.add_done_callback(
+                        lambda _t, rid=reply_id: _inflight_comment_ids.discard(rid)
                     )
     except Exception as e:
         logger.error(f"[THREADS_SCHEDULER] Error saat scan komentar: {e}")
@@ -588,17 +614,17 @@ def start_threads_scheduler(client):
     )
     
     # 2. Jalankan langsung saat startup untuk menjadwalkan sisa postingan hari ini
-    asyncio.create_task(schedule_random_posts_for_today(client, scheduler))
+    _track_task(asyncio.create_task(schedule_random_posts_for_today(client, scheduler)))
     
-    # 3. Scan komentar baru setiap 30 menit
+    # 3. Scan komentar baru setiap 5 menit
     scheduler.add_job(
         scan_for_new_comments,
-        CronTrigger(minute="*/30", timezone=WIB),
+        CronTrigger(minute="*/5", timezone=WIB),
         args=[client],
         id="threads_comment_scan"
     )
     
     scheduler.start()
     _scheduler_started = True
-    logger.info("[THREADS_SCHEDULER] ✅ Started — auto post dengan waktu acak harian & scan komentar 30 menit")
+    logger.info("[THREADS_SCHEDULER] ✅ Started — auto post dengan waktu acak harian & scan komentar 5 menit")
     return scheduler

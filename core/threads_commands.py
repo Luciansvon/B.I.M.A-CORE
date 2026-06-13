@@ -3,6 +3,7 @@ import re
 import logging
 import httpx
 import asyncio
+from collections import OrderedDict
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from tools.last30days_tool import Last30DaysResearchTool
@@ -16,11 +17,29 @@ logger = logging.getLogger('bima_core.threads')
 # user_id -> list of {"title": "...", "snippet": "..."}
 _cached_trends = {}
 
-# Map untuk melacak search_context_info per draf postingan agar groundings terjaga saat revisi
-_draft_contexts = {}
+# Map untuk melacak search_context_info per draf postingan agar groundings terjaga saat revisi.
+# Pakai LRU bounded biar gak bocor memori di bot yang nyala berhari-hari: tiap draf/revisi
+# nambah entri, jadi tanpa batas dict ini tumbuh terus.
+class _BoundedContextStore(OrderedDict):
+    """Dict ber-LRU sederhana — simpan maksimal `max_size` entri konteks draf,
+    entri paling lama dibuang begitu lewat batas."""
+
+    def __init__(self, max_size: int = 200):
+        super().__init__()
+        self._max_size = max_size
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        while len(self) > self._max_size:
+            self.popitem(last=False)
+
+
+_draft_contexts = _BoundedContextStore(max_size=200)
 
 # Inisialisasi Threads-specific LLM (menggunakan Claude 3.5 Sonnet untuk hasil paling manusiawi)
-threads_llm = get_langchain_llm(os.environ.get("THREADS_LLM_MODEL", "anthropic/claude-3.5-sonnet"))
+threads_llm = get_langchain_llm(os.environ.get("THREADS_LLM_MODEL", "anthropic/claude-3.5-sonnet"), max_tokens=1000)
 
 BIMA_SYSTEM_PROMPT = """Role: Lu adalah anak muda Gen-Z, tech enthusiast, dan gadget geek umum yang nulis postingan buat Threads. Lu suka ngulik teknologi, game PC/konsol, kopi, musik, dan random thoughts sehari-hari.
 
@@ -455,10 +474,18 @@ ATURAN:
   - Emoji MINIMAL, maks 1-2 (🗿😭💀🫠🤡😏🔥🙏). JANGAN pake ✨🚀💡😊🤖.
   - TANPA HASHTAG.
   - JANGAN bahas skincare dalam bentuk apapun. ABSOLUTE BAN.
+  - ANTI-SLOP (WAJIB):
+    * Hindari pembuka basa-basi/throat-clearing (misal: "Tentu,", "Tentu saja,", "Perlu dicatat,", "Menariknya,"). Langsung nyatakan poinnya.
+    * Hindari kata klise AI: "di era digital", "solusi terbaik", "berkomitmen untuk", "tidak hanya itu", "secara keseluruhan", "menawarkan kemudahan".
+    * Gunakan kalimat aktif dan kasual. Hindari drama biner klise ("Bukan karena X, melainkan Y").
   - Tetep di TOPIK yang relevan dengan draf asal atau feedback terbaru.
   - HARUS di bawah 500 karakter. Idealnya di bawah 200 karakter.
   
-Return CUMA teks final yang mau dipublish. Tanpa basa-basi, tanpa markdown, tanpa tanda kutip."""
+Kembalikan draf final yang dibungkus dalam tag <draft>...</draft>.
+Contoh output:
+<draft>konten postingan di sini</draft>
+
+Jangan memberikan penjelasan, tanda kutip bungkus di luar tag, atau kata pengantar apa pun di luar tag <draft>."""
 
     for attempt in range(3):
         try:
@@ -467,7 +494,14 @@ Return CUMA teks final yang mau dipublish. Tanpa basa-basi, tanpa markdown, tanp
                 threads_llm.invoke,
                 [SystemMessage(content=system_prompt)]
             )
-            revised_text = clean_bima_text(resp.content)
+            content = resp.content.strip()
+            # Ekstrak konten di dalam tag <draft>...</draft>
+            draft_match = re.search(r'<draft>([\s\S]*?)</draft>', content, re.IGNORECASE)
+            if draft_match:
+                revised_text = clean_bima_text(draft_match.group(1))
+            else:
+                revised_text = clean_bima_text(content)
+
             if len(revised_text) <= 500:
                 if len(revised_text) > 480:
                     revised_text = await shorten_draft_cleanly(revised_text)
@@ -631,10 +665,7 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
     # Ambil teks revisi jika ada
     from core.permission_gate import get_revised_text
     revised = get_revised_text(user_id)
-    if revised:
-        final_text = await apply_smart_revision(draft_text, revised)
-    else:
-        final_text = draft_text
+    final_text = revised if revised else draft_text
         
     # Jika disetujui, publikasikan ke Threads API secara riil
     progress = await message.reply("🚀 *Persetujuan diterima! Mempublikasikan postingan ke Threads...*")
@@ -706,10 +737,7 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
     # Ambil teks revisi jika ada
     from core.permission_gate import get_revised_text
     revised = get_revised_text(user_id)
-    if revised:
-        final_text = await apply_smart_revision(draft_text, revised)
-    else:
-        final_text = draft_text
+    final_text = revised if revised else draft_text
         
     # 4. Publikasikan ke Threads API secara riil
     try:
@@ -871,14 +899,14 @@ Tulis draf balasan Threads yang sangat emosional, sarkas, menggunakan singkatan 
     )
 
     if not approved:
+        # Tandai sudah ditangani (ditolak/timeout) supaya scanner gak nge-prompt
+        # komentar yang sama berulang tiap 5 menit selamanya.
+        _save_replied_comment(reply_id)
         return "❌ Balasan Threads dibatalkan oleh Bima."
 
     from core.permission_gate import get_revised_text
     revised = get_revised_text(user_id)
-    if revised:
-        final_text = await apply_smart_revision(draft_text, revised)
-    else:
-        final_text = draft_text
+    final_text = revised if revised else draft_text
 
     try:
         post_id = await publish_post_to_threads(final_text, token, reply_to_id=reply_id)
