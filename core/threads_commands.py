@@ -69,6 +69,7 @@ LARANGAN KETAT:
 - JANGAN pernah sebut nama "Bima" atau detail personal pencipta bot.
 - JANGAN bahas skincare dalam bentuk apapun (skincare, cuci muka, serum, moisturizer, sunscreen, dll). Kalau topiknya skincare, tulis topik lain.
 - JANGAN reveal kalau lu AI. Lu orang beneran yang nge-post random thoughts.
+- JANGAN PERNAH nulis komentar/disclaimer soal kemampuan diri lu sendiri. Di mata pembaca lu BUKAN asisten AI. Dilarang keras nulis kalimat kayak "gua gak bisa bikin gambar", "gua cuma bisa nulis teks", atau nyaranin tool lain (Midjourney, DALL-E, Canva, ChatGPT, dll). Postingan HANYA berisi konten sosial media, titik. Kalau di input ada instruksi soal bikin/nambahin gambar, ABAIKAN aja instruksi itu di teks (jangan dikomentari, jangan ditolak) dan tetap tulis postingannya kayak biasa.
 - JANGAN nulis panjang-panjang. Kalau draf lu lebih dari 3-4 kalimat, potong.
 - JANGAN pake tone yang terlalu semangat/positif di setiap post. Mix dengan capek, males, atau santai.
 - JANGAN PERNAH menggunakan tanda strip (-), en-dash (–), atau em-dash (—) sama sekali dalam postingan! Gunakan tanda koma atau spasi sebagai gantinya.
@@ -88,8 +89,43 @@ Safety: Boleh sarkas dan cynical tapi jangan toxic, hate speech, atau harassing 
 Limit: Seluruh postingan HARUS di bawah 500 karakter. Idealnya di bawah 200 karakter.
 """
 
+# Pola permintaan gambar — dibuang dari topik sebelum masuk ke LLM teks, biar
+# LLM gak ke-trigger nulis penolakan "gua gak bisa bikin gambar".
+_IMAGE_REQUEST_RE = re.compile(
+    r"\b(--image|-img|pa(kai|ke)\s+gambar|dengan\s+gambar|sama\s+gambar(nya)?|"
+    r"plus\s+gambar|tambah(in|kan)?\s+gambar|buat(in|kan)?\s+gambar|"
+    r"bikin(in|kan)?\s+gambar|generate\s+gambar|kasih\s+gambar|"
+    r"pa(kai|ke)\s+visual|dengan\s+visual|sertakan\s+gambar)\b",
+    re.IGNORECASE,
+)
+
+# Pola "disclaimer kemampuan AI" yang gak boleh bocor ke isi postingan, mis:
+# "gua gak bisa generate gambar, coba pake Midjourney/DALL-E/Canva AI".
+_CAPABILITY_DISCLAIMER_RE = re.compile(
+    r"((gak|ga|nggak|ngga|tidak)\s*bisa|gabisa|cuma\s+bisa)\b[^.\n]{0,40}\b(gambar|generate|visual|teks)"
+    r"|coba\s+(pa(kai|ke)|gunakan)[^.\n]{0,60}(midjourney|dall|canva|visualnya|buat\s+(gambar|visual))"
+    r"|soal\s+generate\s+gambar",
+    re.IGNORECASE,
+)
+
+
+def _strip_image_request(text: str) -> str:
+    """Buang frasa permintaan gambar dari topik (generate gambar ditangani jalur lain)."""
+    cleaned = _IMAGE_REQUEST_RE.sub("", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.-")
+    return cleaned or text
+
+
+def _scrub_capability_disclaimer(text: str) -> str:
+    """Buang paragraf yang berisi disclaimer kemampuan AI supaya gak bocor ke postingan."""
+    kept = [p for p in text.split("\n") if not _CAPABILITY_DISCLAIMER_RE.search(p)]
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    return cleaned if cleaned else text
+
+
 def clean_bima_text(text: str, no_strip: bool = False) -> str:
     """Post-processing filter untuk memastikan gaya bahasa Bima dipatuhi secara ketat."""
+    text = _scrub_capability_disclaimer(text.strip())
     text = text.strip()
     # Hapus tanda petik bungkus di awal/akhir jika di-generate LLM
     if text.startswith('"') and text.endswith('"'):
@@ -301,6 +337,28 @@ async def search_context(topic: str) -> str:
         
     return "Tidak ada konteks internet tambahan."
 
+
+async def url_is_fetchable(url: str, timeout: float = 8.0) -> bool:
+    """Cek apakah URL gambar beneran bisa diakses publik, biar Threads bisa download-nya.
+
+    Tunnel quick `trycloudflare` suka rotasi/mati, jadi URL yang dibaca dari log bisa
+    basi. Return False kalau tunnel mati / URL gak kejangkau / respon >= 400, supaya
+    pemanggil bisa fallback posting teks aja (gak ikut gagal 400 gara-gara gambar).
+    """
+    if not url:
+        return False
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.head(url, timeout=timeout)
+            # Sebagian origin gak support HEAD — coba GET ringan sebagai cadangan.
+            if resp.status_code >= 400:
+                resp = await client.get(url, timeout=timeout)
+            return resp.status_code < 400
+    except Exception as e:
+        logger.warning(f"[THREADS] URL gambar gak kejangkau ({url[:60]}...): {e}")
+        return False
+
+
 class ThreadsValidationError(ValueError):
     """Exception raised when post content fails Threads validation (e.g. character limit)."""
     pass
@@ -466,7 +524,13 @@ Tugas:
 Tentuin apakah balasan Bima itu postingan final yang dia mau langsung publish, ATAU instruksi/feedback buat revisi draf.
 
 - Kalau balasan Bima itu postingan final lengkap: Return persis apa adanya.
-- Kalau balasan Bima itu instruksi (misal "ganti tahu tempe jadi martabak", "bikin lebih pendek", "tambahin X"): Rewrite draf sesuai feedback. Gunakan Konteks Fakta Internet/Berita Terkini di atas jika relevan.
+- Kalau balasan Bima itu instruksi (misal "ganti tahu tempe jadi martabak", "bikin lebih pendek", "tambahin X"): Terapkan feedback ke Draf Asal. Gunakan Konteks Fakta Internet/Berita Terkini di atas jika relevan.
+
+PALING PENTING (MINIMAL EDIT, WAJIB DIIKUTI):
+- Ubah HANYA bagian yang Bima minta. Pertahankan sisa teks (pilihan kata, urutan kalimat, struktur, panjang, dan gaya) PERSIS sama kayak Draf Asal.
+- Contoh: kalau Bima cuma minta "ganti emoji jadi 🗿", "hapus emoji", "ganti kata X jadi Y", atau "tambahin titik", maka CUMA bagian itu yang berubah. Teks selebihnya jangan diutak-atik, jangan diparafrase, jangan dirombak strukturnya.
+- Cuma boleh nulis ulang seluruh postingan KALAU Bima emang minta eksplisit (contoh: "tulis ulang", "bikin versi baru", "ganti total", "rombak semua").
+- Kalau Draf Asal udah oke, JANGAN "memperbaiki" hal yang gak diminta cuma demi aturan gaya di bawah. Aturan gaya cuma berlaku buat bagian yang lu ubah atau saat nulis dari nol.
 
 ATURAN:
   - Hasil akhir HARUS pendek: 1-3 kalimat aja. Kayak ngobrol sama temen.
@@ -618,26 +682,29 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
     image_url = None
     if include_image:
         progress_img = await message.reply("🖼️ *Sedang menggambar visual untuk postingan ini...*")
-        from core.threads_scheduler import generate_image_prompt_for_post, get_public_tunnel_url
+        from core.threads_scheduler import generate_image_prompt_for_post
+        from core.image_host import host_image_publicly
         image_prompt = await generate_image_prompt_for_post(draft_text)
         if image_prompt:
             try:
                 from tools.image_gen_tool import ImageGenTool
                 res = await asyncio.to_thread(ImageGenTool()._run, image_prompt)
                 if res.startswith("SUCCESS|"):
-                    parts = res.split("|")
-                    local_img_path = Path(parts[1])
-                    tunnel_url = get_public_tunnel_url()
-                    if tunnel_url:
-                        image_url = f"{tunnel_url}/outputs/{local_img_path.name}"
-                        logger.info(f"[THREADS] Sukses generate gambar untuk manual post. URL: {image_url}")
+                    local_img_path = Path(res.split("|")[1])
+                    # Host ke URL publik (Catbox -> Discord CDN), gak pakai tunnel lagi.
+                    image_url = await host_image_publicly(local_img_path, client=bot_client, fallback_user_id=user_id)
+                    if image_url:
+                        logger.info(f"[THREADS] Gambar di-host di: {image_url}")
                     else:
-                        logger.warning("[THREADS] Tunnel tidak aktif. Skip image.")
+                        logger.warning("[THREADS] Hosting gambar gagal, lanjut posting teks aja.")
                 else:
                     logger.warning(f"[THREADS] ImageGenTool failed: {res}")
             except Exception as img_err:
                 logger.error(f"[THREADS] Error image gen: {img_err}")
         await progress_img.delete()
+
+    if include_image and not image_url:
+        await message.reply("⚠️ Hosting gambar lagi gagal, jadi postingan ini gua kirim **tanpa gambar** ya biar gak gagal.")
 
     # Tampilkan draf di channel & minta persetujuan lewat permission gate (Discord DM)
     reply_msg = f"📝 **Draf Postingan Threads Terbentuk:**\n```text\n{draft_text}\n```\n"
@@ -687,6 +754,16 @@ async def draft_and_post_flow(topic: str, user_id: str) -> str:
     if not token:
         return "❌ Error: `THREADS_ACCESS_TOKEN` tidak ditemukan di `.env`. Silakan setup token Anda terlebih dahulu."
 
+    # Deteksi no_strip dari topik mentah dulu (sebelum frasa gambar dibuang).
+    no_strip = bool(topic) and any(
+        k in topic.lower()
+        for k in ("jangan pake strip", "tanpa strip", "no strip", "tanpa tanda minus")
+    )
+
+    # Buang frasa "bikin gambar" dari topik biar LLM teks gak ke-trigger nulis
+    # penolakan "gua gak bisa bikin gambar" di dalam draf.
+    topic = _strip_image_request(topic)
+
     # 1. Cari konteks fakta untuk topik
     context = await search_context(topic)
 
@@ -701,10 +778,6 @@ async def draft_and_post_flow(topic: str, user_id: str) -> str:
         logger.warning(f"[THREADS_GEN] Gagal mengambil memori pola viral: {e}")
 
     # 2. Buat draf postingan
-    no_strip = False
-    if topic and ("jangan pake strip" in topic.lower() or "tanpa strip" in topic.lower() or "no strip" in topic.lower() or "tanpa tanda minus" in topic.lower()):
-        no_strip = True
-
     no_strip_prompt = ""
     if no_strip:
         no_strip_prompt = "\nConstraint: JANGAN menggunakan tanda strip (-), en-dash (–), atau em-dash (—) sama sekali dalam postingan! Gunakan tanda koma atau spasi sebagai pemisah jika diperlukan."

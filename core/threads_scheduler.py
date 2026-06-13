@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import logging
 import asyncio
@@ -134,11 +135,90 @@ DEFAULT_FACTS = [
     }
 ]
 
-def save_scientific_fact(topic: str, context: str):
+# Maksimal topik yang dilacak di file cooldown anti-ngulang.
+RECENT_TOPICS_MAX = 40
+
+# Kata generik yang BUKAN penanda subjek topik. Dipakai saat membandingkan dua
+# judul topik: kalau setelah kata-kata ini dibuang masih ada token konten yang
+# sama, berarti subjeknya nyaris sama (contoh dua-duanya soal "hiu").
+_TOPIC_STOPWORDS = {
+    "fakta", "unik", "menarik", "tentang", "kenapa", "mengapa", "asal", "usul",
+    "sejarah", "rahasia", "dunia", "manusia", "orang", "paling", "bisa", "yang",
+    "dan", "atau", "itu", "ini", "pada", "untuk", "dari", "dengan", "punya",
+    "tidak", "gak", "nggak", "adalah", "the", "of", "and", "or", "kecepatan",
+    "kemampuan", "jenis", "macam", "cara", "soal", "hal", "ikan", "hewan",
+    "binatang", "burung", "benda", "makanan", "minuman",
+}
+
+# Sudut pandang acak buat ngedorong LLM keluar dari trivia hewan default.
+_FACT_ANGLES = [
+    "desain interior, furnitur, atau arsitektur",
+    "teknologi, coding, gadget, atau hardware PC",
+    "sejarah benda sehari-hari di sekitar kita",
+    "makanan, minuman, atau kebiasaan makan orang Indonesia",
+    "psikologi dan kebiasaan unik manusia sehari-hari",
+    "sains ringan tentang benda di rumah atau kantor",
+    "life hack dan tips produktivitas santai",
+]
+
+
+def _topic_tokens(topic: str) -> set[str]:
+    """Ambil token konten signifikan dari judul topik (buang kata generik)."""
+    words = re.findall(r"[a-zA-Z]+", topic.lower())
+    return {w for w in words if len(w) >= 3 and w not in _TOPIC_STOPWORDS}
+
+
+def _topics_related(a: str, b: str) -> bool:
+    """True kalau dua topik berbagi subjek inti (mis. dua-duanya soal 'hiu')."""
+    ta, tb = _topic_tokens(a), _topic_tokens(b)
+    if not ta or not tb:
+        return a.strip().lower() == b.strip().lower()
+    return bool(ta & tb)
+
+
+def _recent_topics_path() -> str:
+    return os.path.join(os.path.dirname(__file__), "..", "outputs", "threads_recent_topics.json")
+
+
+def _load_recent_topics() -> list[str]:
+    """Baca daftar topik yang baru-baru ini dipakai (urutan: lama -> baru)."""
+    import json
+    path = _recent_topics_path()
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [str(t) for t in data if t]
+    except Exception as e:
+        logger.warning(f"[THREADS_SCHEDULER] Gagal baca recent topics: {e}")
+    return []
+
+
+def _record_recent_topic(topic: str) -> None:
+    """Catat topik yang baru dipakai sebagai cooldown anti-ngulang."""
+    import json
+    if not topic or not topic.strip():
+        return
+    path = _recent_topics_path()
+    try:
+        recent = [t for t in _load_recent_topics()
+                  if t.strip().lower() != topic.strip().lower()]
+        recent.append(topic)
+        recent = recent[-RECENT_TOPICS_MAX:]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(recent, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"[THREADS_SCHEDULER] Gagal nyatet recent topic: {e}")
+
+
+def save_scientific_fact(topic: str, context: str, facts_path: str | None = None):
     """Menyimpan fakta ilmiah baru ke berkas JSON untuk referensi masa depan."""
     try:
         import json
-        facts_path = os.path.join(os.path.dirname(__file__), "scientific_facts.json")
+        if facts_path is None:
+            facts_path = os.path.join(os.path.dirname(__file__), "scientific_facts.json")
         facts = []
         if os.path.exists(facts_path):
             with open(facts_path, "r", encoding="utf-8") as f:
@@ -148,9 +228,10 @@ def save_scientific_fact(topic: str, context: str):
                     facts = []
         else:
             facts = list(DEFAULT_FACTS)
-            
-        # Periksa duplikasi agar tidak menyimpan topik yang sama
-        if not any(f.get("topic", "").lower() == topic.lower() for f in facts):
+
+        # Periksa duplikasi subjek (bukan cuma judul persis) agar tidak menumpuk
+        # fakta dengan subjek yang sama (mis. beberapa fakta soal "hiu").
+        if not any(_topics_related(f.get("topic", ""), topic) for f in facts):
             facts.append({"topic": topic, "context": context})
             with open(facts_path, "w", encoding="utf-8") as f:
                 json.dump(facts, f, indent=2, ensure_ascii=False)
@@ -172,13 +253,23 @@ async def generate_random_interesting_fact_topic() -> tuple[str, str]:
         except Exception as e:
             logger.warning(f"[THREADS_SCHEDULER] Gagal menginisialisasi database fakta: {e}")
 
+    recent_topics = _load_recent_topics()
+
     # Coba ambil dari database lokal (70% peluang jika file terbaca)
     try:
         if os.path.exists(facts_path) and random.random() < 0.7:
             with open(facts_path, "r", encoding="utf-8") as f:
                 facts = json.load(f)
             if facts:
-                selected = random.choice(facts)
+                # Saring fakta yang subjeknya baru aja dipakai biar gak ngulang.
+                # Kalau semua kesaring (DB kecil), balik pakai daftar penuh.
+                fresh = [
+                    fct for fct in facts
+                    if not any(_topics_related(fct.get("topic", ""), r) for r in recent_topics)
+                ]
+                pool = fresh if fresh else facts
+                selected = random.choice(pool)
+                _record_recent_topic(selected["topic"])
                 logger.info(f"[THREADS_SCHEDULER] Menggunakan fakta ilmiah dari database lokal: '{selected['topic']}'")
                 return selected["topic"], selected["context"]
     except Exception as e:
@@ -210,41 +301,77 @@ Kembalikan HANYA teks JSON tersebut tanpa markdown, tanpa penjelasan tambahan.""
 
     try:
         from core.langgraph_nodes.llm_config import default_llm
-        from langchain_core.messages import SystemMessage
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        # Kumpulkan topik yang udah pernah dibahas (recent + DB) jadi daftar larangan
+        # supaya LLM gak balik lagi ke trivia populer yang itu-itu aja (mis. hiu).
+        known_topics: list[str] = list(recent_topics)
+        try:
+            if os.path.exists(facts_path):
+                with open(facts_path, "r", encoding="utf-8") as f:
+                    known_topics += [fct.get("topic", "") for fct in json.load(f)]
+        except Exception:
+            pass
+        # Buang duplikat, dahulukan yang terbaru, batasi biar prompt gak kepanjangan.
+        seen: set[str] = set()
+        avoid: list[str] = []
+        for t in reversed(known_topics):
+            key = t.strip().lower()
+            if t and key not in seen:
+                seen.add(key)
+                avoid.append(t)
+        avoid = avoid[:40]
+
+        nudge = f"Kali ini WAJIB ambil sudut pandang dari kategori: {random.choice(_FACT_ANGLES)}."
+        if avoid:
+            nudge += (
+                "\n\nDAFTAR TOPIK YANG SUDAH PERNAH DIBAHAS. JANGAN ulang subjek/tema yang "
+                "sama atau mirip dengan salah satu di bawah ini, cari yang BENER-BENER beda "
+                "(termasuk jangan bahas subjek hewan yang udah ada, contoh: kalau 'hiu' udah "
+                "ada di daftar, jangan bahas hiu lagi):\n- " + "\n- ".join(avoid)
+            )
+
         resp = await asyncio.to_thread(
             default_llm.invoke,
-            [SystemMessage(content=system_prompt)]
+            [SystemMessage(content=system_prompt), HumanMessage(content=nudge)]
         )
         content = resp.content.strip()
         if content.startswith("```"):
             content = content.replace("```json", "").replace("```", "").strip()
         data = json.loads(content)
-        
+
         topic = data.get("topic", "")
         context = data.get("context", "")
-        
+
         # Simpan fakta yang didraf ke database agar bisa digunakan lagi di masa depan
         if topic and context:
             save_scientific_fact(topic, context)
-            
+            _record_recent_topic(topic)
+
         return topic, context
     except Exception as e:
         logger.warning(f"[THREADS_SCHEDULER] Gagal menghasilkan fakta menarik dinamis dari LLM: {e}")
         return "Asal-usul kursi bakso plastik", "Kursi bakso plastik yang ada bolongannya di tengah itu fungsinya biar gak vakum pas ditumpuk dan gampang diambil."
 
-import re
 from pathlib import Path
 
-def get_public_tunnel_url() -> str | None:
-    """Membaca log cloudflared untuk mendeteksi URL tunnel publik yang aktif."""
-    log_path = Path(__file__).resolve().parent.parent / "logs" / "tunnel-error.log"
+def get_public_tunnel_url(log_path: Path | None = None) -> str | None:
+    """Membaca log cloudflared untuk mendeteksi URL tunnel publik terbaru.
+
+    Mengabaikan endpoint non-tunnel seperti `api.trycloudflare.com` (itu endpoint
+    API cloudflare, bukan URL tunnel) yang sering ikut ke-capture dari log.
+    """
+    if log_path is None:
+        log_path = Path(__file__).resolve().parent.parent / "logs" / "tunnel-error.log"
     if not log_path.exists():
         return None
     try:
         content = log_path.read_text(encoding="utf-8", errors="ignore")
         urls = re.findall(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', content)
-        if urls:
-            return urls[-1]
+        # Buang noise non-tunnel, ambil URL tunnel asli yang paling baru.
+        tunnels = [u for u in urls if not u.startswith("https://api.")]
+        if tunnels:
+            return tunnels[-1]
     except Exception as e:
         logger.warning(f"[THREADS_SCHEDULER] Gagal mendeteksi URL tunnel dari log: {e}")
     return None
@@ -348,6 +475,8 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
     include_image = use_fact and (random.random() < 0.40)
     image_url = None
     image_prompt = ""
+    local_img_path = None      # path gambar lokal (cache atau hasil generate)
+    image_is_fresh = False     # True kalau baru di-generate (buat disimpan ke galeri)
 
     if include_image:
         image_prompt = await generate_image_prompt_for_post(draft_text)
@@ -357,27 +486,18 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
                 # 1. Cek dulu di galeri cache lokal untuk menghemat API
                 from core.image_cache import find_cached_image
                 cached_img = find_cached_image(draft_text)
-                
                 if cached_img:
                     local_img_path = cached_img
-                    tunnel_url = get_public_tunnel_url()
-                    if tunnel_url:
-                        image_url = f"{tunnel_url}/outputs/{local_img_path.name}"
-                        logger.info(f"[THREADS_SCHEDULER] Menggunakan gambar cache dari galeri: {image_url}")
-                
+                    logger.info(f"[THREADS_SCHEDULER] Pakai gambar cache dari galeri: {local_img_path.name}")
+
                 # 2. Jika tidak ada di cache, buat baru via API
-                if not image_url:
+                if not local_img_path:
                     from tools.image_gen_tool import ImageGenTool
                     res = await asyncio.to_thread(ImageGenTool()._run, image_prompt)
                     if res.startswith("SUCCESS|"):
-                        parts = res.split("|")
-                        local_img_path = Path(parts[1])
-                        tunnel_url = get_public_tunnel_url()
-                        if tunnel_url:
-                            image_url = f"{tunnel_url}/outputs/{local_img_path.name}"
-                            logger.info(f"[THREADS_SCHEDULER] Sukses generate gambar baru. URL publik: {image_url}")
-                        else:
-                            logger.warning("[THREADS_SCHEDULER] Tunnel URL tidak ditemukan. Skip gambar, fallback ke teks.")
+                        local_img_path = Path(res.split("|")[1])
+                        image_is_fresh = True
+                        logger.info(f"[THREADS_SCHEDULER] Sukses generate gambar baru: {local_img_path.name}")
                     else:
                         logger.warning(f"[THREADS_SCHEDULER] ImageGenTool gagal: {res}")
             except Exception as img_err:
@@ -388,6 +508,16 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
     if not owner_id:
         logger.error("[THREADS_SCHEDULER] Gagal mendapatkan owner ID Discord. Persetujuan tidak dapat dikirim.")
         return
+
+    # 4.5 Host gambar ke URL publik (Catbox -> Discord CDN), gak pakai tunnel lagi.
+    # Kalau hosting gagal, image_url tetap None -> posting teks aja (gak gagal total).
+    if local_img_path:
+        from core.image_host import host_image_publicly
+        image_url = await host_image_publicly(local_img_path, client=client, fallback_user_id=owner_id)
+        if image_url:
+            logger.info(f"[THREADS_SCHEDULER] Gambar di-host di: {image_url}")
+        else:
+            logger.warning("[THREADS_SCHEDULER] Hosting gambar gagal, lanjut posting teks aja.")
 
     logger.info(f"[THREADS_SCHEDULER] Mengirim persetujuan posting otomatis ke user: {owner_id}")
     
@@ -450,16 +580,13 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
         post_id = await publish_post_to_threads(final_text, token, image_url=image_url)
         post_url = f"https://www.threads.net/@kudaliar_jepara/post/{post_id}"
         
-        # Jika postingan berhasil dipublikasikan dan ada gambar baru, simpan ke galeri cache
-        if image_url and "/outputs/" in image_url:
+        # Jika postingan berhasil dipublikasikan dan gambarnya baru di-generate, simpan ke galeri cache
+        if image_is_fresh and local_img_path:
             try:
-                img_name = image_url.split("/outputs/")[-1]
-                # Pastikan ini gambar yang baru dibuat (berada langsung di outputs)
-                local_path = Path(__file__).resolve().parent.parent / "outputs" / img_name
-                if local_path.exists() and local_path.is_file():
+                lp = Path(local_img_path)
+                if lp.exists() and lp.is_file():
                     from core.image_cache import add_to_gallery
-                    img_prompt_val = image_prompt if 'image_prompt' in locals() and image_prompt else ""
-                    add_to_gallery(local_path, img_prompt_val, final_text)
+                    add_to_gallery(lp, image_prompt or "", final_text)
             except Exception as cache_err:
                 logger.warning(f"[THREADS_SCHEDULER] Gagal menyimpan gambar ke galeri setelah publish: {cache_err}")
         
