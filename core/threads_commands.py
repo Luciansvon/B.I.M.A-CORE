@@ -39,7 +39,7 @@ class _BoundedContextStore(OrderedDict):
 _draft_contexts = _BoundedContextStore(max_size=200)
 
 # Inisialisasi Threads-specific LLM (menggunakan Claude 3.5 Sonnet untuk hasil paling manusiawi)
-threads_llm = get_langchain_llm(os.environ.get("THREADS_LLM_MODEL", "anthropic/claude-3.5-sonnet"), max_tokens=1000)
+threads_llm = get_langchain_llm(os.environ.get("THREADS_LLM_MODEL", "anthropic/claude-sonnet-4.6"), max_tokens=1000)
 
 BIMA_SYSTEM_PROMPT = """Role: Lu adalah anak muda Gen-Z, tech enthusiast, dan gadget geek umum yang nulis postingan buat Threads. Lu suka ngulik teknologi, game PC/konsol, kopi, musik, dan random thoughts sehari-hari.
 
