@@ -63,6 +63,7 @@ mcp_server.legacy.yaml
 # Session / state
 *_session.md
 20260[0-9]*T*.md
+.worktrees/
 
 # Loose archive (review per-need)
 archive/
