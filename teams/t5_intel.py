@@ -14,6 +14,7 @@ from tools.sherlock_tool import SherlockTool
 from tools.image_search_tool import ImageSearchTool
 from tools.last30days_tool import Last30DaysResearchTool
 from core.threads_commands import ThreadsDraftAndPostTool, ViralAnalysisTool
+from tools.agent_reach_tool import XReachTool, JinaReaderTool
 
 logger = logging.getLogger('bima_core')
 
@@ -528,13 +529,13 @@ intel_agent = Agent(
        JANGAN pakai Serper/SmartSearch untuk request bertipe ini — itu kasih snippet, bukan isi halaman beneran.
 
     2. URL eksplisit + verb 'fetch', 'ambil', 'baca isi', 'extract' (read-only, no interaction)
-       → WebFetchTool (1 URL) atau AsyncMultiFetchTool (banyak URL). Lebih cepat & murah.
+       → WebFetchTool (1 URL), JinaReaderTool (untuk format Markdown artikel/blog/dokumentasi bersih), atau AsyncMultiFetchTool (banyak URL).
 
     3. Selain URL eksplisit, by topic / by name:
        - Harga produk         → SmartSearchTool
        - Opini / review       → RedditScraper
        - Library / kode (search) → GitHubScraper
-       - Tren & berita X      → XScraper
+       - Tren & berita X      → XReachTool
        - Info umum / Google   → SerperDevTool atau SmartSearchTool
        - Lacak Website/Domain → OSINTDeepSearchTool
        - Marketplace scrape   → MarketplaceScraper (HANYA jika user eksplisit minta scraping Tokopedia/Shopee)
@@ -543,7 +544,7 @@ intel_agent = Agent(
 
     Kamu TIDAK PERNAH mengarang data. SELALU pakai tool. Kalau tool gagal, bilang jujur — JANGAN tebak dari training data.""",
     llm=intel_llm,
-    tools=[search_tool, SmartSearchTool(), Last30DaysResearchTool(), MarketplaceScraper(), RedditScraper(), GitHubScraper(), XScraper(), WebFetchTool(), AsyncMultiFetchTool(), OSINTDeepSearchTool(), BrowserUseTool(), SherlockTool(), ImageSearchTool(), ThreadsDraftAndPostTool(), ViralAnalysisTool()],
+    tools=[search_tool, SmartSearchTool(), Last30DaysResearchTool(), MarketplaceScraper(), RedditScraper(), GitHubScraper(), XReachTool(), WebFetchTool(), JinaReaderTool(), AsyncMultiFetchTool(), OSINTDeepSearchTool(), BrowserUseTool(), SherlockTool(), ImageSearchTool(), ThreadsDraftAndPostTool(), ViralAnalysisTool()],
     allow_delegation=True,
     verbose=True
 )

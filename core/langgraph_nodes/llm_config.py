@@ -45,7 +45,7 @@ def compress_context(text: str, target_ratio: float = 0.4) -> str:
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 
-def get_langchain_llm(model_name: str = "deepseek/deepseek-v4-flash") -> ChatOpenAI:
+def get_langchain_llm(model_name: str = "deepseek/deepseek-v4-flash", max_tokens: int | None = None) -> ChatOpenAI:
     # LangChain ChatOpenAI kirim model_name apa adanya ke OpenRouter,
     # JANGAN pakai prefix "openrouter/" (itu khusus CrewAI/LiteLLM).
     if model_name.startswith("openrouter/"):
@@ -58,6 +58,8 @@ def get_langchain_llm(model_name: str = "deepseek/deepseek-v4-flash") -> ChatOpe
         "openai_api_base": "https://openrouter.ai/api/v1",
         "max_retries": 2,
     }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     if os.environ.get("ENABLE_COST_GUARDRAILS", "false").lower() == "true":
         kwargs["extra_body"] = {"usage": {"include": True}}
     return ChatOpenAI(**kwargs)

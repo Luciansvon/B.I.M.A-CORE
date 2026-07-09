@@ -12,6 +12,7 @@ from core.utils import get_waktu, smart_chunks, extract_output_files
 from core.langgraph_engine import run_langgraph_engine
 from core.saham_scheduler import start_saham_scheduler
 from core.saham_commands import handle_saham_command
+from core.arsip_commands import handle_arsip_command
 from core.furniture_qc import handle_qc_command
 from core.cutlist import handle_cutlist_command
 from core.ocr import handle_ocr_command
@@ -377,9 +378,16 @@ async def on_message(message):
         await handle_saham_command(message, args, bot_client=client)
         return
 
+    # === !arsip command pre-route ===
+    if perintah.lower().startswith("!arsip"):
+        args = perintah[6:].strip()
+        await handle_arsip_command(message, args, bot_client=client)
+        return
+
     # === !threads command pre-route ===
-    if perintah.lower().startswith("!threads"):
-        args = perintah[8:].strip()
+    if perintah.lower().startswith("!threads") or perintah.lower().startswith("!thread"):
+        slice_len = 8 if perintah.lower().startswith("!threads") else 7
+        args = perintah[slice_len:].strip()
         from core.threads_commands import handle_threads_command
         await handle_threads_command(message, args, bot_client=client)
         return

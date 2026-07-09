@@ -425,9 +425,13 @@ async def auto_post_threads(client):
         selected_topic, selected_context = await generate_random_interesting_fact_topic()
 
     if not selected_topic:
-        # Fallback atau 40% ke casual safe topics
-        selected_topic = random.choice(BIMA_CASUAL_TOPICS)
+        # Fallback atau 40% ke casual safe topics — filter dulu biar gak ngulang
+        recent_t = _load_recent_topics()
+        available_casual = [t for t in BIMA_CASUAL_TOPICS
+                            if not any(_topics_related(t, r) for r in recent_t)]
+        selected_topic = random.choice(available_casual if available_casual else BIMA_CASUAL_TOPICS)
         selected_context = "Ini adalah topik kehidupan sehari-hari anak muda Gen-Z secara kasual (gadget, game PC, kopi, musik, desk setup)."
+        _record_recent_topic(selected_topic)
         logger.info(f"[THREADS_SCHEDULER] Memilih topik kasual aman: '{selected_topic}'")
 
     # 2. Ambil pola viral yang sudah dipelajari

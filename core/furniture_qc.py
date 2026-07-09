@@ -25,6 +25,8 @@ import openai
 from PIL import Image, ImageDraw, ImageFont
 from openai import OpenAI
 from pydantic import BaseModel, Field, field_validator
+import numpy as np
+import supervision as sv
 
 from config import VISUAL_MODEL_NAME
 
@@ -530,27 +532,47 @@ def _pil_to_png_bytes(img: Image.Image) -> bytes:
 
 
 def _render_markup_per_page(images_b64: list[str], result: QCResult) -> list[bytes]:
-    """Overlay bbox + label per issue ke halaman gambar asli.
+    """Overlay bbox + label per issue ke halaman gambar asli menggunakan Roboflow Supervision.
 
     Return: list PNG bytes per halaman (semua halaman, tanpa atau dengan markup).
     """
     out: list[bytes] = []
-    font_label = _load_font(22)
+
+    # Map severity ke palette color index
+    # critical: red (220, 38, 38), warning: amber (234, 179, 8), info: blue (37, 99, 235)
+    palette = sv.ColorPalette(colors=[
+        sv.Color(220, 38, 38),   # idx 0: critical
+        sv.Color(234, 179, 8),    # idx 1: warning
+        sv.Color(37, 99, 235)     # idx 2: info
+    ])
+
+    box_annotator = sv.BoxAnnotator(color=palette, thickness=5)
+    label_annotator = sv.LabelAnnotator(
+        color=palette,
+        text_color=sv.Color(255, 255, 255),
+        text_scale=0.7,
+        text_thickness=2,
+        border_radius=4
+    )
 
     for page_idx, img_b64 in enumerate(images_b64, start=1):
         img = Image.open(BytesIO(base64.b64decode(img_b64))).convert("RGB")
         W, H = img.size
-        draw = ImageDraw.Draw(img)
 
         page_issues = [
             i for i in result.issues
             if i.page == page_idx and i.bbox and len(i.bbox) == 4
         ]
 
-        for idx, issue in enumerate(page_issues, start=1):
-            color = SEVERITY_COLORS.get(issue.severity, (128, 128, 128))
+        if not page_issues:
+            out.append(_pil_to_png_bytes(img))
+            continue
 
-            # Clamp bbox ke [0,1] lalu konversi ke pixel
+        xyxy_list = []
+        class_ids = []
+        labels = []
+
+        for idx, issue in enumerate(page_issues, start=1):
             x0_n, y0_n, x1_n, y1_n = issue.bbox
             x0 = int(max(0.0, min(1.0, x0_n)) * W)
             y0 = int(max(0.0, min(1.0, y0_n)) * H)
@@ -561,27 +583,25 @@ def _render_markup_per_page(images_b64: list[str], result: QCResult) -> list[byt
             if y0 > y1:
                 y0, y1 = y1, y0
 
-            # Box outline tebal
-            draw.rectangle([x0, y0, x1, y1], outline=color, width=5)
+            xyxy_list.append([x0, y0, x1, y1])
+            
+            sev = str(issue.severity or "info").lower().strip()
+            class_id = 0 if sev == "critical" else (1 if sev == "warning" else 2)
+            class_ids.append(class_id)
 
-            # Label badge di atas box (atau di bawah kalau ga muat)
-            sev_short = {"critical": "CRT", "warning": "WRN", "info": "INF"}.get(issue.severity, "?")
-            label = f"#{idx} {sev_short} · {issue.category}"
+            sev_short = {"critical": "CRT", "warning": "WRN", "info": "INF"}.get(sev, "?")
+            labels.append(f"#{idx} {sev_short} · {issue.category}")
 
-            try:
-                tb = draw.textbbox((0, 0), label, font=font_label)
-                tw = tb[2] - tb[0] + 14
-                th = tb[3] - tb[1] + 8
-            except Exception:
-                tw, th = len(label) * 11 + 14, 28
+        if xyxy_list:
+            detections = sv.Detections(
+                xyxy=np.array(xyxy_list, dtype=np.float32),
+                class_id=np.array(class_ids, dtype=np.int32)
+            )
 
-            ly = y0 - th - 4 if y0 - th - 4 >= 0 else y1 + 4
-            lx = x0
-            if lx + tw > W:
-                lx = max(0, W - tw)
-
-            draw.rectangle([lx, ly, lx + tw, ly + th], fill=color)
-            draw.text((lx + 7, ly + 4), label, font=font_label, fill=(255, 255, 255))
+            scene = np.array(img)
+            scene = box_annotator.annotate(scene=scene, detections=detections)
+            scene = label_annotator.annotate(scene=scene, detections=detections, labels=labels)
+            img = Image.fromarray(scene)
 
         out.append(_pil_to_png_bytes(img))
 

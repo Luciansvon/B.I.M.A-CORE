@@ -117,7 +117,7 @@ async def intel_node(state: BimaState) -> dict:
     realtime_context = state.get("realtime_context", "")
 
     # === Jalur Pembuatan/Draft/Posting/Balas/Analisa Threads ===
-    is_threads_post_req = any(kw in user_request.lower() for kw in ["threads", "postingan", "buat postingan", "post ke", "posting tentang", "balas komentar", "bales komentar", "reply comment", "analisa viral", "belajar viral", "analisis viral"])
+    is_threads_post_req = any(kw in user_request.lower() for kw in ["threads", "thread", "postingan", "buat postingan", "post ke", "posting tentang", "balas komentar", "bales komentar", "reply comment", "analisa viral", "belajar viral", "analisis viral"])
     if is_threads_post_req:
         await notify_progress(state, "🚀 *Tim Intel sedang merencanakan tindakan Threads...*")
         from teams.t5_intel import intel_agent

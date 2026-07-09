@@ -27,8 +27,11 @@ def _get_reranker():
     if _reranker is None:
         from sentence_transformers import CrossEncoder
         # Force CPU — reranker cuma dipake buat RAG search, gak butuh GPU.
-        # Free ~1GB VRAM buat F5-TTS yang lebih VRAM-hungry di RTX 3050 4GB.
-        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", device="cpu")
+        # Free VRAM buat F5-TTS + embedder Qwen3 di RTX 3050 4GB.
+        # Model: bge-reranker-v2-m3 (multilingual) — benchmark RAG Indonesia recall@1 40%->100% vs ms-marco (English).
+        # RERANKER_MODEL env override ke path lokal (default HF id untuk portabilitas).
+        model = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+        _reranker = CrossEncoder(model, device="cpu")
     return _reranker
 
 
@@ -408,6 +411,167 @@ class VaultIndexTool(BaseTool):
         index_vault()
         return "Vault berhasil diindex ulang!"
 
+def backup_file(filepath: Path) -> None:
+    try:
+        backup_dir = Path(__file__).parent.parent / "outputs" / "backup"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"{filepath.stem}_{timestamp}{filepath.suffix}"
+        backup_path = backup_dir / backup_name
+        import shutil
+        shutil.copy2(filepath, backup_path)
+        logger.info(f"[LINKER] Backup dibuat untuk {filepath.name} -> {backup_name}")
+    except Exception as e:
+        logger.error(f"[LINKER] Gagal membuat backup file {filepath}: {e}")
+
+class VaultLinkerTool(BaseTool):
+    name: str = "Vault Linker Tool"
+    description: str = """Merapikan semua catatan di vault Obsidian Bima,
+    menyisipkan internal wiki links [[Catatan]] antar catatan secara semantik,
+    dan membersihkan spasi/baris kosong berlebih.
+    Input: kosong atau deskripsi tindakan (tidak digunakan)."""
+
+    def _run(self, query: str = "") -> str:
+        vault_dir = Path(OBSIDIAN_PATH).resolve()
+        if not vault_dir.exists():
+            return f"FAILED|Folder vault tidak ditemukan: {vault_dir}"
+
+        md_files = list(vault_dir.rglob("*.md"))
+        if not md_files:
+            return "SKIPPED|Tidak ada file markdown di vault untuk diproses."
+
+        # Build maps
+        title_map = {}
+        path_map = {}
+        for f in md_files:
+            orig_title = f.stem
+            if len(orig_title) < 3:
+                continue
+            title_map[orig_title.lower()] = orig_title
+            clean_title_space = orig_title.lower().replace("_", " ").strip()
+            if len(clean_title_space) >= 3:
+                title_map[clean_title_space] = orig_title
+            path_map[orig_title] = str(f)
+
+        modified_count = 0
+        total_links_added = 0
+
+        # Pattern to split ignored blocks
+        split_pattern = re.compile(
+            r'(```[\s\S]*?```|`[^`\n]*?`|\[\[[\s\S]*?\]\]|\[[\s\S]*?\]\([\s\S]*?\)|<!--[\s\S]*?-->)',
+            re.MULTILINE
+        )
+
+        for filepath in md_files:
+            try:
+                orig_content = filepath.read_text(encoding="utf-8", errors="ignore")
+                content = orig_content
+                
+                # Normalize newlines
+                content = content.replace("\r\n", "\n")
+
+                # Parse existing links
+                linked_in_note = set()
+                existing_links = re.findall(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]', content)
+                for link in existing_links:
+                    clean_link = link.strip().lower().replace("_", " ")
+                    if clean_link in title_map:
+                        linked_in_note.add(title_map[clean_link])
+                    elif link.strip() in path_map:
+                        linked_in_note.add(link.strip())
+
+                # Sort and filter keywords for this note
+                current_title = filepath.stem
+                current_titles = {current_title.lower(), current_title.lower().replace("_", " ").strip()}
+                keywords_sorted = sorted([k for k in title_map.keys() if k not in current_titles], key=len, reverse=True)
+                keywords_filtered = [k for k in keywords_sorted if len(k) >= 3]
+
+                inline_links_added = 0
+                if keywords_filtered:
+                    pattern_str = r'\b(' + '|'.join(re.escape(k) for k in keywords_filtered) + r')\b'
+                    kw_regex = re.compile(pattern_str, re.IGNORECASE)
+
+                    def replace_func(match):
+                        nonlocal inline_links_added
+                        matched_text = match.group(0)
+                        clean_match = matched_text.lower().strip()
+                        target_title = title_map[clean_match]
+                        
+                        if target_title in linked_in_note:
+                            return matched_text
+                        
+                        linked_in_note.add(target_title)
+                        inline_links_added += 1
+                        if matched_text == target_title:
+                            return f"[[{target_title}]]"
+                        else:
+                            return f"[[{target_title}|{matched_text}]]"
+
+                    chunks = split_pattern.split(content)
+                    modified_chunks = False
+                    for i in range(0, len(chunks), 2):
+                        chunk = chunks[i]
+                        new_chunk, count = kw_regex.subn(replace_func, chunk)
+                        if count > 0:
+                            chunks[i] = new_chunk
+                            modified_chunks = True
+                    
+                    if modified_chunks:
+                        content = "".join(chunks)
+
+                # Clean up old Catatan Terkait section if present
+                content = re.sub(r'\n*(?:###?|##)\s+Catatan\s+Terkait[\s\S]*$', '', content).strip()
+
+                # Get semantic related notes (vector search)
+                related_notes = []
+                try:
+                    tbl = db.open_table("vault")
+                    query_vec = embedder.encode(content[:1000]).tolist()
+                    df = tbl.search(query_vec).limit(8).to_pandas()
+                    
+                    seen_paths = {str(filepath.resolve())}
+                    for _, row in df.iterrows():
+                        p = str(Path(row['path']).resolve())
+                        fname = row['filename']
+                        t = Path(fname).stem
+                        if p not in seen_paths and t not in linked_in_note:
+                            seen_paths.add(p)
+                            related_notes.append(t)
+                            if len(related_notes) >= 3:
+                                break
+                except Exception as ex:
+                    logger.debug(f"[LINKER] Skip semantic search for {filepath.name}: {ex}")
+
+                # Append related notes section if we have any
+                if related_notes:
+                    content += "\n\n### Catatan Terkait\n"
+                    for t in related_notes:
+                        content += f"- [[{t}]]\n"
+                        inline_links_added += 1
+
+                # Organizer Formatting: Collapse blank lines & clean lines
+                lines = [line.rstrip() for line in content.split("\n")]
+                content = "\n".join(lines)
+                content = re.sub(r'\n{3,}', '\n\n', content).strip() + "\n"
+
+                # If content changed, save it
+                if content != orig_content:
+                    backup_file(filepath)
+                    filepath.write_text(content, encoding="utf-8")
+                    modified_count += 1
+                    total_links_added += inline_links_added
+            except Exception as e:
+                logger.error(f"[LINKER] Gagal memproses file {filepath.name}: {e}")
+
+        # Re-index vault
+        if modified_count > 0:
+            try:
+                index_vault()
+            except Exception as ex:
+                logger.warning(f"[LINKER] Re-index gagal pasca link: {ex}")
+
+        return f"SUCCESS|Vault Linker selesai. Memproses {len(md_files)} file, mengubah {modified_count} file, dan menyisipkan {total_links_added} links."
+
 def _index_vault_safe():
     try:
         index_vault()
@@ -420,24 +584,26 @@ threading.Thread(target=_index_vault_safe, daemon=True, name="arsip-index-startu
 
 arsip_agent = Agent(
     role='Chief Archivist & Memory Keeper',
-    goal='Menyimpan dan mencari catatan di vault Obsidian Bima.',
+    goal='Menyimpan, merapikan, dan mencari catatan di vault Obsidian Bima.',
     backstory="""Kamu adalah Mandor Database B.I.M.A Core.
 
     TUGAS UTAMA:
     1. SIMPAN data baru ke vault pakai VaultSaveTool
     2. CARI catatan lama pakai VaultSearchTool
     3. RE-INDEX vault pakai VaultIndexTool kalau perlu
+    4. HUBUNGKAN & RAPIKAN catatan pakai VaultLinkerTool
 
     ATURAN WAJIB:
     - Kalau task description mengandung blok "DATA DARI TIM SEBELUMNYA" → kamu DILARANG panggil VaultSearchTool. Datanya sudah ada, langsung pakai VaultSaveTool.
     - Kalau diminta "simpan", "arsipkan", "catat" → LANGSUNG panggil VaultSaveTool.
     - Format input VaultSaveTool HARUS JSON: {"title": "...", "content": "..."}
     - VaultSearchTool hanya dipakai kalau Bima eksplisit minta CARI di vault dan tidak ada data dari tim sebelumnya.
+    - Hubungkan catatan menggunakan VaultLinkerTool jika Bima minta merapikan atau menyambungkan wiki link.
     - Jangan bilang "tidak bisa" — kamu PUNYA tool simpan!
 
     Kamu hafal semua catatan Bima dan selalu siap menyimpan yang baru.""",
     llm=arsip_llm,
-    tools=[VaultSearchTool(), VaultIndexTool(), VaultSaveTool()],
+    tools=[VaultSearchTool(), VaultIndexTool(), VaultSaveTool(), VaultLinkerTool()],
     allow_delegation=True,
     verbose=True
 )

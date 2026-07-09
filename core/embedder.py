@@ -41,9 +41,9 @@ DEFAULT_CACHE_TTL_DAYS = 30
 # Per-domain model + dim untuk LanceDB schema.
 _DOMAIN_CONFIG: dict[str, dict] = {
     "arsip": {
-        "local_model": "all-MiniLM-L6-v2",
+        "local_model": "Qwen/Qwen3-Embedding-0.6B",  # multilingual; benchmark dedup ID: 38%->96% vs all-MiniLM
         "cloud_model": "baai/bge-m3",
-        "local_dim": 384,
+        "local_dim": 1024,
         "cloud_dim": 1024,
     },
     "code": {

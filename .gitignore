@@ -76,3 +76,7 @@ tools/_marketplace_login.py
 
 # F5-TTS HuggingFace model cache (~1.3GB, re-downloaded on first use)
 assets/f5_tts_cache/
+
+# Vendored local tool clones (pip-installed into bima_env; source not tracked here)
+# agent-reach = clone dari github.com/Panniantong/agent-reach, di-build lokal (lihat docs/error_solutions.md Log 11)
+agent-reach/
