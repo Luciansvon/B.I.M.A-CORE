@@ -17,7 +17,9 @@ outputs/
 *.Zone.Identifier
 *:Zone.Identifier
 *.pyc
-memory/
+memory/*
+!memory/__init__.py
+!memory/memory_engine.py
 search_index/
 repo_index/
 vault_index/

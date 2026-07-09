@@ -254,8 +254,9 @@ Dokumen ini mencatat kesalahan (error/oversight) yang ditemui selama pengembanga
   3. Tambahkan `agent-reach` ke `pytest.ini:norecursedirs` karena direktori itu clone lokal yang di-ignore Git dan memiliki suite/dependency sendiri.
   4. Sertakan `scrapling[fetchers]` karena `tests/test_last30days.py` mengimpor `Fetcher` dan `StealthyFetcher` dari `teams/t5_intel.py`. Package dasar saja gagal collection karena `curl_cffi` dan dependency fetcher lain tidak tersedia; browser binary tidak perlu diunduh atau dijalankan.
   5. Tambahkan `rectpack` ke `requirements.txt` dan `requirements-ci.txt`. Test cutlist hanya hijau di environment lama karena package ini pernah terpasang manual tetapi tidak dideklarasikan.
-  6. Gunakan Python 3.12, pip cache, concurrency cancellation, dan timeout job 20 menit.
-  7. Verifikasi dependency subset di virtual environment `/tmp` yang bersih sebelum commit.
+  6. Jangan ignore seluruh folder `memory/`: lacak `memory/__init__.py` dan `memory/memory_engine.py`, tetapi tetap ignore database/WAL/data lain dengan pola `memory/*` plus negation untuk dua source file. Fresh checkout sebelumnya gagal import `memory.memory_engine`.
+  7. Gunakan Python 3.12, pip cache, concurrency cancellation, dan timeout job 20 menit.
+  8. Verifikasi dependency subset di virtual environment `/tmp` yang bersih sebelum commit.
 
 ---
 
