@@ -219,3 +219,56 @@ Dokumen ini mencatat kesalahan (error/oversight) yang ditemui selama pengembanga
   2. **Jalankan uninterrupted, JANGAN di-kill.** `snapshot_download` TIDAK resume bersih setelah proses di-kill — partial `.incomplete` malah di-reset ke ~15 MB tiap restart. Attempt yang dibiarkan utuh justru paling jauh (0→100% bursty). Watchdog/timeout-kill = kontraproduktif.
   3. `hf_transfer` (parallel chunks) MALAH lebih buruk di koneksi flaky ini (stall dini). Pakai plain single-stream (`HF_HUB_ENABLE_HF_TRANSFER=0`, `max_workers=1`).
   4. Monitor via ukuran folder `blobs/` per menit; sabar — bursty 15→149→561→896→100% dengan hang transient di antaranya adalah normal, bukan gagal.
+
+---
+
+## Log 15: `XReachTool` Bisa Hang dan Meneruskan Konten X Mentah ke LLM
+
+* **Tanggal**: 9 Juli 2026
+* **Jenis**: Reliability / Untrusted Input Handling
+* **Deskripsi Masalah**:
+  1. Pemanggilan `subprocess.run()` untuk CLI `twitter` tidak memiliki timeout. CLI yang macet dapat menahan worker tanpa batas.
+  2. Teks, nama, URL, mention, dan control character dari X diteruskan langsung ke context LLM tanpa boundary konten eksternal.
+  3. Output hasil pencarian tidak memiliki batas global sehingga metadata abnormal dapat memenuhi context window.
+* **Dampak**:
+  Tool intel dapat berhenti merespons, fallback RapidAPI tidak pernah berjalan, dan konten eksternal dapat mengotori atau mencoba mengarahkan prompt agent.
+* **Solusi / Tindakan Pencegahan**:
+  1. Tambahkan `timeout=20` pada `subprocess.run()`. `TimeoutExpired` masuk ke jalur fallback yang sudah ada.
+  2. Normalisasi whitespace/control character, ganti URL dan mention dengan placeholder, batasi panjang field, dan bungkus teks dengan marker `[UNTRUSTED_TWEET]`.
+  3. Batasi hasil akhir maksimal 4.000 karakter.
+  4. Tambahkan regression test untuk timeout, sanitasi, marker untrusted, dan output cap di `tests/test_agent_reach.py`.
+
+---
+
+## Log 16: Test Lokal Tidak Memiliki Gate GitHub Actions
+
+* **Tanggal**: 9 Juli 2026
+* **Jenis**: CI / Dependency Isolation
+* **Deskripsi Masalah**:
+  Repo memiliki test pytest tetapi tidak memiliki workflow `.github/workflows/`. Memasang seluruh `requirements.txt` di runner juga menarik dependency ML besar yang tidak dipakai test.
+* **Dampak**:
+  Perubahan dapat di-push tanpa bukti test otomatis, sedangkan CI yang memakai dependency produksi penuh akan lambat dan boros storage.
+* **Solusi / Tindakan Pencegahan**:
+  1. Tambahkan `.github/workflows/ci.yml` untuk menjalankan pytest pada push dan pull request dengan permission `contents: read`.
+  2. Pisahkan dependency menjadi `requirements-ci.txt` untuk runtime subset test dan `requirements-dev.txt` untuk pytest, pytest-asyncio, Ruff, Bandit, dan pip-audit.
+  3. Tambahkan `agent-reach` ke `pytest.ini:norecursedirs` karena direktori itu clone lokal yang di-ignore Git dan memiliki suite/dependency sendiri.
+  4. Sertakan `scrapling[fetchers]` karena `tests/test_last30days.py` mengimpor `Fetcher` dan `StealthyFetcher` dari `teams/t5_intel.py`. Package dasar saja gagal collection karena `curl_cffi` dan dependency fetcher lain tidak tersedia; browser binary tidak perlu diunduh atau dijalankan.
+  5. Tambahkan `rectpack` ke `requirements.txt` dan `requirements-ci.txt`. Test cutlist hanya hijau di environment lama karena package ini pernah terpasang manual tetapi tidak dideklarasikan.
+  6. Gunakan Python 3.12, pip cache, concurrency cancellation, dan timeout job 20 menit.
+  7. Verifikasi dependency subset di virtual environment `/tmp` yang bersih sebelum commit.
+
+---
+
+## Log 17: PowerShell Memakan Sintaks Bash saat Menjalankan Perintah WSL
+
+* **Tanggal**: 9 Juli 2026
+* **Jenis**: Environment / Shell Quoting
+* **Deskripsi Masalah**:
+  Command verifikasi yang dikirim dari PowerShell ke `wsl.exe -e bash -lc` memakai `$(mktemp ...)` dan nested quote pada `python -c`. PowerShell memproses command substitution/quote tersebut lebih dulu, sehingga `mktemp` dicari sebagai cmdlet Windows dan kode Python rusak sebelum mencapai WSL.
+* **Dampak**:
+  Pembuatan clean virtual environment dan syntax check gagal walaupun Bash, Python, dan source code tidak bermasalah.
+* **Solusi / Tindakan Pencegahan**:
+  1. Hindari `$()`, backtick, dan nested `python -c` pada string yang melewati PowerShell lalu Bash.
+  2. Gunakan path `/tmp` eksplisit yang sudah diverifikasi untuk proses sementara.
+  3. Untuk perintah sederhana, gunakan `wsl.exe --cd /path executable arg...` agar hanya satu shell yang melakukan parsing.
+  4. Gunakan `python -m py_compile file.py` untuk syntax check tanpa nested source string.

@@ -1,0 +1,44 @@
+# Subset of requirements.txt for CI (GitHub Actions).
+# Excludes heavy/torch-pulling deps NOT needed by the test suite
+# (sentence-transformers, lancedb, easyocr, faster-whisper, f5-tts, browser-use,
+#  edge-tts, yfinance/pandas-ta, sherlock, yt-dlp, PyNaCl, davey, fal-client).
+# Scrapling fetcher imports are required by tests/test_last30days.py; browser
+# binaries are not downloaded or launched by the test suite.
+crewai
+crewai-tools
+langgraph
+langgraph-checkpoint-sqlite>=3.1.0
+langchain-core
+langchain-openai
+discord.py
+python-dotenv
+httpx
+scrapling[fetchers]
+fastapi
+uvicorn[standard]
+fpdf2
+python-docx
+python-pptx
+pdfplumber
+openpyxl
+pandas
+apscheduler
+matplotlib
+mcpadapt
+openai>=1.12.0
+numpy<2.3
+uvloop
+loguru
+sentry-sdk[fastapi]
+apprise
+diskcache
+rank-bm25
+rectpack
+stamina
+msgspec
+outlines
+psutil
+pymupdf4llm
+supervision>=0.19.0
+pillow
+headroom>=0.2.0

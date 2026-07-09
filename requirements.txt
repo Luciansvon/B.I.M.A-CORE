@@ -35,6 +35,7 @@ sentry-sdk[fastapi]
 apprise
 diskcache
 rank-bm25
+rectpack
 stamina
 msgspec
 outlines
