@@ -29,65 +29,40 @@ import json
 import re
 
 async def _craft_image_prompt(user_request: str, has_ref: bool = False) -> str:
-    """Expand prompt singkat user jadi prompt detail buat image model.
-    Skip kalau user_request udah panjang (>120 char) atau kosong.
+    """Expand request user jadi prompt naratif ala photographer brief.
+
+    Satu LLM call: expander sekalian klasifikasi kategori (CASUAL|CLEAN) buat
+    keputusan style_prefix — gak ada classifier kedua. Request panjang tetep
+    di-craft (dirapikan jadi bahasa foto), bukan di-skip.
     has_ref=True kalau ada gambar referensi (img2img) — system prompt disesuaikan."""
+    from core.langgraph_nodes.image_prompt import (
+        build_system_prompt,
+        parse_crafted,
+        scrub_slop,
+    )
+
     base = (user_request or "").strip()
-    if not base or len(base) > 120:
+    if not base:
         return base
     style_prefix = os.environ.get("IMAGE_GEN_STYLE_PREFIX", "").strip()
-    
-    if has_ref:
-        sys = (
-            "Kamu prompt-engineer untuk image-to-image model. User kasih gambar referensi + request.\n"
-            "Tugas utama: Klasifikasikan kategori permintaan:\n"
-            "- Kategori Kasual Keseharian (makanan, kopi, jalanan, suasana rumah): Rancang prompt detail "
-            "berupa FOTO ASLI dengan kamera HP amatir (imperfect smartphone snapshot, natural lighting, casual shadows).\n"
-            "- Kategori Tech/Profesional/Modern (gadget, setup meja rapi, UI/UX, hardware PC, produk premium): Rancang "
-            "prompt detail berupa FOTO BERSIH/HIGH-RES (clean studio product photography, neat modern lighting, sharp focus).\n"
-            "Ekspand request jadi prompt detail dalam Bahasa Inggris yang FOKUS PADA PERUBAHAN dari gambar referensi.\n"
-            "Output HANYA prompt akhir, satu baris, max 60 kata, no preamble, no quotes."
-        )
-    else:
-        sys = (
-            "Kamu prompt-engineer untuk text-to-image model. Tugas utama: Klasifikasikan kategori permintaan:\n"
-            "- Kategori Kasual Keseharian (makanan, kopi, jalanan, suasana kamar): Rancang prompt detail "
-            "berupa FOTO ASLI dengan kamera HP amatir (realistic amateur mobile photo snapshot, shot on 2018 phone, natural uneven lighting, minor imperfections, realistic textures).\n"
-            "- Kategori Tech/Profesional/Modern (gadget, setup meja minimalis rapi, UI, hardware, grafik minimalis): Rancang "
-            "prompt detail berupa FOTO BERSIH/HIGH-RES (clean professional product photography, neat studio lighting, soft shadows, sharp details, modern minimalist background).\n"
-            "Hindari kata '3D render', 'CGI', 'hyperrealistic', 'unreal engine'.\n"
-            "Output HANYA prompt akhir, satu baris, max 60 kata, no preamble, no quotes."
-        )
-        
+
     try:
         resp = await asyncio.to_thread(
             seniman_llm.invoke,
-            [SystemMessage(content=sys), HumanMessage(content=base)],
+            [
+                SystemMessage(content=build_system_prompt(has_ref)),
+                HumanMessage(content=base),
+            ],
         )
-        crafted = (resp.content or "").strip().strip('"').strip("'")
+        is_casual, crafted = parse_crafted(resp.content or "")
+        crafted = scrub_slop(crafted)
         if not crafted:
             return base
-            
-        # Panggil LLM cepat untuk menilai apakah ini kategori Kasual (untuk apply style_prefix jika ada)
-        is_casual = True
-        try:
-            classify_sys = (
-                "Apakah prompt gambar berikut bergenre kasual keseharian/jalanan/makanan/kamar berantakan? "
-                "Jawab HANYA 'YES' jika ya, atau 'NO' jika bertema teknologi bersih/modern/professional/setup rapi/saham.\n"
-                "Output HANYA YES atau NO."
-            )
-            classify_resp = await asyncio.to_thread(
-                seniman_llm.invoke,
-                [SystemMessage(content=classify_sys), HumanMessage(content=crafted)],
-            )
-            is_casual = "YES" in classify_resp.content.strip().upper()
-        except Exception:
-            pass
 
         if is_casual and style_prefix and style_prefix.lower() not in crafted.lower():
             crafted = f"{style_prefix}, {crafted}"
-            
-        logger.info(f"[IMAGE_GEN] Prompt expanded ({'CASUAL' if is_casual else 'TECH/HIGH-RES'}): '{base[:40]}...' → '{crafted[:60]}...'")
+
+        logger.info(f"[IMAGE_GEN] Prompt expanded ({'CASUAL' if is_casual else 'CLEAN'}): '{base[:40]}...' → '{crafted[:60]}...'")
         return crafted
     except Exception as e:
         logger.warning(f"[IMAGE_GEN] Prompt expander gagal, pakai raw: {e}")
