@@ -58,6 +58,19 @@ module.exports = {
       max_memory_restart: "1G",
       restart_delay: 5000,
       exp_backoff_restart_delay: 2000,
+    },
+    {
+      name: "anisa-status",
+      script: "scripts/status_collector.py",
+      interpreter: "/home/bima_lucian/BIMA_CORE/bima_env/bin/python3",
+      cwd: "/home/bima_lucian/BIMA_CORE",
+      watch: false,
+      autorestart: true,
+      restart_delay: 5000,
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      error_file: "./logs/status-error.log",
+      out_file: "./logs/status-output.log",
+      merge_logs: true,
     }
   ]
 };

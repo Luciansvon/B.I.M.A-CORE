@@ -64,6 +64,8 @@ mcp_server.legacy.yaml
 *_session.md
 20260[0-9]*T*.md
 .worktrees/
+runtime/anisa_status.json
+runtime/*.tmp
 
 # Loose archive (review per-need)
 archive/
