@@ -214,6 +214,12 @@ async def on_ready():
     except Exception as e:
         logger.error(f'Gagal start observability scheduler: {e}', exc_info=True)
 
+    try:
+        from core.mekanik_maintenance_scheduler import start_mekanik_maintenance_scheduler
+        start_mekanik_maintenance_scheduler(client)
+    except Exception as e:
+        logger.error(f'Gagal start Mekanik maintenance scheduler: {e}', exc_info=True)
+
     def _warmup_reranker():
         try:
             from teams.t3_arsip import _get_reranker
