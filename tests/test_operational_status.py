@@ -79,3 +79,29 @@ def test_status_collector_supports_one_shot_cli():
 
     assert result.returncode == 0, result.stderr
     assert (project_root / "runtime" / "anisa_status.json").is_file()
+
+
+def test_agentmemory_outage_marks_snapshot_degraded(tmp_path):
+    for index_name in ("search_index", "repo_index", "vault_index"):
+        (tmp_path / index_name).mkdir()
+
+    snapshot = collect_snapshot(
+        project_root=tmp_path,
+        pm2_reader=lambda: {
+            "anisa-v3": {"status": "online"},
+            "bima-whatsapp": {"status": "online"},
+            "bima-tunnel": {"status": "online"},
+            "agentmemory": {"status": "stopped"},
+        },
+        metrics_reader=lambda: {
+            "cpu_percent": 10.0,
+            "ram_percent": 20.0,
+            "disk_percent": 30.0,
+        },
+        health_reader=lambda: "reachable",
+        git_reader=lambda: {"commit": "abc1234", "dirty": False},
+        error_reader=lambda: None,
+    )
+
+    assert snapshot["services"]["agentmemory"]["status"] == "stopped"
+    assert snapshot["overall"] == "degraded"

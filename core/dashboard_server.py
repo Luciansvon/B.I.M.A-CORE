@@ -26,17 +26,25 @@ logger = logging.getLogger('bima_core')
 # ============================================================
 # AUTH — Bearer token untuk proteksi endpoint sensitif
 # ============================================================
+def _token_status_message(*, configured: bool) -> str:
+    """Return dashboard auth status without exposing token material."""
+    if configured:
+        return "[DASHBOARD] API token loaded from environment"
+    return "[DASHBOARD] temporary token generated; set DASHBOARD_API_TOKEN for stable access"
+
+
 _API_TOKEN = os.environ.get("DASHBOARD_API_TOKEN", "").strip()
-if not _API_TOKEN:
+_TOKEN_CONFIGURED = bool(_API_TOKEN)
+if not _TOKEN_CONFIGURED:
     _API_TOKEN = secrets.token_urlsafe(32)
     logger.warning(
         f"[DASHBOARD] ⚠️  DASHBOARD_API_TOKEN tidak di-set di .env! "
         f"Auto-generated token (akan berubah setiap restart):\n"
-        f"  Bearer {_API_TOKEN}\n"
+        "  Temporary token is not written to logs.\n"
         f"  Set DASHBOARD_API_TOKEN di .env supaya token permanen."
     )
 else:
-    logger.info(f"[DASHBOARD] ✅ API token loaded ({_API_TOKEN[:8]}...)")
+    logger.info(_token_status_message(configured=True))
 
 _security = HTTPBearer(auto_error=False)
 

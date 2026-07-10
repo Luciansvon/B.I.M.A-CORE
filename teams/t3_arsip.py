@@ -17,7 +17,19 @@ logger = logging.getLogger('bima_core')
 # Cloud (bge-m3) dim=1024, local (all-MiniLM-L6-v2) dim=384 — kalau ganti backend,
 # WAJIB drop & re-index folder vault_index/ supaya schema cocok.
 embedder = get_embedder("arsip")
-db = lancedb.connect(os.path.join(os.path.dirname(__file__), "../vault_index"))
+_db = None
+_db_lock = threading.Lock()
+
+
+def _get_db():
+    """Open LanceDB on first use, after MCP subprocess startup has completed."""
+    global _db
+    if _db is None:
+        with _db_lock:
+            if _db is None:
+                path = os.path.join(os.path.dirname(__file__), "../vault_index")
+                _db = lancedb.connect(path)
+    return _db
 
 _reranker = None
 
@@ -81,7 +93,7 @@ _NEW_SCHEMA_COLS = ("chunk_id", "heading", "mtime")
 
 def _table_exists() -> bool:
     try:
-        db.open_table("vault")
+        _get_db().open_table("vault")
         return True
     except Exception:
         return False
@@ -91,7 +103,7 @@ def _table_uses_new_schema() -> bool:
     if not _table_exists():
         return False
     try:
-        df = db.open_table("vault").to_pandas()
+        df = _get_db().open_table("vault").to_pandas()
         return all(c in df.columns for c in _NEW_SCHEMA_COLS)
     except Exception:
         return False
@@ -100,7 +112,7 @@ def _table_uses_new_schema() -> bool:
 def _drop_legacy_table_if_needed():
     if _table_exists() and not _table_uses_new_schema():
         try:
-            db.drop_table("vault")
+            _get_db().drop_table("vault")
             print("[ARSIP] Drop tabel skema lama (pre-chunking). Akan rebuild full.")
         except Exception as e:
             logger.warning(f"[ARSIP] Gagal drop tabel skema lama: {e}")
@@ -110,7 +122,7 @@ def _read_existing_mtime() -> dict:
     if not _table_uses_new_schema():
         return {}
     try:
-        df = db.open_table("vault").to_pandas()
+        df = _get_db().open_table("vault").to_pandas()
         return df.groupby('path')['mtime'].max().to_dict()
     except Exception as e:
         logger.warning(f"[ARSIP] Gagal baca index existing: {e}")
@@ -119,7 +131,7 @@ def _read_existing_mtime() -> dict:
 
 def _ensure_fts_index():
     try:
-        tbl = db.open_table("vault")
+        tbl = _get_db().open_table("vault")
         tbl.create_fts_index("content", replace=True)
     except Exception as e:
         logger.warning(f"[ARSIP] FTS index ga tersedia (LanceDB versi lama?): {e}. Search akan dense-only.")
@@ -174,7 +186,7 @@ def index_vault():
             print("[ARSIP] Vault kosong, belum ada catatan untuk diindex.")
             return
         try:
-            db.create_table("vault", data=new_docs, mode='overwrite')
+            _get_db().create_table("vault", data=new_docs, mode='overwrite')
             _ensure_fts_index()
             print(f"[ARSIP] {len(new_docs)} chunk dari {n_new} catatan berhasil diindex (full).")
             _rebuild_bm25_index()
@@ -183,7 +195,7 @@ def index_vault():
         return
 
     try:
-        tbl = db.open_table("vault")
+        tbl = _get_db().open_table("vault")
         for p in paths_to_refresh:
             safe_p = p.replace("'", "''")
             try:
@@ -202,7 +214,7 @@ def index_vault():
 
 def _rebuild_bm25_index():
     try:
-        tbl = db.open_table("vault")
+        tbl = _get_db().open_table("vault")
         df = tbl.to_pandas()
         if not df.empty:
             items = []
@@ -232,7 +244,7 @@ def _rrf_fuse(rankings: list[list[str]], k: int = 60) -> dict:
 
 def search_vault(query: str, top_k: int = 3) -> str:
     try:
-        tbl = db.open_table("vault")
+        tbl = _get_db().open_table("vault")
     except Exception as e:
         logger.warning(f"[ARSIP] Tabel vault belum ada / tidak bisa dibuka: {e}")
         return "Vault belum diindex. Tidak ada catatan ditemukan."
@@ -525,7 +537,7 @@ class VaultLinkerTool(BaseTool):
                 # Get semantic related notes (vector search)
                 related_notes = []
                 try:
-                    tbl = db.open_table("vault")
+                    tbl = _get_db().open_table("vault")
                     query_vec = embedder.encode(content[:1000]).tolist()
                     df = tbl.search(query_vec).limit(8).to_pandas()
                     

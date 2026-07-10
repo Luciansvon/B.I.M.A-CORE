@@ -5,6 +5,7 @@ Pakai:
     text = transcribe_audio("/path/to/voice_note.ogg", language="id")
 
 Env override:
+    ENABLE_STT        — true untuk mengaktifkan STT (default: false)
     STT_MODEL_SIZE     — tiny|base|small|medium|large-v3 (default: small)
     STT_COMPUTE_TYPE   — int8|int8_float16|float16|float32 (default: int8 buat CPU efficiency)
     STT_DEVICE         — cpu|cuda (default: cpu)
@@ -49,6 +50,10 @@ def transcribe_audio(filepath: str, language: str = "id") -> str:
     language: ISO 639-1 code. Default "id" (Indonesia). Pakai "en" buat English,
     atau None buat auto-detect.
     """
+    if os.environ.get("ENABLE_STT", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+        logger.info("[STT] Disabled (set ENABLE_STT=true to enable)")
+        return ""
+
     path = Path(filepath)
     if not path.exists():
         logger.warning(f"[STT] File gak ada: {filepath}")

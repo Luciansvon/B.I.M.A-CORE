@@ -13,7 +13,7 @@ from urllib.request import urlopen
 
 SCHEMA_VERSION = 1
 SNAPSHOT_MAX_AGE_SECONDS = 90
-REQUIRED_SERVICES = ("anisa-v3", "bima-whatsapp", "bima-tunnel")
+REQUIRED_SERVICES = ("anisa-v3", "bima-whatsapp", "bima-tunnel", "agentmemory")
 STATUS_PRIORITY = {"healthy": 0, "degraded": 1, "down": 2}
 
 ServiceReader = Callable[[], dict[str, dict[str, Any]]]

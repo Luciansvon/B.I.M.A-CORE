@@ -1,0 +1,21 @@
+[project]
+name = "bima-voice-worker"
+version = "1.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "f5-tts==1.1.21",
+  "torch==2.13.0",
+  "torchaudio==2.11.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+
+[tool.uv]
+package = false

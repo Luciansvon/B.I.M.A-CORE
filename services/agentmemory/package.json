@@ -1,0 +1,11 @@
+{
+  "name": "bima-agentmemory-service",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "start": "agentmemory"
+  },
+  "dependencies": {
+    "@agentmemory/agentmemory": "0.9.27"
+  }
+}

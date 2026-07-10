@@ -28,6 +28,14 @@ _EXTRA_PATH_DIRS = [
 ]
 
 
+def _filter_tools_by_name(tools: list, allowed_names: list[str] | None) -> list:
+    """Return only explicitly allowed MCP tools; None preserves all tools."""
+    if allowed_names is None:
+        return list(tools)
+    allowed = set(allowed_names)
+    return [tool for tool in tools if getattr(tool, "name", None) in allowed]
+
+
 def _enrich_path() -> None:
     """Prepend dir yang lazim (mis. ~/.local/bin buat uvx) ke PATH proses ini."""
     current = os.environ.get("PATH", "")
@@ -153,8 +161,13 @@ class MCPClientManager:
 
                 self._adapters[name] = adapter
                 attach_to = server.get("attach_to", [])
+                allowlists = server.get("tool_allowlist_by_agent", {})
                 for agent_name in attach_to:
-                    self._tools_by_agent.setdefault(agent_name, []).extend(tools)
+                    agent_tools = _filter_tools_by_name(
+                        tools,
+                        allowlists.get(agent_name),
+                    )
+                    self._tools_by_agent.setdefault(agent_name, []).extend(agent_tools)
                 success_count += 1
                 tool_names = [getattr(t, "name", "?") for t in tools]
                 logger.info(

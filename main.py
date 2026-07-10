@@ -50,22 +50,9 @@ _loguru.configure(extra={"source": "loguru"})
 logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
 
 from core.discord_bot import run_bot
+from core.agent_registry import AGENT_REGISTRY
 
 logger = logging.getLogger('bima_core')
-
-# Mapping nama agent (di config_mcp.json `attach_to`) → module:attribute
-_AGENT_REGISTRY = {
-    "intel": "teams.t5_intel:intel_agent",
-    "mekanik": "teams.t8_mekanik:mekanik_agent",
-    "arsip": "teams.t3_arsip:arsip_agent",
-    "visual": "teams.t2_visual:visual_agent",
-    "manager": "teams.t1_manager:manager_agent",
-    "seniman": "teams.t7_seniman:seniman_agent",
-    "admin": "teams.t4_admin:admin_agent",
-    "lifestyle": "teams.t6_lifestyle:lifestyle_agent",
-    "saham": "teams.t9_saham:saham_agent",
-}
-
 
 def _inject_mcp_tools(mcp_manager) -> None:
     """Inject MCP tools ke CrewAI agent sesuai `attach_to` di config_mcp.json."""
@@ -73,7 +60,7 @@ def _inject_mcp_tools(mcp_manager) -> None:
         tools = mcp_manager.get_tools_for(agent_name)
         if not tools:
             continue
-        ref = _AGENT_REGISTRY.get(agent_name)
+        ref = AGENT_REGISTRY.get(agent_name)
         if not ref:
             logger.warning(f"[mcp_inject] agent '{agent_name}' tidak dikenal, skip")
             continue
@@ -106,12 +93,15 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"Dashboard server gagal start (bot tetap jalan tanpa dashboard): {e}")
 
-    # Start agentmemory REST server di background (port 3111)
+    # AgentMemory lifecycle dikelola PM2 sebagai service terpisah.
     try:
-        from core.agentmemory_launcher import start_agentmemory
-        start_agentmemory()
+        from core.agentmemory_launcher import agentmemory_is_ready
+        if agentmemory_is_ready():
+            logger.info("[agentmemory] PM2 service ready di port 3111")
+        else:
+            logger.warning("[agentmemory] PM2 service belum ready; sementara pakai fallback SQLite")
     except Exception as e:
-        logger.warning(f"agentmemory gagal start (bot tetap jalan, fallback SQLite): {e}")
+        logger.warning(f"agentmemory readiness check gagal (fallback SQLite): {e}")
 
     # Verify MCP Security (Bumblebee Audit)
     try:

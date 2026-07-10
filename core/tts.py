@@ -6,6 +6,7 @@ Pakai:
     path = await synthesize_voice("Halo Bima, apa kabar?")
 
 Env override:
+    ENABLE_TTS       — true untuk mengaktifkan TTS (default: false)
     TTS_MODEL_PATH  — path atau HF repo ID model F5-TTS Indo (default: Eempostor/F5-TTS-INDO-FINETUNE-V2)
     TTS_REF_AUDIO   — path ke audio referensi untuk voice cloning (wajib untuk F5-TTS)
     TTS_REF_TEXT    — transkrip teks dari audio referensi
@@ -30,6 +31,14 @@ logger = logging.getLogger("bima_core")
 
 _OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 _OUTPUT_DIR.mkdir(exist_ok=True)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_VOICE_PYTHON = _PROJECT_ROOT / "services" / "voice" / ".venv" / "bin" / "python"
+
+
+def _voice_worker_python() -> Path:
+    """Return the isolated Python interpreter used by the F5 worker."""
+    configured = os.environ.get("VOICE_WORKER_PYTHON", "").strip()
+    return Path(configured) if configured else _DEFAULT_VOICE_PYTHON
 
 # Smart filter — voice mode handling:
 # - reply <= TTS_OPENER_MIN_CHARS (80) → 'full': voice baca lengkap, text gak dikirim duplicate
@@ -72,16 +81,17 @@ async def _synthesize_f5(text: str, wav_fp: Path) -> bool:
     - Timeout 180s (handle long multi-batch reply); kill kalau lewat.
     - Non-zero exit → return False → parent fallback ke edge-tts.
     """
-    import sys
-
-    py = sys.executable
+    py = _voice_worker_python()
+    if not py.is_file():
+        logger.error(f"[TTS] voice worker env belum siap: {py}")
+        return False
     worker_module = "core.tts_worker"
-    project_root = str(Path(__file__).resolve().parent.parent)
+    project_root = str(_PROJECT_ROOT)
 
     # Env passthrough — semua TTS_* + HF_HOME (cache HuggingFace)
     env = os.environ.copy()
 
-    cmd = [py, "-m", worker_module, text, str(wav_fp)]
+    cmd = [str(py), "-m", worker_module, text, str(wav_fp)]
     timeout_sec = 180
 
     try:
@@ -159,6 +169,10 @@ async def _convert_to_ogg(src: Path, ogg_fp: Path) -> Path:
 async def synthesize_voice(text: str, slug_hint: str = "anisa") -> Path | None:
     """Generate audio file dari text. Return path .ogg (Opus codec, kompatibel WA voice note).
     Return None kalau gagal. Async — pakai await."""
+    if os.environ.get("ENABLE_TTS", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+        logger.info("[TTS] Disabled (set ENABLE_TTS=true to enable)")
+        return None
+
     text = (text or "").strip()
     if not text:
         return None
