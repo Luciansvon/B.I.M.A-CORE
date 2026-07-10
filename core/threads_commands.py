@@ -983,6 +983,38 @@ Output:
 """
 
 
+def _trim_threads_reply_text(text: str, max_chars: int = 180) -> str:
+    """Hard-limit draf balasan Threads tanpa memotong kasar jika masih bisa."""
+    text = clean_bima_text(text).strip()
+    if len(text) <= max_chars:
+        return text
+
+    clipped = text[:max_chars].rstrip()
+    min_break = max(40, max_chars // 4)
+    last_sentence = max(
+        clipped.rfind("."),
+        clipped.rfind("?"),
+        clipped.rfind("!"),
+        clipped.rfind("\n"),
+    )
+
+    if last_sentence >= min_break:
+        clipped = clipped[:last_sentence + 1]
+    else:
+        last_space = clipped.rfind(" ")
+        if last_space >= min_break:
+            clipped = clipped[:last_space]
+
+    trimmed = clipped.strip(" ,.;:\n\t")
+    return trimmed or text[:max_chars].strip()
+
+
+async def generate_threads_reply_draft(user_prompt: str, max_chars: int = 180) -> str:
+    """Generate draf balasan komentar Threads dengan batas karakter yang ketat."""
+    draft_text = await generate_bima_draft(user_prompt)
+    return _trim_threads_reply_text(draft_text, max_chars=max_chars)
+
+
 async def reply_to_comment_flow(reply_id: str, reply_text: str, reply_username: str, post_text: str, user_id: str, client=None) -> str:
     """Alur balas komentar interaktif dengan persetujuan Bima."""
     load_dotenv(override=True)
@@ -1050,7 +1082,7 @@ async def reply_to_comment_flow(reply_id: str, reply_text: str, reply_username: 
     )
 
     try:
-        draft_text = await generate_bima_draft(user_prompt)
+        draft_text = await generate_threads_reply_draft(user_prompt)
         _draft_contexts[draft_text.strip()] = f"Postingan Kita: {post_text}\nKomentar Dia: {reply_text}"
     except Exception as e:
         return f"❌ Gagal membuat draf balasan: {e}"
