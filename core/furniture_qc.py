@@ -29,6 +29,10 @@ import numpy as np
 import supervision as sv
 
 from config import VISUAL_MODEL_NAME
+from core.qc_ground_truth import (
+    build_page_ground_truth,
+    extract_pdf_page_text as _extract_pdf_page_text,  # re-export: dipakai tests
+)
 
 logger = logging.getLogger("bima_core.furniture_qc")
 
@@ -100,7 +104,9 @@ def _safe_json_loads(raw: str, tag: str = "qc") -> dict:
     raise ValueError(f"Model balikin JSON invalid — raw output (500 chars): {raw[:500]}")
 
 OUTPUT_DIR = Path(__file__).parent.parent / "outputs"
-QC_MODEL = VISUAL_MODEL_NAME  # single source of truth: config.py
+# Bisa di-override via env QC_MODEL (misal model grounding kayak qwen3-vl)
+# tanpa ganggu konsumen VISUAL_MODEL_NAME lain (ocr.py, visual_llm config).
+QC_MODEL = os.environ.get("QC_MODEL", "").strip() or VISUAL_MODEL_NAME
 QC_CONSOLIDATOR_MODEL = "deepseek/deepseek-v4-flash"  # Note Taker model: sangat cepat dan pintar merangkum text JSON
 MAX_PAGES = int(os.environ.get("QC_MAX_PAGES", "30"))
 TARGET_WIDTH_PX = int(os.environ.get("QC_TARGET_WIDTH_PX", "2048"))
@@ -834,10 +840,15 @@ def _file_to_b64_pages(file_bytes: bytes, filename: str) -> list[str]:
 
 async def review_diff_from_bytes(
     files: list[tuple[bytes, str]],
-) -> QCDiffResult:
+) -> tuple[QCDiffResult, list[tuple[str, bytes]]]:
     """Compare 2 revisions. files = [(bytes, filename), (bytes, filename)].
 
     Halaman REV_A dulu, terus REV_B. Vision LLM jelas distinguish via prompt meta.
+    Sebelum VLM, jalanin pixel-diff lokal (OpenCV): hasil region berubah di-inject
+    ke prompt sebagai ground truth + anaglyph PNG dibalikin sebagai artifact.
+
+    Return: (QCDiffResult, [(filename_suggestion, png_bytes), ...]).
+        Artifacts kosong kalau alignment gagal — perilaku turun ke VLM-only.
     """
     if len(files) != 2:
         raise ValueError("Diff mode butuh tepat 2 attachment (rev_a + rev_b)")
@@ -853,12 +864,31 @@ async def review_diff_from_bytes(
     n_b = len(pages_per_file[1])
     all_pages = pages_per_file[0] + pages_per_file[1]
 
+    # Pixel-diff lokal (nol token). Gagal apa pun → lanjut VLM-only kayak dulu.
+    visual_hint = ""
+    diff_artifacts: list[tuple[str, bytes]] = []
+    try:
+        from core import qc_visual_diff
+        page_diffs = await asyncio.to_thread(
+            qc_visual_diff.diff_from_b64, pages_per_file[0], pages_per_file[1]
+        )
+        visual_hint = qc_visual_diff.build_hint_text(page_diffs, n_a, n_b)
+        diff_artifacts = [
+            (f"qc_diff_anaglyph_p{d.page}.png", d.anaglyph_png)
+            for d in page_diffs
+            if d.anaglyph_png is not None
+        ]
+    except Exception as e:
+        logger.warning(f"[qc-diff] pixel-diff gagal, lanjut VLM-only: {e}")
+
     content_parts: list[dict] = [
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
         for img in all_pages
     ]
     diff_meta = f"\n\nMeta: REV_A = halaman 1..{n_a}, REV_B = halaman {n_a + 1}..{n_a + n_b}."
-    content_parts.append({"type": "text", "text": QC_DIFF_SYSTEM_PROMPT + diff_meta})
+    content_parts.append(
+        {"type": "text", "text": QC_DIFF_SYSTEM_PROMPT + diff_meta + visual_hint}
+    )
 
     client = OpenAI(
         api_key=os.environ.get("OPENROUTER_API_KEY"),
@@ -879,7 +909,7 @@ async def review_diff_from_bytes(
     completion = await asyncio.to_thread(_call_vision)
     raw = (completion.choices[0].message.content or "").strip()
     data = _safe_json_loads(raw, tag="qc-diff")
-    return QCDiffResult(**data)
+    return QCDiffResult(**data), diff_artifacts
 
 
 def format_diff_for_discord(result: QCDiffResult, name_a: str, name_b: str) -> str:
@@ -946,24 +976,6 @@ def _make_markup_artifacts(
 
     return []
 
-
-
-def _extract_pdf_page_text(pdf_bytes: bytes, page_num: int) -> str | None:
-    """Coba extract text native dari halaman PDF menggunakan pdfplumber.
-    
-    Cuma dapet hasil kalau PDF-nya berbasis vektor (bukan raster scan).
-    """
-    import pdfplumber
-    try:
-        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-            if page_num - 1 < len(pdf.pages):
-                page = pdf.pages[page_num - 1]
-                text = page.extract_text()
-                if text and text.strip():
-                    return text.strip()
-    except Exception as e:
-        logger.debug(f"[qc] pdfplumber extract failed for page {page_num}: {e}")
-    return None
 
 
 def _crop_bottom_right(img_b64: str) -> str | None:
@@ -1167,13 +1179,13 @@ async def _review_from_bytes(
     semaphore = asyncio.Semaphore(5)
     tasks = []
     for idx, img_b64 in enumerate(images_b64, start=1):
-        # Extract native text if PDF
-        vector_text = None
-        if pdf_bytes:
-            vector_text = await asyncio.to_thread(_extract_pdf_page_text, pdf_bytes, idx)
-            
         # Crop bottom-right area (heuristics zoom)
         crop_b64 = await asyncio.to_thread(_crop_bottom_right, img_b64)
+
+        # Ground truth: teks native + tabel BOM (PDF vektor), fallback OCR crop (raster)
+        vector_text = await asyncio.to_thread(
+            build_page_ground_truth, pdf_bytes, idx, crop_b64
+        )
 
         tasks.append(
             _call_page_checker(
@@ -1386,17 +1398,35 @@ async def handle_qc_wa(message_text: str, attachment_paths: list[str]) -> dict:
             }
         try:
             files = [(Path(p).read_bytes(), Path(p).name) for p in diff_targets]
-            diff = await review_diff_from_bytes(files)
+            diff, diff_artifacts = await review_diff_from_bytes(files)
         except Exception as e:
             logger.exception("[qc-wa-diff] gagal")
             return {**base, "response": f"❌ Diff gagal: `{e}`"}
         name_a, name_b = Path(diff_targets[0]).name, Path(diff_targets[1]).name
         text = format_diff_for_discord(diff, name_a, name_b)
+
+        output_files: list[str] = []
+        try:
+            if diff_artifacts:
+                OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                slug = os.urandom(4).hex()
+                for sugg_name, blob in diff_artifacts:
+                    out_path = OUTPUT_DIR / f"qc_wa_{slug}_{sugg_name}"
+                    out_path.write_bytes(blob)
+                    output_files.append(str(out_path))
+                text += (
+                    "\n\n🖍 _Lampiran anaglyph pixel-diff: "
+                    "magenta = hilang dari rev lama, hijau = baru di rev baru._"
+                )
+        except Exception as e:
+            logger.warning(f"[qc-wa-diff] simpan anaglyph gagal (text tetep kirim): {e}")
+
         logger.info(
             f"[qc-wa-diff] done: {name_a} vs {name_b} → "
-            f"{diff.overall_change_level} ({len(diff.changes)} changes)"
+            f"{diff.overall_change_level} ({len(diff.changes)} changes, "
+            f"{len(output_files)} anaglyph)"
         )
-        return {**base, "response": text}
+        return {**base, "response": text, "output_files": output_files[:10]}
 
     if not attachment_paths:
         return {**base, "response": QC_HELP_TEXT}
@@ -1570,16 +1600,33 @@ async def handle_qc_command(message, bot_client=None) -> None:
             async with httpx.AsyncClient(timeout=60) as cx:
                 bytes_a = (await cx.get(att_a.url, follow_redirects=True)).content
                 bytes_b = (await cx.get(att_b.url, follow_redirects=True)).content
-            diff = await review_diff_from_bytes(
+            diff, diff_artifacts = await review_diff_from_bytes(
                 [(bytes_a, att_a.filename), (bytes_b, att_b.filename)]
             )
             text = format_diff_for_discord(diff, att_a.filename, att_b.filename)
             if len(text) > DISCORD_MSG_LIMIT:
                 text = text[: DISCORD_MSG_LIMIT - 30] + "\n\n... _(terpotong)_"
             await progress.edit(content=text)
+            try:
+                anaglyph_files = [
+                    discord.File(BytesIO(blob), filename=fname)
+                    for fname, blob in diff_artifacts
+                ][:10]  # Discord max 10 attachments
+                if anaglyph_files:
+                    await message.channel.send(
+                        content=(
+                            "🖍 Anaglyph pixel-diff — **magenta** = hilang dari "
+                            f"`{att_a.filename}`, **hijau** = baru di `{att_b.filename}`:"
+                        ),
+                        files=anaglyph_files,
+                        reference=message,
+                    )
+            except Exception as e:
+                logger.warning(f"[qc-diff] kirim anaglyph gagal (text tetep kekirim): {e}")
             logger.info(
                 f"[qc-diff] done: {att_a.filename} vs {att_b.filename} → "
-                f"{diff.overall_change_level} ({len(diff.changes)} changes)"
+                f"{diff.overall_change_level} ({len(diff.changes)} changes, "
+                f"{len(diff_artifacts)} anaglyph)"
             )
         except Exception as e:
             logger.exception("[qc-diff] gagal")
