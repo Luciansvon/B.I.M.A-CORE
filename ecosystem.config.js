@@ -12,6 +12,12 @@ module.exports = {
         TOKENIZERS_PARALLELISM: "false",
         OMP_NUM_THREADS: "2",
         MKL_NUM_THREADS: "2",
+        // RAG reranker multilingual (bge-reranker-v2-m3) — path lokal biar ga re-download flaky
+        RERANKER_MODEL: "/home/bima_lucian/models/bge-reranker-v2-m3",
+        // STT large-v3-turbo (akurasi ID jauh > small), CPU int8 biar aman VRAM 4GB
+        STT_MODEL_SIZE: "/home/bima_lucian/models/faster-whisper-large-v3-turbo",
+        STT_COMPUTE_TYPE: "int8",
+        STT_DEVICE: "cpu",
       },
       log_date_format: "YYYY-MM-DD HH:mm:ss",
       error_file: "./logs/error.log",

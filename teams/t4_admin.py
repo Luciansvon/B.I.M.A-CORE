@@ -389,6 +389,42 @@ class ExcelGeneratorTool(BaseTool):
                 if headers:
                     ws.freeze_panes = ws.cell(row=hdr_row + 1, column=1).coordinate
 
+                # === Render & tempel sheet-level charts ===
+                charts = sheet_data.get("charts", [])
+                if charts:
+                    from openpyxl.drawing.image import Image
+                    from openpyxl.utils import get_column_letter
+                    chart_col = len(headers) + 2
+                    chart_col_letter = get_column_letter(chart_col)
+                    chart_row = 2
+                    for chart_spec in charts:
+                        try:
+                            chart_path = _render_chart(chart_spec, style)
+                            img = Image(chart_path)
+                            img.width = 480
+                            img.height = 270
+                            ws.add_image(img, f"{chart_col_letter}{chart_row}")
+                            chart_row += 16
+                        except Exception as chart_err:
+                            logger.error(f"[ADMIN] Gagal render/tempel chart di Excel: {chart_err}")
+
+            # === Render & tempel top-level charts di sheet Ringkasan ===
+            top_charts = data.get("charts", [])
+            if top_charts:
+                from openpyxl.drawing.image import Image
+                chart_col_letter = 'D'
+                chart_row = 3
+                for chart_spec in top_charts:
+                    try:
+                        chart_path = _render_chart(chart_spec, style)
+                        img = Image(chart_path)
+                        img.width = 480
+                        img.height = 270
+                        sum_ws.add_image(img, f"{chart_col_letter}{chart_row}")
+                        chart_row += 16
+                    except Exception as chart_err:
+                        logger.error(f"[ADMIN] Gagal render/tempel top chart di Excel: {chart_err}")
+
             # === Sheet Referensi (opsional) ===
             references = data.get("references", [])
             if references:
@@ -1153,6 +1189,9 @@ class PDFGeneratorTool(BaseTool):
                     self.ln(3)
 
                 def footer(self):
+                    # Hanya di halaman isi (bukan cover page 1)
+                    if self.page_no() <= 1 and data.get("cover", True):
+                        return
                     self.set_y(-14)
                     self.set_font(_pdf_font, "I", 8)
                     self.set_text_color(140, 140, 140)
@@ -1519,7 +1558,12 @@ class DataAnalysisTool(BaseTool):
 
             p = Path(filepath)
             if not p.exists():
-                return f"FAILED|File tidak ditemukan: {filepath}"
+                fallback_path = OUTPUT_DIR / p.name
+                if fallback_path.exists():
+                    p = fallback_path
+                    filepath = str(p)
+                else:
+                    return f"FAILED|File tidak ditemukan: {filepath}"
 
             try:
                 if p.suffix == '.csv':
@@ -1597,6 +1641,12 @@ admin_agent = Agent(
     role='Multi-Style Document Crafter',
     goal='Membuat dokumen Excel/Word/PDF dengan gaya tulisan dan layout yang menyesuaikan permintaan Bima — bukan hanya laporan formal.',
     backstory="""Kamu adalah Penulis Serbaguna B.I.M.A Core. Kamu bukan cuma tukang laporan formal.
+
+    ATURAN ANTI-SLOP (WAJIB):
+    - JANGAN gunakan gaya tulisan klise AI (AI tells / slop) pada dokumen atau draf yang kamu buat.
+    - Hindari pembuka basa-basi/throat-clearing seperti "Berikut adalah...", "Tentu saja,", "Perlu dicatat bahwa...". Langsung nyatakan faktanya.
+    - Sangat dilarang keras menggunakan frasa klise AI Indonesia: "di era digital", "solusi terbaik", "berkomitmen untuk", "tidak hanya itu", "secara keseluruhan", "menawarkan kemudahan".
+    - Gunakan kalimat aktif yang natural dan langsung ke inti pembahasan. Hindari kontras biner klise ("Bukan karena X, melainkan Y").
 
     KAMU BISA BIKIN BANYAK TIPE DOKUMEN:
     - Laporan riset/bisnis (formal)

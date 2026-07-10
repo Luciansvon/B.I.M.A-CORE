@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 import subprocess
@@ -7,6 +8,31 @@ import httpx
 from crewai.tools import BaseTool
 
 logger = logging.getLogger('bima_core')
+
+_MAX_OUTPUT_CHARS = 4000
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+_MENTION_RE = re.compile(r"(?<!\w)@[A-Za-z0-9_]{1,15}\b")
+
+
+def _sanitize_external_text(text: object, limit: int) -> str:
+    """Normalize untrusted X data before it enters an LLM context."""
+    sanitized = _CONTROL_CHARACTER_RE.sub(" ", str(text or ""))
+    sanitized = _URL_RE.sub("[link]", sanitized)
+    sanitized = _MENTION_RE.sub("[mention]", sanitized)
+    sanitized = sanitized.replace("[UNTRUSTED_TWEET]", "")
+    sanitized = sanitized.replace("[/UNTRUSTED_TWEET]", "")
+    return re.sub(r"\s+", " ", sanitized).strip()[:limit]
+
+
+def _mark_untrusted_tweet(text: object) -> str:
+    sanitized = _sanitize_external_text(text, 280)
+    return f"[UNTRUSTED_TWEET] {sanitized} [/UNTRUSTED_TWEET]"
+
+
+def _cap_output(text: str) -> str:
+    return text[:_MAX_OUTPUT_CHARS]
+
 
 class XReachTool(BaseTool):
     name: str = "X Twitter Reach Tool"
@@ -23,7 +49,13 @@ class XReachTool(BaseTool):
         try:
             twitter_bin = shutil.which("twitter") or "twitter"
             cmd = [twitter_bin, "search", query, "-n", "10", "--json"]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=20,
+            )
             
             # Parse output
             data = json.loads(result.stdout)
@@ -37,9 +69,17 @@ class XReachTool(BaseTool):
             if tweets:
                 results = [f"=== X/Twitter (via twitter-cli): '{query}' ===\n"]
                 for t in tweets[:7]:
-                    user = t.get("user", {}).get("name", "unknown")
-                    username = t.get("user", {}).get("username", t.get("user", {}).get("screen_name", ""))
-                    text = t.get("text", "")[:280]
+                    user = _sanitize_external_text(
+                        t.get("user", {}).get("name", "unknown"), 80
+                    )
+                    username = _sanitize_external_text(
+                        t.get("user", {}).get(
+                            "username",
+                            t.get("user", {}).get("screen_name", ""),
+                        ),
+                        30,
+                    )
+                    text = _mark_untrusted_tweet(t.get("text", ""))
                     likes = t.get("likes", t.get("favorite_count", 0))
                     rts = t.get("retweets", t.get("retweet_count", 0))
                     date = t.get("created_at", "")[:10]
@@ -48,7 +88,7 @@ class XReachTool(BaseTool):
                         f"   {text}\n"
                         f"   ❤️ {likes} | 🔁 {rts} | 📅 {date}\n"
                     )
-                return "\n".join(results)
+                return _cap_output("\n".join(results))
         except Exception as e:
             cli_err = str(e)
             logger.warning(f"twitter CLI gagal: {cli_err}. Fallback ke RapidAPI...")
@@ -86,9 +126,15 @@ class XReachTool(BaseTool):
                     if legacy:
                         user = tweet_result.get("core", {}).get("user_results", {}).get("result", {}).get("legacy", {})
                         tweets.append({
-                            "text": legacy.get("full_text", "")[:280],
-                            "user": user.get("name", "unknown"),
-                            "username": user.get("screen_name", ""),
+                            "text": _mark_untrusted_tweet(
+                                legacy.get("full_text", "")
+                            ),
+                            "user": _sanitize_external_text(
+                                user.get("name", "unknown"), 80
+                            ),
+                            "username": _sanitize_external_text(
+                                user.get("screen_name", ""), 30
+                            ),
                             "likes": legacy.get("favorite_count", 0),
                             "retweets": legacy.get("retweet_count", 0),
                             "date": legacy.get("created_at", "")
@@ -104,7 +150,7 @@ class XReachTool(BaseTool):
                     f"   {t['text']}\n"
                     f"   ❤️ {t['likes']} | 🔁 {t['retweets']} | 📅 {t['date'][:10]}\n"
                 )
-            return "\n".join(results)
+            return _cap_output("\n".join(results))
 
         except Exception as e1:
             try:
@@ -123,9 +169,13 @@ class XReachTool(BaseTool):
 
                 results = [f"=== X/Twitter (RapidAPI Fallback 2): '{query}' ===\n"]
                 for t in timeline[:7]:
-                    text = t.get("text", "")[:280]
-                    user = t.get("user", {}).get("name", "unknown")
-                    username = t.get("user", {}).get("screen_name", "")
+                    text = _mark_untrusted_tweet(t.get("text", ""))
+                    user = _sanitize_external_text(
+                        t.get("user", {}).get("name", "unknown"), 80
+                    )
+                    username = _sanitize_external_text(
+                        t.get("user", {}).get("screen_name", ""), 30
+                    )
                     likes = t.get("favorite_count", 0)
                     rts = t.get("retweet_count", 0)
                     results.append(
@@ -133,7 +183,7 @@ class XReachTool(BaseTool):
                         f"   {text}\n"
                         f"   ❤️ {likes} | 🔁 {rts}\n"
                     )
-                return "\n".join(results)
+                return _cap_output("\n".join(results))
 
             except Exception as e2:
                 return f"Gagal scrape X via twitter CLI & RapidAPI.\nError CLI: {cli_err}\nError API 1: {e1}\nError API 2: {e2}"

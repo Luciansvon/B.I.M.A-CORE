@@ -2,7 +2,10 @@
 
 This file is the single source of truth for any AI coding agent (Claude Code, Cursor, Aider, Codex, Windsurf, Copilot, Continue, etc.) working on this repository. Read this first.
 
+setiap mau plan buatin pake file md biar bisa di audit sama bima.
+
 ## TL;DR
+
 - **What**: Python multi-agent AI bot named **Anisa**. Discord + WhatsApp + REST. LangGraph state machine orchestrates 10 specialist agents.
 - **Owner**: Bima — solo dev. Reply casual Bahasa Indonesia.
 - **Run env**: WSL Ubuntu di Windows host. Python venv at `bima_env/`. Production via PM2.
@@ -125,6 +128,7 @@ tools/                     Shared BaseTool implementations
   browser_use_tool.py        Interactive browser automation
   prompt_optimizer.py        Prompt rewrite/critique
   repo_rag_tools.py          Codebase RAG (BM25 + vector)
+  deslop_tool.py             Anti-AI slop prose filter (stop-slop)
   plugins/                   Hot-loadable plugins (rust_search, etc.)
 
 whatsapp/                  Node.js WA bridge
@@ -174,12 +178,14 @@ python healthcheck.py
 ## Channel-specific behavior
 
 ### Discord
+
 - Mention `@Anisa` in a channel, OR any DM, OR text command (`!play`, `!saham`, `!qc`, `!ocr`, `!status`, music commands).
 - Audio attachment (`.ogg/.oga/.opus/.mp3/.m4a/.wav/.flac/.aac`) → auto-transcribed (no arming, intent implicit).
 - Image attachment + prompt with "bikin gambar variasi" → image-to-image via Seniman.
 - Music commands need bot voice perms: `Connect`, `Speak`, `Use Voice Activity`.
 
 ### WhatsApp (via Node bridge)
+
 - All commands prefixed `/bot` (configurable via `WA_TRIGGER`).
 - Voice notes are silent-ignored by default. Must arm first: `/bot stt` (or aliases: `tts`, `voice`, `suara`, `v`, `note`, `vn`). TTL 60s, auto-disarm after 1 voice used.
 - Audio file attachments via paperclip (with `/bot` caption) → auto-transcribed without arming.
@@ -187,12 +193,14 @@ python healthcheck.py
 ## Voice pipeline
 
 ### STT (input → text)
+
 - Engine: `faster-whisper small` (multilingual, Indonesian primary).
 - First call downloads model (~390MB) to `~/.cache/huggingface`.
 - Tuned with `vad_filter=True`, `beam_size=8`, Indonesian `initial_prompt` for short-utterance accuracy.
 - Wrapper: `core/stt.py` — lazy singleton, returns empty string on failure.
 
 ### TTS (text → audio)
+
 - **Primary**: F5-TTS Indo V2 (`Eempostor/F5-TTS-INDO-FINETUNE-V2` on HuggingFace). Checkpoint cached in `assets/f5_tts_cache/` (~1.2GB).
 - **Fallback**: edge-tts `id-ID-GadisNeural` if F5-TTS unavailable/fails.
 - Output: OGG/Opus via ffmpeg (Discord & WA voice note compatible).
@@ -201,11 +209,13 @@ python healthcheck.py
 - Smart filter: reply ≤ 300 chars → voice only; > 300 chars → text + 1-line voice summary.
 
 ### Auto-mirror
+
 Voice in → voice out, text in → text out. No user toggle.
 
 ## Gotchas / Hard-learned lessons
 
 ### CUDA / GPU diagnosis discipline
+
 The PyTorch warning `CUDA initialization: The NVIDIA driver on your system is too old` is **misleading**. Before suggesting a driver update:
 
 1. Run `nvidia-smi` — get Driver Version and CUDA Version supported.
@@ -213,27 +223,47 @@ The PyTorch warning `CUDA initialization: The NVIDIA driver on your system is to
 3. Compare: `torch.version.cuda` must be ≤ `nvidia-smi CUDA Version`. If torch is newer than driver, the fix is to reinstall torch with a matching wheel (`pip install torch --index-url https://download.pytorch.org/whl/cu128`), NOT update the driver.
 
 ### MCP / tool audit discipline
+
 Before suggesting a new MCP server or CrewAI tool, **grep every existing `BaseTool` in `tools/` and `teams/*.py`** plus every `tools=[...]` list. Many capabilities already exist as custom tools — adding duplicates causes decision paralysis for the agent. `config_mcp.json` alone is not enough; many tools are inline in team definitions.
 
 ### WSL networking
+
 - `pip install` over WSL is flaky for large CUDA wheels (SSL decryption errors). Retry with `--timeout 180 --retries 8`, or `wsl --shutdown` and try again.
 - After Windows NVIDIA driver update, run `wsl --update` + `wsl --shutdown` in PowerShell to refresh WSL CUDA bridge.
 - WSL `--shutdown` resets PM2 daemon — restart all processes with `pm2 start ecosystem.config.js` after.
 
 ### Output discipline (Bima preference)
+
 - End each task with 5-line max factual summary. No "" / "Perfect!" / "Done!".
 - For long output, write to a file instead of dumping in chat.
 - Use markdown link `[file.py:42](file.py#L42)` syntax for code references in IDE-rendered output.
 
 ### MCP integration
+
 - `config_mcp.json` controls MCP servers attached to specific agents.
 - After editing, restart `anisa-v3` (the `MCPClientManager` reloads on startup).
 - Enabled by default: `fetch`, `markitdown`, `sequential_thinking`, `memory_anthropic`, `time`, `sqlite`, `git`.
 - Disabled config-only: `duckduckgo` (redundant w/ SerperDevTool), `playwright` (redundant w/ BrowserUseTool), `filesystem`, `github`, `searxng`.
 
+### Anti-AI Slop (Stop-Slop)
+
+Sistem anti-slop terintegrasi di 4 titik untuk memastikan output Anisa tidak terdengar robotik:
+
+1. **`tools/deslop_tool.py`** — `DeslopTool` (CrewAI BaseTool). Agen bisa panggil tool ini untuk menyaring draf tulisan dari AI tells / slop sebelum publish.
+2. **`core/threads_commands.py`** — Aturan anti-slop disisipkan di `apply_smart_revision()` system prompt, otomatis aktif saat revisi draf postingan Threads.
+3. **`teams/t4_admin.py`** — Aturan anti-slop ada di backstory `admin_agent`, aktif saat generate dokumen PDF/Word/Excel.
+4. **`core/langgraph_nodes/manager.py`** — Aturan anti-slop ada di system prompt `manager_node`, aktif saat Anisa menjawab chat biasa.
+
+**Frasa terlarang (Bahasa Indonesia):** "di era digital", "solusi terbaik", "berkomitmen untuk", "tidak hanya itu", "secara keseluruhan", "menawarkan kemudahan", "Tentu saja,", "Perlu dicatat bahwa".
+
+**Prinsip utama:** Kalimat aktif, langsung ke poin, tanpa pembuka basa-basi (*throat-clearing*), tanpa kontras biner klise ("Bukan X, melainkan Y").
+
+Referensi asal: [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop). Lihat juga `error_solutions.md` Log 9.
+
 ## Test commands
 
 There's no formal pytest suite. Smoke testing pattern:
+
 1. `python3 -c "import ast; ast.parse(open('FILE.py').read())"` — syntax check
 2. `python3 -c "from MODULE import X"` — import resolution
 3. End-to-end test by sending a message via Discord or WA (`/bot ping` for backend health)

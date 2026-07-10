@@ -39,6 +39,59 @@ async def extract_text_async(image_bytes: bytes) -> str:
     return await asyncio.to_thread(extract_text, image_bytes)
 
 
+def _detect_image_mime(image_bytes: bytes) -> str:
+    if image_bytes[:4] == b"\x89PNG":
+        return "image/png"
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
+def extract_text_vlm(image_bytes: bytes) -> str:
+    """OCR pakai VLM (Gemini via OpenRouter) — jauh lebih akurat dari easyocr buat
+    layout kompleks, tabel, tulisan tangan, teks miring. Raise kalau gagal supaya
+    caller bisa fallback ke easyocr (offline)."""
+    import base64
+    import os
+
+    from openai import OpenAI
+
+    from config import VISUAL_MODEL_NAME
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY tidak tersedia untuk VLM OCR")
+
+    mime = _detect_image_mime(image_bytes)
+    b64 = base64.b64encode(image_bytes).decode()
+    client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+    resp = client.chat.completions.create(
+        model=VISUAL_MODEL_NAME,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": (
+                    "Ekstrak SEMUA teks dari gambar ini persis apa adanya (verbatim). "
+                    "Pertahankan urutan baris dan struktur asli. "
+                    "Output HANYA teksnya — tanpa komentar, penjelasan, atau markdown pembungkus. "
+                    "Kalau tidak ada teks sama sekali, balas string kosong."
+                )},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ],
+        }],
+        temperature=0,
+        max_tokens=2000,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+async def extract_text_vlm_async(image_bytes: bytes) -> str:
+    """Async wrapper VLM OCR."""
+    return await asyncio.to_thread(extract_text_vlm, image_bytes)
+
+
 async def handle_ocr_command(message, bot_client=None) -> None:
     """Discord `!ocr` handler — extract text dari image attachment."""
     import httpx
@@ -65,14 +118,21 @@ async def handle_ocr_command(message, bot_client=None) -> None:
             resp = await cx.get(att.url, follow_redirects=True)
             resp.raise_for_status()
             img_bytes = resp.content
-        text = await extract_text_async(img_bytes)
+        # VLM (Gemini) dulu — akurasi jauh lebih baik; fallback ke easyocr (offline) kalau gagal.
+        try:
+            text = await extract_text_vlm_async(img_bytes)
+            engine = "Gemini Vision"
+        except Exception as vlm_err:
+            logger.warning(f"[ocr] VLM gagal ({vlm_err}), fallback ke easyocr")
+            text = await extract_text_async(img_bytes)
+            engine = "easyocr"
         if not text:
             await progress.edit(content=f"🤷 Ga ada text terdeteksi di `{att.filename}`.")
             return
         # Truncate to Discord limit
         if len(text) > 1800:
             text = text[:1800] + "\n\n... _(terpotong)_"
-        await progress.edit(content=f"📄 **OCR `{att.filename}`:**\n```\n{text}\n```")
+        await progress.edit(content=f"📄 **OCR `{att.filename}`** _(via {engine})_:\n```\n{text}\n```")
     except Exception as e:
         logger.exception("[ocr] gagal")
         await progress.edit(content=f"❌ Gagal OCR: `{e}`")

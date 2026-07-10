@@ -36,12 +36,14 @@ Sherlock OSINT              Marp Slide Gen           Codebase Visualizer
 ## 🛠️ Tech Stack
 
 - **Core Engine & Orchestration**: Python 3.10+, FastAPI, Uvicorn, LangGraph, CrewAI.
-- **LLM Clients**: OpenRouter (DeepSeek V4, Gemini 3.5 Flash, Llama 3.3, Claude 3.5 Sonnet).
+- **LLM Clients**: OpenRouter (DeepSeek V4 Flash/Pro, Gemini 3.5 Flash, Claude Sonnet 5).
 - **External Bridges**: `discord.py` 2.x, `whatsapp-web.js` (Node.js bridge).
-- **Speech & Audio**: `faster-whisper small` (STT), `F5-TTS` (voice cloning via `Eempostor/F5-TTS-INDO-FINETUNE-V2` with `edge-tts` fallback), `ffmpeg`.
+- **Speech & Audio**: `faster-whisper large-v3-turbo` (STT, multilingual/Indonesian), `F5-TTS` (voice cloning via `Eempostor/F5-TTS-INDO-FINETUNE-V2` with `edge-tts` fallback), `ffmpeg`.
 - **System Automation & OSINT**: `browser-use` (Playwright), `sherlock-project` (OSINT), `agent-reach` CLI, RapidAPI X scrapers.
 - **Document & Media Compile**: `@marp-team/marp-cli` (Slides), `Cytoscape.js` (Codebase network map), Jina Reader Web Fetch API.
-- **Vector & Cache Storage**: LanceDB, SQLite, DiskCache, Headroom context compressor.
+- **Multilingual RAG**: LanceDB + `Qwen3-Embedding-0.6B` (embedding) + `bge-reranker-v2-m3` (reranking) — both multilingual, Indonesian-optimized.
+- **Cache & Storage**: SQLite, DiskCache, Headroom context compressor.
+- **Vision OCR**: Gemini Vision (VLM) with `easyocr` offline fallback.
 
 ---
 
@@ -57,7 +59,7 @@ Sherlock OSINT              Marp Slide Gen           Codebase Visualizer
 - **Interaction Scan**: Runs every 5 minutes, filtering out toxic/spam comments (e.g. slot, promo) and auto-replying to simple greetings.
 
 ### 🎤 Voice Pipeline (STT + TTS)
-- **Lazy Singleton STT**: `faster-whisper` processes audio attachments and voice notes asynchronously.
+- **Lazy Singleton STT**: `faster-whisper large-v3-turbo` (CPU int8) processes audio attachments and voice notes asynchronously — multilingual, tuned for Indonesian short utterances.
 - **Isolated TTS Worker**: F5-TTS runs inside an isolated subprocess (`core/tts_worker.py`) to release VRAM on completion and prevent CUDA crashes from propagating.
 - **Smart Opener Mode**:
   - Replies ≤ 80 characters are synthesized in full.
@@ -152,7 +154,7 @@ pip install -r requirements.txt
 # Setup Playwright browsers
 playwright install chromium
 ```
-> *Note: The first STT/TTS calls will download the `faster-whisper` (~390MB) and `F5-TTS` (~1.2GB) models.*
+> *Note: First run downloads model weights — `faster-whisper large-v3-turbo` (~1.6GB), `F5-TTS` (~1.2GB), `Qwen3-Embedding-0.6B` (~1.2GB), and `bge-reranker-v2-m3` (~2.3GB). On flaky links, prefer `wget -c` / an HF token to avoid rate-limited stalls.*
 
 ### 3. Environment Variables (`.env`)
 Create a `.env` file from the template:
@@ -250,7 +252,7 @@ Register-ScheduledTask -TaskName "WSL-BIMA-Boot" -Action $action -Trigger $trigg
 | `!threads [topic] [--image]` | Runs Threads drafting flow. Lists trends if no topic provided. |
 | `!arsip [subcommand]` | Manage Obsidian vault notes. Subcommands: `help`, `hubungkan` (link semantik & rapikan), `index` (re-index). |
 | `!qc` + PDF/PNG/JPG | Review drawing details (Gemini Flash Vision). Generates issue coordinates. |
-| `!ocr` + Image | Parse text in Indonesia/English using EasyOCR. |
+| `!ocr` + Image | Extract text (Indonesian/English) via Gemini Vision (VLM); `easyocr` offline fallback. |
 | `!status` | Inspect CPU, memory, Disk, and PM2 load using `psutil`. |
 | `!play <query/URL>` | Enqueue music to current voice channel (supports playlists up to 50 tracks). |
 | `!skip` / `!queue` / `!stop` | Control active music player queue. |

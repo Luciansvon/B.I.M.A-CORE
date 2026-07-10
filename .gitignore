@@ -17,7 +17,9 @@ outputs/
 *.Zone.Identifier
 *:Zone.Identifier
 *.pyc
-memory/
+memory/*
+!memory/__init__.py
+!memory/memory_engine.py
 search_index/
 repo_index/
 vault_index/
@@ -61,6 +63,7 @@ mcp_server.legacy.yaml
 # Session / state
 *_session.md
 20260[0-9]*T*.md
+.worktrees/
 
 # Loose archive (review per-need)
 archive/
@@ -76,3 +79,7 @@ tools/_marketplace_login.py
 
 # F5-TTS HuggingFace model cache (~1.3GB, re-downloaded on first use)
 assets/f5_tts_cache/
+
+# Vendored local tool clones (pip-installed into bima_env; source not tracked here)
+# agent-reach = clone dari github.com/Panniantong/agent-reach, di-build lokal (lihat docs/error_solutions.md Log 11)
+agent-reach/
