@@ -661,6 +661,32 @@ async def send_digest(client, label: str) -> None:
     save_to_obsidian(label, digest["markdown"])
 
 
+async def _paper_trading_tick(market: str) -> None:
+    """Tick otonom Anisa — evaluasi & eksekusi BUY/SELL paper trading, tanpa notif langsung."""
+    from core.saham_paper_trader import run_tick
+    try:
+        results = await asyncio.to_thread(run_tick, market)
+        if results:
+            logger.info(f"[PAPER TRADER] {market}: {len(results)} trade(s) executed")
+    except Exception as e:
+        logger.error(f"[PAPER TRADER] Tick error ({market}): {e}", exc_info=True)
+
+
+async def send_paper_daily_report(client) -> None:
+    """Recap harian 1x/hari — satu-satunya notifikasi paper trading ke Discord."""
+    channel_id_str = os.getenv("SAHAM_CHANNEL_ID")
+    if not channel_id_str:
+        return
+    from core.saham_paper_trader import build_daily_report
+    try:
+        text = await asyncio.to_thread(build_daily_report)
+    except Exception as e:
+        logger.error(f"[PAPER TRADER] Daily report gagal: {e}", exc_info=True)
+        return
+    if text:
+        await _send_chunk(client, int(channel_id_str), text)
+
+
 async def send_alerts(client, market: str = "all") -> None:
     channel_id_str = os.getenv("SAHAM_CHANNEL_ID")
     if not channel_id_str:
@@ -713,10 +739,35 @@ def start_saham_scheduler(client):
         CronTrigger(minute=0, hour="*/2", timezone=WIB),
         args=[client, "crypto"], id="alert_crypto",
     )
+
+    # === Paper trading otonom Anisa — tick lebih rapat dari alert, tanpa notif per-trade ===
+    scheduler.add_job(
+        _paper_trading_tick,
+        CronTrigger(minute="*/15", hour="9-15", day_of_week="mon-fri", timezone=WIB),
+        args=["idx"], id="paper_tick_idx",
+    )
+    scheduler.add_job(
+        _paper_trading_tick,
+        CronTrigger(minute="*/15", hour="22,23,0,1,2,3,4", day_of_week="tue-sat", timezone=WIB),
+        args=["global"], id="paper_tick_global",
+    )
+    scheduler.add_job(
+        _paper_trading_tick,
+        CronTrigger(minute="*/15", timezone=WIB),
+        args=["crypto"], id="paper_tick_crypto",
+    )
+    # Recap harian — satu-satunya notifikasi paper trading (jam malam, setelah IDX+global tutup)
+    scheduler.add_job(
+        send_paper_daily_report,
+        CronTrigger(hour=20, minute=0, timezone=WIB),
+        args=[client], id="paper_daily_report",
+    )
+
     scheduler.start()
     _scheduler_started = True
     logger.info(
         "[SAHAM SCHEDULER] ✅ Started — digest 2x/day + alerts "
-        "(IDX 30min, global 1h, crypto 2h 24/7)"
+        "(IDX 30min, global 1h, crypto 2h 24/7) + paper trading otonom "
+        "(tick 15min, recap harian 20:00 WIB)"
     )
     return scheduler

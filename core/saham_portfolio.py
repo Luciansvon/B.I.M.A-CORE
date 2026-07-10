@@ -19,44 +19,52 @@ from teams.t9_saham import normalisasi_ticker
 logger = logging.getLogger('bima_core')
 
 PORTFOLIO_PATH = Path(__file__).parent.parent / "outputs" / "saham_portfolio.json"
+PAPER_PORTFOLIO_PATH = Path(__file__).parent.parent / "outputs" / "saham_paper_portfolio.json"
 
 
-def _load() -> dict:
-    if PORTFOLIO_PATH.exists():
+def _portfolio_path(account: str = "real") -> Path:
+    """account: 'real' (posisi manual Bima) atau 'paper' (posisi otonom Anisa)."""
+    return PAPER_PORTFOLIO_PATH if account == "paper" else PORTFOLIO_PATH
+
+
+def _load(account: str = "real") -> dict:
+    path = _portfolio_path(account)
+    if path.exists():
         try:
-            return json.loads(PORTFOLIO_PATH.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
-            logger.error(f"[PORTFOLIO] Korup, reset: {e}")
+            logger.error(f"[PORTFOLIO] Korup ({account}), reset: {e}")
             return {}
     return {}
 
 
-def _save(data: dict) -> None:
-    PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PORTFOLIO_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def _save(data: dict, account: str = "real") -> None:
+    path = _portfolio_path(account)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def add_position(symbol: str, qty: float, price: float) -> str:
+def add_position(symbol: str, qty: float, price: float, account: str = "real") -> str:
     """Tambah posisi baru. qty positif. Return pesan status."""
     if qty <= 0 or price <= 0:
         return f"❌ qty & price harus > 0 (qty={qty}, price={price})"
     ticker = normalisasi_ticker(symbol)
-    data = _load()
+    data = _load(account)
     data.setdefault(ticker, []).append({
         "qty": qty,
         "avg_price": price,
         "buy_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
     })
-    _save(data)
+    _save(data, account)
     return f"✅ Catat BELI {qty} {ticker} @ {price:,.2f}"
 
 
-def remove_position(symbol: str, qty: float, price: float) -> str:
+def remove_position(symbol: str, qty: float, price: float, account: str = "real") -> str:
     """Kurangi posisi (FIFO). Return pesan + realized P&L."""
     if qty <= 0:
         return f"❌ qty harus > 0"
     ticker = normalisasi_ticker(symbol)
-    data = _load()
+    data = _load(account)
     if ticker not in data or not data[ticker]:
         return f"❌ Tidak ada posisi {ticker} di portfolio"
 
@@ -79,15 +87,15 @@ def remove_position(symbol: str, qty: float, price: float) -> str:
 
     if not data[ticker]:
         del data[ticker]
-    _save(data)
+    _save(data, account)
 
     sign = "+" if realized_pnl >= 0 else ""
     return f"✅ Catat JUAL {qty:g} {ticker} @ {price:,.2f} | realized P&L: {sign}{realized_pnl:,.2f}"
 
 
-def list_positions() -> dict:
+def list_positions(account: str = "real") -> dict:
     """Return raw portfolio dict (FIFO order intact)."""
-    return _load()
+    return _load(account)
 
 
 def aggregate(positions: dict) -> dict:
@@ -106,9 +114,10 @@ def aggregate(positions: dict) -> dict:
     return out
 
 
-def reset() -> str:
-    if PORTFOLIO_PATH.exists():
-        PORTFOLIO_PATH.unlink()
+def reset(account: str = "real") -> str:
+    path = _portfolio_path(account)
+    if path.exists():
+        path.unlink()
     return "✅ Portfolio direset. Mulai dari awal."
 
 

@@ -51,6 +51,7 @@ HELP_TEXT = """📈 **`!saham` — Daftar Perintah**
 !saham set <TICKER> <field>=<v> ...→ override fundamental manual
 !saham unset <TICKER>             → hapus override 1 ticker
 !saham overrides                  → list semua override
+!saham papertrade                 → posisi & P&L paper trading Anisa (saldo fiktif, otonom)
 ```
 *IDX: qty = jumlah saham (1 lot = 100 saham). Crypto: qty = jumlah coin (boleh desimal).*
 *Override field: per, pbv, eps, roe, der, div_yield, profit_margin, revenue_growth, earnings_growth.*
@@ -169,6 +170,39 @@ async def _build_portfolio_report() -> str:
     sign = "+" if total_pnl >= 0 else ""
     lines.append(f"💰 Unrealized P&L: **{sign}{total_pnl:,.2f}** ({total_pct:+.2f}%)")
     lines.append("\n*Harga sekarang dari yfinance. Mata uang dasar mengikuti ticker (Rp untuk IDX, $ untuk global/crypto).*")
+    return "\n".join(lines)
+
+
+async def _build_paper_portfolio_report() -> str:
+    """Posisi & P&L rekening paper-trading Anisa (otonom, terpisah dari portfolio real Bima)."""
+    from core.saham_paper_trader import get_cash_balances, STARTING_CASH, _bucket_of
+
+    positions = list_positions(account="paper")
+    cash = get_cash_balances()
+    agg = aggregate(positions)
+
+    lines = ["🤖 **Anisa Paper Trading — Posisi Saat Ini**\n"]
+    for market in ("idx", "global", "crypto"):
+        bucket_cash = cash.get(market, STARTING_CASH[market])
+        bucket_positions = {t: v for t, v in agg.items() if _bucket_of(t) == market}
+        symbol_prefix = "Rp" if market == "idx" else "$"
+        lines.append(f"**{market.upper()}** — kas: {symbol_prefix}{bucket_cash:,.2f}")
+        if not bucket_positions:
+            lines.append("  _(tidak ada posisi terbuka)_")
+        else:
+            for ticker, info in bucket_positions.items():
+                snap = await asyncio.to_thread(fetch_snapshot, ticker)
+                current = snap["close"] if snap else info["avg_price"]
+                pnl_pct = (
+                    (current - info["avg_price"]) / info["avg_price"] * 100
+                    if info["avg_price"] else 0.0
+                )
+                lines.append(
+                    f"  `{ticker}`: {info['qty']:.4f} @ avg {_fmt_price(info['avg_price'], ticker)} "
+                    f"→ now {_fmt_price(current, ticker)} ({pnl_pct:+.2f}%)"
+                )
+        lines.append("")
+    lines.append("*Rekening ini dikelola penuh otonom oleh Anisa — recap harian dikirim otomatis.*")
     return "\n".join(lines)
 
 
@@ -297,6 +331,13 @@ async def handle_saham_command(message, args: str, bot_client=None) -> bool:
                 vals = ", ".join(f"{k}={v}" for k, v in fields.items() if k != "updated_at")
                 lines.append(f"• `{ticker}` — {vals}  _(updated {updated})_")
             await message.reply("\n".join(lines))
+            return True
+
+        # === paper trading (Anisa otonom) ===
+        if sub == "papertrade":
+            text = await _build_paper_portfolio_report()
+            for i in range(0, len(text), 1900):
+                await message.channel.send(text[i:i + 1900])
             return True
 
         # === portfolio ===
