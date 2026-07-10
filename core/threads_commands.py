@@ -908,6 +908,81 @@ async def fetch_post_replies(post_id: str, token: str) -> list[dict]:
         resp.raise_for_status()
         return resp.json().get("data", [])
 
+def _build_threads_reply_prompt(
+    reply_username: str,
+    reply_text: str,
+    post_text: str,
+    viral_context: str = "",
+) -> str:
+    """Build prompt khusus balasan komentar Threads supaya gaya reply tidak kaku.
+
+    Prinsip (riset 2026 — Computational Turing Test, arXiv:2511.04195):
+    - Nada emosi = penanda AI paling kentara → jangan maksa antusias/positif;
+      cerminkan energi komentator (deadpan, sarkas, santai) apa adanya.
+    - Contoh gaya (few-shot) lebih ampuh dari deskripsi persona abstrak.
+    - Konteks komentar + postingan bikin balasan lebih nyambung & manusiawi.
+    - Hedging ("kayaknya", "gatau sih") naikin kesan manusia.
+    """
+    return f"""Komentar dari @{reply_username} pada postingan kita:
+Postingan Kita: "{post_text}"
+Komentar Dia: "{reply_text}"
+{viral_context}
+
+Tugas:
+Tulis SATU draf balasan Threads yang nyambung, natural, kayak manusia bales komentar temen di kolom reply. Lu lagi nanggepin, bukan bikin konten.
+
+Voice:
+- Pake "gua" dan "lu". Jangan pake "gue" atau "loe".
+- Bahasa chat Indo santai: wkwk, asli, anjir, bgt, emg, dah, sih, yaudah, ngab, gatau. Pakai seperlunya, jangan ditumpuk semua.
+- Boleh nggantung/ragu: "kayaknya", "gatau sih", "mungkin" — bikin lebih kebayang manusia.
+
+Energi & emosi (paling penting):
+- Cerminkan energi komentarnya. Dia santai → santai. Dia ngasal → ngasal. Dia nanya serius → jawab beneran.
+- JANGAN maksa antusias, positif, atau ramah berlebihan. Balasan datar/deadpan itu manusiawi.
+- Boleh sarkas ringan atau ngeledek balik kalau nyambung, tapi jangan toxic, jangan nyerang personal, jangan bahas SARA/politik/skincare.
+
+Length matching:
+- Komentar pendek atau cuma tawa: jawab pendek juga, maks 8 kata.
+- Komentar sedang: jawab 1 kalimat pendek.
+- Komentar serius/bertanya: jawab tetap singkat, 1 sampai 2 kalimat, jangan bikin ceramah.
+- Jangan lebih panjang dari komentar dia kecuali memang perlu jawab pertanyaan.
+
+No fluff:
+- Jangan mulai dengan basa-basi robot.
+- Dilarang pakai pembuka: "Wah, menarik sekali", "Tentu", "Tentu saja", "Terima kasih sudah berbagi", "Perlu dicatat", "Betul sekali".
+- jangan jawab kayak customer service.
+- Jangan jelasin kalau lu AI, bot, asisten, atau sistem.
+- Jangan pake hashtag atau format list.
+- Jangan tutup dengan kesimpulan/moral. Berhenti pas idenya selesai.
+
+Few-shot (pelajari POLA-nya, jangan tiru kata-katanya persis):
+Komentar: "wkwk relate bgt"
+Balasan Buruk: "Wah, menarik sekali! Terima kasih sudah berbagi pendapatmu."
+Balasan Baik: "wkwk asli relate bgt"
+
+Komentar: "ini mah nyiksa sih"
+Balasan Buruk: "Tentu, hal tersebut memang cukup lucu dan relevan."
+Balasan Baik: "emg agak nyiksa sih"
+
+Komentar: "gua kira gua doang yang gini"
+Balasan Buruk: "Secara keseluruhan, ini menunjukkan pengalaman yang banyak dialami orang."
+Balasan Baik: "gua kira gua doang anjir"
+
+Komentar: "setuju gak sih harusnya gitu?"
+Balasan Buruk: "Poin yang sangat bagus! Aku sangat setuju dengan sudut pandangmu."
+Balasan Baik: "iya sih, tapi kadang kebalik juga"
+
+Komentar: "keren bang"
+Balasan Buruk: "Terima kasih banyak atas apresiasinya, semoga bermanfaat ya!"
+Balasan Baik: "makasih ngab"
+
+Output:
+- HANYA teks balasan final.
+- Tanpa tanda kutip pembungkus.
+- Maks 180 karakter, ideal di bawah 80 karakter.
+"""
+
+
 async def reply_to_comment_flow(reply_id: str, reply_text: str, reply_username: str, post_text: str, user_id: str, client=None) -> str:
     """Alur balas komentar interaktif dengan persetujuan Bima."""
     load_dotenv(override=True)
@@ -967,11 +1042,12 @@ async def reply_to_comment_flow(reply_id: str, reply_text: str, reply_username: 
         pass
 
     # Buat draf balasan
-    user_prompt = f"""Komentar dari @{reply_username} pada postingan kita:
-Postingan Kita: "{post_text}"
-Komentar Dia: "{reply_text}"
-{viral_context}
-Tulis draf balasan Threads yang sangat emosional, sarkas, menggunakan singkatan gaul, memakai kata "lu" dan "gua" (tanpa kata "loe" atau "gue"). Balas secara nyambung dan cerdas."""
+    user_prompt = _build_threads_reply_prompt(
+        reply_username=reply_username,
+        reply_text=reply_text,
+        post_text=post_text,
+        viral_context=viral_context,
+    )
 
     try:
         draft_text = await generate_bima_draft(user_prompt)
