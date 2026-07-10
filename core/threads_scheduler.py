@@ -377,31 +377,23 @@ def get_public_tunnel_url(log_path: Path | None = None) -> str | None:
     return None
 
 async def generate_image_prompt_for_post(draft_text: str) -> str:
-    """Menghasilkan prompt gambar berdasarkan draf postingan untuk digunakan oleh ImageGenTool."""
-    system_prompt = """Lu adalah asisten visual B.I.M.A Core.
-Tugas lu adalah membuat satu prompt gambar (image prompt) singkat dalam bahasa Inggris berdasarkan teks postingan Threads.
-Prompt gambar ini harus dibuat agar terlihat seperti FOTO ASLI (realistic photo) yang diambil oleh orang biasa menggunakan handphone, bukan gambar buatan AI yang mengkilap/sempurna.
+    """Menghasilkan prompt gambar berdasarkan draf postingan untuk digunakan oleh ImageGenTool.
 
-Gaya visual yang diinginkan:
-- Realistic amateur photography, smartphone camera snapshot vibe (e.g., iPhone or Android picture).
-- Pencahayaan alami (natural lighting, sunlight, room light), bayangan alami, tekstur nyata.
-- Komposisi kasual, ada sedikit imperfection (tidak terlalu simetris/sempurna).
-- JANGAN gunakan kata-kata seperti "3D render", "CGI", "highly detailed", "hyperrealistic", "unreal engine", atau kata kunci AI mengkilap lainnya.
-- JANGAN sertakan teks/tulisan apa pun di dalam gambar.
+    Pakai photographer-brief prompt dengan grounding setting Indonesia
+    (core/langgraph_nodes/image_prompt.py) + scrub sisa keyword slop."""
+    from core.langgraph_nodes.image_prompt import build_threads_system_prompt, scrub_slop
 
-Contoh:
-Postingan: "Keyboard QWERTY sengaja dibikin lambat biar mesin ketik tahun 1870 gak macet"
-Prompt: "A close-up snapshot of a dusty 1870 mechanical typewriter on an old wooden desk, natural sunlight from a nearby window, amateur smartphone photo style, real life colors and textures"
-
-Kembalikan HANYA teks prompt bahasa Inggris tersebut, tanpa penjelasan tambahan, tanpa tanda kutip."""
     try:
         from core.langgraph_nodes.llm_config import default_llm
         from langchain_core.messages import SystemMessage, HumanMessage
         resp = await asyncio.to_thread(
             default_llm.invoke,
-            [SystemMessage(content=system_prompt), HumanMessage(content=f"Postingan: {draft_text}")]
+            [
+                SystemMessage(content=build_threads_system_prompt()),
+                HumanMessage(content=f"Postingan: {draft_text}"),
+            ]
         )
-        return resp.content.strip().replace('"', '').replace("'", "")
+        return scrub_slop(resp.content.strip().replace('"', '').replace("'", ""))
     except Exception as e:
         logger.warning(f"[THREADS_SCHEDULER] Gagal generate prompt gambar: {e}")
         return ""

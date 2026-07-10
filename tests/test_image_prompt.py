@@ -15,6 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.langgraph_nodes.image_prompt import (
     SLOP_TERMS,
     build_system_prompt,
+    build_threads_system_prompt,
     parse_crafted,
     scrub_slop,
 )
@@ -123,6 +124,74 @@ def test_build_system_prompt_img2img_focuses_on_change():
     assert "referensi" in sys_prompt
     assert "CASUAL|" in sys_prompt and "CLEAN|" in sys_prompt
     assert sys_prompt != build_system_prompt(has_ref=False)
+
+
+# ---------- build_threads_system_prompt ----------
+
+def test_threads_system_prompt_indonesia_grounding():
+    sys_prompt = build_threads_system_prompt()
+    assert "Indonesia" in sys_prompt
+    # anti interior bule
+    assert "Amerika" in sys_prompt
+    # detail lokal harus disebut sebagai bahan
+    assert "keramik" in sys_prompt
+
+
+def test_threads_system_prompt_amateur_not_pro():
+    sys_prompt = build_threads_system_prompt()
+    assert "handheld" in sys_prompt
+    assert "amateur" in sys_prompt.lower() or "AMATIR" in sys_prompt
+    # istilah foto pro harus masuk daftar larangan
+    assert "softbox" in sys_prompt
+    assert "cinematic" in sys_prompt
+
+
+def test_threads_system_prompt_no_readable_text_and_variation():
+    sys_prompt = build_threads_system_prompt()
+    assert "no readable text anywhere" in sys_prompt
+    assert "VARIASIKAN" in sys_prompt
+    assert "DILARANG" in sys_prompt
+
+
+def test_threads_system_prompt_differs_from_seniman_prompts():
+    sys_prompt = build_threads_system_prompt()
+    assert sys_prompt != build_system_prompt(has_ref=False)
+    assert sys_prompt != build_system_prompt(has_ref=True)
+    # threads gak pakai tag CASUAL|CLEAN
+    assert "CASUAL|" not in sys_prompt
+
+
+# ---------- generate_image_prompt_for_post (mocked LLM) ----------
+
+@pytest.mark.asyncio
+async def test_threads_image_prompt_scrubs_slop_and_quotes(monkeypatch):
+    import core.threads_scheduler as ts
+
+    llm = mock.Mock()
+    llm.invoke.return_value = SimpleNamespace(
+        content='"A cluttered desk in a small Indonesian office, masterpiece, 8k, '
+                'afternoon light, no readable text anywhere"'
+    )
+    monkeypatch.setattr("core.langgraph_nodes.llm_config.default_llm", llm)
+
+    out = await ts.generate_image_prompt_for_post("meja gua berantakan mulu")
+    assert "masterpiece" not in out.lower()
+    assert "8k" not in out.lower()
+    assert '"' not in out
+    assert "Indonesian office" in out
+    assert llm.invoke.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_threads_image_prompt_returns_empty_on_llm_error(monkeypatch):
+    import core.threads_scheduler as ts
+
+    llm = mock.Mock()
+    llm.invoke.side_effect = RuntimeError("boom")
+    monkeypatch.setattr("core.langgraph_nodes.llm_config.default_llm", llm)
+
+    out = await ts.generate_image_prompt_for_post("topik apapun")
+    assert out == ""
 
 
 # ---------- _craft_image_prompt (mocked LLM) ----------
