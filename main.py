@@ -119,6 +119,8 @@ if __name__ == "__main__":
         from core.mcp_client_manager import init_manager, shutdown_manager
         mcp_mgr = init_manager(MCP_CLIENTS_CONFIG, BASE_DIR)
         _inject_mcp_tools(mcp_mgr)
+        from teams.t3_arsip import start_vault_index_background
+        start_vault_index_background()
         atexit.register(shutdown_manager)
     except Exception as e:
         logger.warning(f"MCP client gagal init (bot tetap jalan tanpa MCP eksternal): {e}")

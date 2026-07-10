@@ -3,7 +3,6 @@ import re
 import logging
 import json
 import threading
-import lancedb
 from pathlib import Path
 from datetime import datetime
 from crewai import Agent
@@ -27,6 +26,8 @@ def _get_db():
     if _db is None:
         with _db_lock:
             if _db is None:
+                import lancedb
+
                 path = os.path.join(os.path.dirname(__file__), "../vault_index")
                 _db = lancedb.connect(path)
     return _db
@@ -590,7 +591,14 @@ def _index_vault_safe():
     except Exception as e:
         print(f"[ARSIP] ⚠️ Background index vault gagal: {e}")
 
-threading.Thread(target=_index_vault_safe, daemon=True, name="arsip-index-startup").start()
+
+def start_vault_index_background():
+    """Start vault indexing only after MCP subprocesses have finished forking."""
+    threading.Thread(
+        target=_index_vault_safe,
+        daemon=True,
+        name="arsip-index-startup",
+    ).start()
 
 
 

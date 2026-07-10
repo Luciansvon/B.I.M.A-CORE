@@ -1,3 +1,26 @@
+const agentMemoryApps = process.env.AGENTMEMORY_ENABLED === "true" ? [
+  {
+    name: "agentmemory",
+    script: "node_modules/.bin/agentmemory",
+    args: "--tools core",
+    interpreter: "none",
+    cwd: "/home/bima_lucian/BIMA_CORE/services/agentmemory",
+    watch: false,
+    env: {
+      NODE_ENV: "production",
+      PATH: "/home/bima_lucian/.local/bin:/usr/local/bin:/usr/bin:/bin",
+    },
+    log_date_format: "YYYY-MM-DD HH:mm:ss",
+    error_file: "../../logs/agentmemory-error.log",
+    out_file: "../../logs/agentmemory-output.log",
+    merge_logs: true,
+    autorestart: true,
+    max_memory_restart: "1G",
+    restart_delay: 5000,
+    exp_backoff_restart_delay: 2000,
+  },
+] : [];
+
 module.exports = {
   apps : [
     {
@@ -59,26 +82,7 @@ module.exports = {
       restart_delay: 5000,
       exp_backoff_restart_delay: 2000,
     },
-    {
-      name: "agentmemory",
-      script: "node_modules/.bin/agentmemory",
-      args: "--tools core",
-      interpreter: "none",
-      cwd: "/home/bima_lucian/BIMA_CORE/services/agentmemory",
-      watch: false,
-      env: {
-        NODE_ENV: "production",
-        PATH: "/home/bima_lucian/.local/bin:/usr/local/bin:/usr/bin:/bin",
-      },
-      log_date_format: "YYYY-MM-DD HH:mm:ss",
-      error_file: "../../logs/agentmemory-error.log",
-      out_file: "../../logs/agentmemory-output.log",
-      merge_logs: true,
-      autorestart: true,
-      max_memory_restart: "1G",
-      restart_delay: 5000,
-      exp_backoff_restart_delay: 2000,
-    },
+    ...agentMemoryApps,
     {
       name: "anisa-status",
       script: "scripts/status_collector.py",

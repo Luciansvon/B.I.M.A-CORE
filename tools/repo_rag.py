@@ -24,8 +24,6 @@ import time
 from pathlib import Path
 from typing import Iterable
 
-import lancedb
-
 logger = logging.getLogger("bima_core")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -70,6 +68,8 @@ def _get_embedder():
 
 
 def _connect_db():
+    import lancedb
+
     _INDEX_DIR.mkdir(exist_ok=True)
     return lancedb.connect(str(_INDEX_DIR))
 
