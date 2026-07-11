@@ -53,26 +53,29 @@ async def admin_node(state: BimaState) -> dict:
 
         CATATAN: Kalau ada blok HISTORI atau ANALISIS TIM SEBELUMNYA, pakai itu untuk pahami subjek/konteks aslinya — terutama kalau permintaan Bima singkat atau sekadar jawaban preferensi.
 
-        DETEKSI OTOMATIS (gunakan kecuali Bima minta lain):
+        TEBAKAN AWAL DARI KEYWORD MATCHING (fallback -- BUKAN keputusan final):
         - Format file: {detected_format.upper()}
         - Gaya tulisan: {detected_style.upper()} ({style_info['tone']})
+        Keyword matching di atas cuma baca kata literal di permintaan, gak baca konteks.
+        PRIORITASKAN penalaran kamu sendiri atas HISTORI/ANALISIS TIM SEBELUMNYA/DATA di atas
+        kalau itu kasih petunjuk lebih akurat soal format & gaya yang pas -- baru pakai tebakan
+        di atas kalau kamu beneran gak punya cukup konteks buat mutusin sendiri.
 
         TUGASMU:
         1. Pakai tool yang sesuai:
            - PDF   → PDFGeneratorTool (cocok untuk laporan, proposal, resume, surat, certificate)
            - Word  → WordGeneratorTool (cocok untuk dokumen yang masih bisa diedit Bima)
            - Excel → ExcelGeneratorTool (cocok untuk tabel data, rekap, perbandingan angka)
-        2. WAJIB sertakan "style": "{detected_style}" di JSON input tool — supaya warna, tone, dan layout sesuai
+        2. WAJIB sertakan "style" (formal | semi_formal | informal | akademik) di JSON input tool -- supaya warna, tone, dan layout sesuai
         3. Konten WAJIB substantial:
            - PDF/Word: minimal 3-5 sections, setiap section punya heading + content (paragraph)
            - PDF: kalau >3 sections, set "cover": true dan "toc": true
            - Excel: minimal 5 baris data dalam tiap sheet
         4. Tone tulisan menyesuaikan style:
-           - Formal      → kalimat baku, profesional, struktur kaku
-           - Casual      → conversational, ramah, lebih luwes
-           - Creative    → naratif, deskriptif, bisa pakai metafora
-           - Technical   → padat, presisi, terminologi teknis OK
-           - Educational → step-by-step, contoh konkret, ramah pemula
+           - Formal      → baku, resmi, struktur kaku (surat dinas, kontrak, laporan resmi)
+           - Semi-Formal → sopan tapi luwes, ramah (tutorial, dokumentasi teknis, panduan)
+           - Informal    → santai, ekspresif, boleh non-baku (blog, cerita, chat santai)
+           - Akademik    → sangat formal, objektif, impersonal (skripsi, tesis, jurnal ilmiah)
 
         ATURAN TABEL (WAJIB jika ada tabel di section):
         - Jangan masukkan teks panjang dalam satu cell — pecah jadi beberapa kolom atau singkat jadi frasa.

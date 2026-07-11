@@ -42,7 +42,7 @@ Sherlock OSINT     Vault, Marp    Execution       Explain/      capture (Windows
 - **External Bridges**: `discord.py` 2.x, `whatsapp-web.js` (Node.js bridge).
 - **Speech & Audio**: `faster-whisper large-v3-turbo` (STT, multilingual/Indonesian), `F5-TTS` (voice cloning via `Eempostor/F5-TTS-INDO-FINETUNE-V2` with `edge-tts` fallback), `ffmpeg`.
 - **System Automation & OSINT**: `browser-use` (Playwright), `sherlock-project` (OSINT), `agent-reach` CLI, RapidAPI X scrapers.
-- **Document & Media Compile**: `@marp-team/marp-cli` (Slides), `Cytoscape.js` (Codebase network map), Jina Reader Web Fetch API.
+- **Document & Media Compile**: OfficeCLI (native `.xlsx` w/ live charts), `python-docx` + `fpdf2` (Word/PDF), `@marp-team/marp-cli` (Slides), `Cytoscape.js` (Codebase network map), Jina Reader Web Fetch API.
 - **Multilingual RAG**: LanceDB + `Qwen3-Embedding-0.6B` (embedding) + `bge-reranker-v2-m3` (reranking) — both multilingual, Indonesian-optimized.
 - **Cache & Storage**: SQLite, DiskCache, Headroom context compressor.
 - **Vision OCR**: Gemini Vision (VLM) with `easyocr` offline fallback.
@@ -66,6 +66,14 @@ Sherlock OSINT     Vault, Marp    Execution       Explain/      capture (Windows
 - **Smart Opener Mode**:
   - Replies ≤ 80 characters are synthesized in full.
   - Replies > 80 characters trigger a short context-aware audio summary (LLM generated) while sending the full reply as text.
+
+### 📄 Document Generator (T4 Admin)
+- **Multi-format output**: Excel (`.xlsx`), Word (`.docx`), and PDF from structured JSON — reports, proposals, invoices, formal letters, meeting minutes, theses.
+- **4 Indonesian writing registers** (`formal` / `semi_formal` / `informal` / `akademik`), each with its own color palette, typography, margins, and tone. Presets live in `teams/t4_admin/document_styles.json` — add or tweak a style by editing JSON, no code change or redeploy needed.
+- **Native Excel via OfficeCLI**: spreadsheets are built through the [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) binary (offline, Apache-2.0) — charts are real interactive Excel chart objects (not static images), with formulas, freeze panes, merged summary sheets, and clickable reference links.
+- **Academic mode**: Times New Roman 12pt, 1.5 spacing, 4-4-3-3 cm margins, abstract + keywords page, and automatic Roman → Arabic page-number switching for front matter vs body.
+- **Context-aware style detection**: the agent infers the right register from conversation history and upstream team output; keyword matching is only a fallback hint.
+- Agent persona/instructions are externalized to `teams/t4_admin/prompt_templates/backstory.md` — editable without touching Python.
 
 ### 📊 Marp Slide Generator
 - Compiles custom Marp Markdown + CSS into PDF, PPTX, HTML, or PNG.
@@ -125,6 +133,9 @@ BIMA_CORE/
 │
 ├── teams/                     # CrewAI agent definitions
 │   ├── t1_manager.py          # State tracking & token budget tools
+│   ├── t4_admin/              # Document generator package (Excel via OfficeCLI, Word, PDF)
+│   │   ├── document_styles.json       # 4 style presets (data-driven, hot-editable)
+│   │   └── prompt_templates/          # Agent backstory as markdown (no-redeploy edits)
 │   ├── t5_intel.py            # Web scraping, Sherlock, and browser automation agents
 │   ├── t8_mekanik.py          # Code execution and file management tools
 │   └── t10_kodok.py           # Code Doctor — repo explain/search/summarize agent
@@ -146,6 +157,10 @@ BIMA_CORE/
 - Python 3.10+ & Node.js 20+
 - `ffmpeg` (installed on system path)
 - Chrome / Chromium browser (for Playwright/browser-use)
+- OfficeCLI — required for Excel generation (T4 Admin), not a pip dependency:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
+  ```
 
 ### 1. Clone & Setup Environment
 ```bash
