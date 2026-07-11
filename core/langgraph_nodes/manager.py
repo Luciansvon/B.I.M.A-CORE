@@ -72,23 +72,27 @@ ATURAN ROUTING (WAJIB PILIH SATU):
 7.  [ROUTE: lifestyle]               — Butuh info cuaca, atur jadwal, cari video YouTube, atau rekomendasi personal.
 8.  [ROUTE: mekanik]                 — Butuh eksekusi kode Python, debug error, operasi git, atau scan security.
 9.  [ROUTE: saham]                   — Analisis saham IDX/global, harga, teknikal/fundamental, BUY/HOLD/SELL. 📈
-10. [ROUTE: seniman+admin]           — Buat HTML DAN dokumen dari data yang sudah ada (tanpa riset baru).
-11. [ROUTE: arsip+seniman]           — Simpan ke vault, lalu buatkan dashboard HTML dari data yang ada.
-12. [ROUTE: arsip+admin]             — Simpan ke vault, lalu buatkan dokumen resmi dari data yang ada.
-13. [ROUTE: arsip+seniman+admin]     — Simpan ke vault, buatkan HTML DAN dokumen dari data yang ada.
-14. [ROUTE: intel+seniman]           — Butuh riset data dulu, lalu hasilnya dibuatkan dashboard HTML.
-15. [ROUTE: intel+admin]             — Butuh riset data dulu, lalu hasilnya dibuatkan dokumen (PDF/Word/Excel). 📊
-16. [ROUTE: intel+arsip]             — Butuh riset data dulu, lalu hasilnya disimpan ke vault Obsidian.
-17. [ROUTE: intel+seniman+admin]     — Butuh riset dulu, lalu buatkan HTML DAN dokumen (PDF/Word/Excel).
-18. [ROUTE: intel+arsip+seniman]     — Butuh riset dulu, simpan ke vault, lalu buatkan dashboard HTML.
-19. [ROUTE: intel+arsip+admin]       — Butuh riset dulu, simpan ke vault, lalu buatkan dokumen resmi.
-20. [ROUTE: intel+arsip+seniman+admin] — Butuh riset, simpan ke vault, buatkan HTML DAN dokumen resmi.
+10. [ROUTE: kodok]                   — Butuh jelasin/baca isi file, cari fungsi/class di codebase BIMA_CORE, summary modul, cek status index repo, atau lihat peta dependency.
+11. [ROUTE: observer]                — Butuh lihat/cek isi screen atau layar desktop Bima saat ini.
+12. [ROUTE: seniman+admin]           — Buat HTML DAN dokumen dari data yang sudah ada (tanpa riset baru).
+13. [ROUTE: arsip+seniman]           — Simpan ke vault, lalu buatkan dashboard HTML dari data yang ada.
+14. [ROUTE: arsip+admin]             — Simpan ke vault, lalu buatkan dokumen resmi dari data yang ada.
+15. [ROUTE: arsip+seniman+admin]     — Simpan ke vault, buatkan HTML DAN dokumen dari data yang ada.
+16. [ROUTE: intel+seniman]           — Butuh riset data dulu, lalu hasilnya dibuatkan dashboard HTML.
+17. [ROUTE: intel+admin]             — Butuh riset data dulu, lalu hasilnya dibuatkan dokumen (PDF/Word/Excel). 📊
+18. [ROUTE: intel+arsip]             — Butuh riset data dulu, lalu hasilnya disimpan ke vault Obsidian.
+19. [ROUTE: intel+seniman+admin]     — Butuh riset dulu, lalu buatkan HTML DAN dokumen (PDF/Word/Excel).
+20. [ROUTE: intel+arsip+seniman]     — Butuh riset dulu, simpan ke vault, lalu buatkan dashboard HTML.
+21. [ROUTE: intel+arsip+admin]       — Butuh riset dulu, simpan ke vault, lalu buatkan dokumen resmi.
+22. [ROUTE: intel+arsip+seniman+admin] — Butuh riset, simpan ke vault, buatkan HTML DAN dokumen resmi.
 
 INSTRUKSI KRITIS:
 - Jika Bima minta dibuatkan file PDF, Excel, atau Word → pilih rute yang mengandung 'admin'.
 - Jika Bima minta dashboard, HTML, atau visualisasi → pilih rute yang mengandung 'seniman'.
 - Jika Bima minta simpan ke vault/arsip → pilih rute yang mengandung 'arsip'.
 - Jika Bima tanya tentang data yang belum kamu tahu atau minta dibuatkan/diposting tulisan ke Threads → pilih rute yang mengandung 'intel'.
+- Jika Bima minta jelasin/cari isi kode, fungsi, class, atau struktur repo BIMA_CORE sendiri → [ROUTE: kodok]. JANGAN dialihkan ke 'mekanik' (mekanik itu eksekusi/debug, bukan baca-jelasin kode) atau dijawab santai.
+- Jika Bima minta lihat/cek isi screen atau layar desktopnya → [ROUTE: observer].
 - Jika data sudah ada di konteks/histori dan Bima minta buat dokumen → TIDAK perlu 'intel', langsung ke tim yang sesuai.
 - Jika Bima minta BEBERAPA hal sekaligus → gabungkan rute yang relevan.
 - Jadilah kritis: jika permintaan Bima kurang detail, tanyakan detailnya sambil tetap memberikan analisis awal.
@@ -176,6 +180,12 @@ Lalu di baris berikutnya tulis jawaban analisis kritis dan hangatmu."""
     elif "[ROUTE: SAHAM]" in upper_content:
         next_route = "saham"
         active_teams = ["saham"]
+    elif "[ROUTE: KODOK]" in upper_content:
+        next_route = "kodok"
+        active_teams = ["kodok"]
+    elif "[ROUTE: OBSERVER]" in upper_content:
+        next_route = "observer"
+        active_teams = ["observer"]
     elif "[ROUTE: ARSIP]" in upper_content:
         next_route = "arsip"
         active_teams = ["arsip"]

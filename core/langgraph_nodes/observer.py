@@ -319,7 +319,7 @@ async def analyze_screen(
             )
 
         result = await client.chat.completions.create(
-            model="google/gemini-2.5-flash-lite",
+            model="google/gemini-3.5-flash",
             response_model=response_model,
             messages=[
                 {"role": "system", "content": sys_prompt},

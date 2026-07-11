@@ -192,7 +192,7 @@ KEMBALIKAN HANYA kode Python yang sudah diperbaiki, tanpa penjelasan, tanpa mark
                                     "Content-Type": "application/json"
                                 },
                                 json={
-                                    "model": "deepseek/deepseek-chat",
+                                    "model": "deepseek/deepseek-v4-flash",
                                     "messages": [{"role": "user", "content": fix_prompt}],
                                     "max_tokens": 2000
                                 },

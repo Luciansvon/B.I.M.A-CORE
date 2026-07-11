@@ -115,3 +115,198 @@
 * **Masalah**: Pemeriksaan lint `ruff check` gagal dengan `ruff: command not found`.
 * **Root Cause**: Ruff tidak terpasang di `bima_env` dan proyek tidak mendeklarasikannya sebagai dependency development aktif.
 * **Solusi**: Jangan memasang dependency baru hanya untuk cleanup. Gunakan `py_compile`, `git diff --check`, focused pytest, dan full pytest sebagai gate yang tersedia.
+
+## Log 34: Nama File Aturan Bersifat Case-sensitive di WSL
+* **Masalah**: Pembacaan `claude.md` gagal walau file aturan terlihat ada.
+* **Root Cause**: File aktual bernama `CLAUDE.md`; filesystem Linux membedakan huruf besar dan kecil.
+* **Solusi**: Gunakan nama persis `CLAUDE.md` atau cari dulu dengan `rg --files | rg -i '^claude\.md$'`.
+
+## Log 35: Command Healthcheck di AGENTS.md Sudah Basi
+* **Masalah**: `python healthcheck.py` gagal karena file tidak ada di root.
+* **Root Cause**: Healthcheck sudah berada di `scripts/healthcheck.py`, tetapi dokumentasi masih menunjuk path lama.
+* **Solusi**: Jalankan `bima_env/bin/python scripts/healthcheck.py` dan perbarui command di `AGENTS.md` pada task dokumentasi berikutnya.
+
+## Log 36: Tool Dev Tidak Terpasang di bima_env
+* **Masalah**: `ruff` dan `pip-audit` tidak dapat dijalankan walau tercantum di `requirements-dev.txt`.
+* **Root Cause**: Environment production dibuat tanpa dependency development dan repo belum memiliki lockfile yang membedakan group production/dev.
+* **Solusi**: Tambahkan group dev pada `pyproject.toml`, buat lockfile uv, dan instal group dev hanya pada CI/development dengan mode frozen.
+
+## Log 37: Audit Dependency Outdated via pip Timeout
+* **Masalah**: `pip list --outdated --format=json` tidak selesai dalam 60 detik.
+* **Root Cause**: Environment memiliki ratusan paket ML/CUDA dan pip memeriksa metadata secara lambat.
+* **Solusi**: Gunakan executable lokal `bima_env/bin/uv pip list --python bima_env/bin/python --outdated`; audit ini selesai sekitar 16 detik.
+
+## Log 38: GitHub API Date Gagal Diformat PowerShell
+* **Masalah**: Pemanggilan `.ToString('yyyy-MM-dd')` pada tanggal GitHub API gagal.
+* **Root Cause**: `Invoke-RestMethod` mengembalikan field tanggal sebagai string pada host PowerShell ini.
+* **Solusi**: Perlakukan nilai sebagai string ISO dan ambil 10 karakter pertama, atau parse eksplisit dengan `[datetime]::Parse()`.
+
+## Log 39: uv audit Tidak Bisa Berjalan Tanpa Project Metadata
+* **Masalah**: `uv audit --frozen` gagal dengan `No pyproject.toml found`.
+* **Root Cause**: BIMA_CORE masih memakai requirements bebas versi dan belum menjadi project uv yang dapat dikunci.
+* **Solusi**: Buat `pyproject.toml` + `uv.lock`, lalu jalankan `uv audit --frozen` di CI dan lokal.
+
+## Log 40: AgentMemory Mati Karena Cache npx Korup
+* **Masalah**: Launcher mencatat AgentMemory berhasil di-spawn, tetapi port 3111 tidak listen dan semantic recall memakai fallback.
+* **Root Cause**: `npx -y @agentmemory/agentmemory` berulang kali gagal rename cache dengan `ENOTEMPTY` pada `~/.npm/_npx/.../@agentmemory/agentmemory`.
+* **Solusi**: Setelah approval instalasi, pasang dan pin `@agentmemory/agentmemory@0.9.27` sekali, jalankan executable sebagai proses PM2 terpisah, dan tambahkan readiness check sebelum dianggap sehat. Pembersihan cache npx bersifat destruktif dan hanya dilakukan dengan approval eksplisit.
+
+## Log 41: Dependency Terbaru Tidak Bisa Disatukan dalam Satu Environment
+* **Masalah**: Dry-run CrewAI 1.15.2 + Browser Use 0.13.3 gagal diselesaikan; kombinasi dengan F5-TTS juga gagal.
+* **Root Cause**: CrewAI meminta `openai>=2.30,<3`, Browser Use mengunci `openai==2.16.0`, serta Browser Use/F5-TTS bertabrakan pada `rich`, `cached-path`, dan `tqdm`.
+* **Solusi**: Pisahkan `core-env`, `browser-env`, dan `voice-env`; pin masing-masing dengan lockfile. Hubungkan browser dan voice sebagai subprocess/service dengan kontrak sempit.
+
+## Log 42: Environment Memiliki Sembilan Konflik Versi Laten
+* **Masalah**: `python -m pip check` menemukan konflik protobuf, aiofiles, Starlette, lance-namespace, fsspec, rich, pyarrow, serta Torch/Torchvision.
+* **Root Cause**: Paket dipasang bertahap tanpa lockfile, sehingga pip membiarkan dependency lama dan baru bercampur.
+* **Solusi**: Jangan auto-upgrade environment aktif. Buat environment baru dari lockfile per subsistem, jalankan import smoke + full test, lalu pindahkan PM2 setelah verifikasi.
+
+## Log 43: SQLite MCP Aktif Berasal dari Repo Arsip
+* **Masalah**: `mcp-server-sqlite` aktif dan memberi tool write/create table, padahal upstream memindahkannya ke repository archived tanpa security update.
+* **Root Cause**: `config_mcp.json` dibuat saat SQLite masih dicontohkan sebagai reference server dan tidak pernah diaudit ulang terhadap registry terbaru.
+* **Solusi**: Nonaktifkan SQLite MCP, gunakan fungsi internal dengan query allowlist, serta pin semua package `npx`/`uvx` yang tetap digunakan.
+
+## Log 44: Git MCP Tidak Masuk ke Agen Kodok
+* **Masalah**: Startup mencatat `[mcp_inject] agent 'kodok' tidak dikenal, skip` sehingga 12 Git tools tidak tersedia.
+* **Root Cause**: `config_mcp.json` menargetkan `kodok`, tetapi `_AGENT_REGISTRY` di `main.py` tidak memiliki mapping `teams.t10_kodok:kodok_agent`.
+* **Solusi**: Tambahkan mapping Kodok dan regression test untuk seluruh nilai `attach_to` agar selalu ada di registry.
+
+## Log 45: LanceDB Diinisialisasi Sebelum Fork Subprocess MCP
+* **Masalah**: Setiap startup MCP menampilkan warning bahwa runtime async LanceDB di-reset setelah fork dan masih memiliki risiko deadlock.
+* **Root Cause**: Koneksi LanceDB dibuat pada import module sebelum MCP adapter membuka subprocess.
+* **Solusi**: Ubah koneksi LanceDB menjadi lazy-init setelah lifecycle subprocess selesai, atau jalankan komponen LanceDB pada proses terpisah dengan start method `spawn`/`forkserver` yang diuji.
+
+## Log 46: Scheduler Berulang Kali Terlambat
+* **Masalah**: Observability, Threads scan, dan paper trading terlambat sekitar 23–77 detik pada banyak siklus.
+* **Root Cause**: Event loop utama mengalami stall; audit belum membuktikan call site tunggal karena beberapa job CPU/sync berjalan bersamaan.
+* **Solusi**: Tambahkan metrik event-loop lag dan profil dengan `pyinstrument` yang sudah terpasang. Pindahkan kerja CPU/sync terberat ke worker terpisah berdasarkan hasil profil, lalu set `coalesce`, `max_instances`, dan `misfire_grace_time` secara eksplisit.
+
+## Log 47: Prefix Dashboard API Token Masuk Log
+* **Masalah**: Startup menulis delapan karakter awal `DASHBOARD_API_TOKEN` ke log.
+* **Root Cause**: `core/dashboard_server.py` menggunakan `_API_TOKEN[:8]` untuk indikator token loaded.
+* **Solusi**: Log hanya status boolean/token source tanpa karakter token dan rotasi token bila log pernah dibagikan ke pihak lain.
+
+## Log 48: Format Git Log Dipecah Shell WSL
+* **Masalah**: Format `git log --pretty=format:%h|%ad|%s` membuat `%ad` dan `%s` dibaca sebagai command terpisah.
+* **Root Cause**: Karakter pipe melewati lapisan PowerShell ke `bash -lc` tanpa quoting yang bertahan sampai Git.
+* **Solusi**: Gunakan `git log -5 --oneline` untuk eksplorasi ringkas atau jalankan format kompleks langsung di shell WSL interaktif.
+
+## Log 49: Test MCP yang Diasumsikan Ternyata Tidak Ada
+* **Masalah**: Pembacaan `tests/test_mcp_client_manager.py` gagal karena file belum ada.
+* **Root Cause**: Audit mengasumsikan MCP manager sudah punya unit test berdasarkan nama modul production.
+* **Solusi**: Cari test dengan `rg --files tests | rg 'mcp'` sebelum membaca; buat test baru hanya setelah memastikan coverage memang belum ada.
+
+## Log 50: Instalasi AgentMemory Melewati Timeout Tool
+* **Masalah**: `npm install` melewati 60 detik dan tool mengembalikan timeout, tetapi proses WSL tetap berjalan di background.
+* **Root Cause**: AgentMemory menarik dependency ONNX/transformers besar; wrapper timeout Windows tidak langsung menghentikan child WSL.
+* **Solusi**: Periksa PID, log npm, dan keberadaan lockfile sebelum retry. Instalasi akhirnya menghasilkan `package-lock.json` dan AgentMemory 0.9.27 tanpa menjalankan install kedua.
+
+## Log 51: Redirect `/dev/null` Diparse PowerShell
+* **Masalah**: Command `wsl ... 2>/dev/null` mencoba menulis ke path UNC `dev/null` dan gagal.
+* **Root Cause**: Operator redirect diproses PowerShell sebelum command masuk WSL.
+* **Solusi**: Hindari redirect shell pada command lintas PowerShell/WSL; tangani exit code atau jalankan seluruh pipeline di satu shell dengan quoting yang sudah diverifikasi.
+
+## Log 52: Sinkronisasi Voice Environment Sangat Lama
+* **Masalah**: `uv sync` voice-env berjalan lebih dari 15 menit dan menulis beberapa GB cache sebelum dihentikan.
+* **Root Cause**: F5-TTS + PyTorch CUDA membutuhkan wheel besar, sementara beberapa proses download berjalan bersamaan.
+* **Solusi**: Jalankan satu sync besar pada satu waktu, gunakan cache uv yang sudah terisi, dan beri window eksekusi khusus. Jangan switch PM2 ke voice-env sebelum executable F5 dan import smoke terverifikasi.
+
+## Log 53: AgentMemory `--instance 1` Tidak Merelokasi Engine
+* **Masalah**: CLI menunggu health port 3211, tetapi iii-engine tetap membuka 3111/49134 dari config statis lalu smoke test timeout.
+* **Root Cause**: AgentMemory 0.9.27 tidak menerapkan offset instance ke port eksplisit di bundled `iii-config.yaml` pada setup ini.
+* **Solusi**: Deployment BIMA memakai default port 3111. Smoke test default berhasil `healthy`; proses uji kemudian dihentikan dengan `agentmemory stop --force` agar state di-flush.
+
+## Log 54: Patch Dashboard Gagal karena Konteks Emoji
+* **Masalah**: Patch sanitasi token tidak menemukan baris logger walau teks terlihat sama.
+* **Root Cause**: Emoji pada file UTF-8 tampil sebagai mojibake melalui PowerShell sehingga konteks patch berbeda byte.
+* **Solusi**: Pecah patch menjadi hunk ASCII kecil dan gunakan karakter Unicode asli hanya pada baris yang memang harus diganti.
+
+## Log 55: Command Kedua Kehilangan Prefix WSL
+* **Masalah**: Setelah `wsl ... uv lock;`, path Linux untuk command pytest berikutnya dijalankan oleh PowerShell dan dianggap executable Windows.
+* **Root Cause**: Tanda titik koma mengakhiri invocation WSL; command setelahnya kembali ke shell host.
+* **Solusi**: Beri prefix `wsl.exe -d Ubuntu --cd ... --` pada setiap command atau jalankan satu command per tool call.
+
+## Log 56: CI Lock Bersih Belum Memuat Runtime Import Test
+* **Masalah**: Test dari environment CI terisolasi gagal collection pada lima modul walau `uv pip check` bersih.
+* **Root Cause**: CrewAI OpenRouter membutuhkan `litellm` yang tidak tercantum langsung, dan test paper trading mengimpor `yfinance` yang sebelumnya dikeluarkan dari subset CI.
+* **Solusi**: Tambahkan dependency eksplisit `litellm` ke core/CI serta `yfinance` ke group CI, lock ulang, lalu jalankan full test dari `.venv`. Jangan menyatakan CI pulih sebelum 207+ test lulus dari environment bersih.
+
+## Log 57: Patch Dependency CI Memakai Konteks Versi Lama
+* **Masalah**: Patch awal `pyproject.toml` gagal menemukan baris LanceDB dan MCP yang diharapkan.
+* **Root Cause**: Konteks patch berasal dari ringkasan versi sebelumnya, sedangkan file aktual sudah memakai `lancedb==0.34.0` dan `mcpadapt`.
+* **Solusi**: Baca ulang file aktual lalu sisipkan dependency berdasarkan baris `mcpadapt` dan batas group CI yang benar.
+
+## Log 58: Full Test CI Menemukan Import pandas-ta Berikutnya
+* **Masalah**: Setelah `litellm` dan `yfinance` tersedia, collection full test masih berhenti pada `ModuleNotFoundError: pandas_ta` dari `teams/t9_saham.py`.
+* **Root Cause**: `pandas-ta` ada di dependency runtime utama tetapi belum dimasukkan ke subset dependency group CI.
+* **Solusi**: Tambahkan pin `pandas-ta==0.4.71b0` ke group CI, lock dan sync ulang, lalu ulang full test. Perubahan ditahan sampai kegagalan baru ini disetujui sesuai verification gate repo.
+
+## Log 59: Pemeriksaan Cache Voice Gabungan Timeout
+* **Masalah**: Setelah sync voice melewati batas tool, command pemeriksaan `pgrep`, dua `du`, dan `df` ikut timeout tanpa hasil.
+* **Root Cause**: `du` rekursif pada cache uv yang besar membuat pemeriksaan gabungan melewati batas waktu, sehingga status proses tidak terlihat.
+* **Solusi**: Jangan gabungkan scan cache besar dengan pemeriksaan proses. Cek PID dan filesystem memakai command terpisah, lalu lanjutkan sync dengan mekanisme yield yang tidak mematikan proses.
+
+## Log 60: PowerShell Select-Object Range Tidak Diparentesiskan
+* **Masalah**: Pembacaan potongan `.env.example` gagal karena `Select-Object -Index 100..130` dianggap satu string.
+* **Root Cause**: PowerShell membutuhkan ekspresi range dibungkus kurung saat dipakai sebagai nilai parameter.
+* **Solusi**: Gunakan `Select-Object -Index (100..130)` atau `sed -n` melalui WSL.
+
+## Log 61: Patch Flag Voice Gagal karena Komentar Env Berbeda
+* **Masalah**: Patch gabungan STT/TTS gagal pada konteks komentar daftar ukuran model.
+* **Root Cause**: Baris aktual juga memuat opsi `turbo`, sedangkan konteks patch tidak memuatnya.
+* **Solusi**: Baca ulang blok `.env.example`, gunakan konteks aktual, lalu patch ulang. Regression test memastikan STT/TTS default tidak memuat worker/model.
+
+## Log 62: Gate Paralel Kehilangan Output karena Git Windows pada UNC Worktree
+* **Masalah**: Eksekusi gate paralel batal saat `git diff --check` lewat Git Windows menganggap worktree UNC bukan repository; output test paralel ikut tidak terkumpul.
+* **Root Cause**: Worktree dibuat di filesystem WSL, tetapi satu command Git dijalankan dari host Windows.
+* **Solusi**: Jalankan semua command Git worktree melalui `wsl.exe --cd`, cek proses pytest yang tertinggal, lalu ulang full test secara tunggal agar exit code dan jumlah test tercatat.
+
+## Log 63: Installer Runtime Paralel Melewati Timeout Wrapper
+* **Masalah**: `uv sync` browser dan `npm ci` AgentMemory melewati timeout parent 120 detik sehingga output gabungan hilang.
+* **Root Cause**: Instalasi npm tetap berjalan sebagai proses WSL setelah wrapper host berhenti menunggu.
+* **Solusi**: Cek PID sebelum retry. Browser diverifikasi dari metadata environment; proses npm ditunggu sampai selesai lalu diverifikasi dengan `npm ls`.
+
+## Log 64: browser_use Tidak Memiliki Atribut __version__
+* **Masalah**: Smoke test import browser gagal ketika membaca `browser_use.__version__`.
+* **Root Cause**: Paket Browser Use 0.13.3 tidak mengekspos atribut versi pada modul top-level.
+* **Solusi**: Baca versi terpasang memakai `importlib.metadata.version('browser-use')`; hasilnya Browser Use 0.13.3 dan OpenAI 2.16.0.
+
+## Log 65: AgentMemory Membawa Vulnerability Transitive
+* **Masalah**: `npm audit --audit-level=high` menemukan 15 vulnerability: 10 moderate, 4 high, dan 1 critical.
+* **Root Cause**: `@agentmemory/agentmemory@0.9.27` membawa rantai `iii-sdk`, OpenTelemetry lama, serta `@xenova/transformers`/`onnxruntime-web` dengan `protobufjs` rentan.
+* **Solusi**: Jangan start AgentMemory di PM2. Tahan service sampai versi upstream aman atau dependency override tervalidasi; backend utama tetap dapat berjalan dengan status degraded.
+
+## Log 66: Path Healthcheck di Dokumentasi Tidak Sesuai Repo
+* **Masalah**: Command `python healthcheck.py` gagal karena file tidak ada di root.
+* **Root Cause**: Implementasi aktual berada di `scripts/healthcheck.py`, sedangkan dokumentasi masih menunjuk lokasi lama.
+* **Solusi**: Jalankan `python scripts/healthcheck.py`; health production lulus 51 check dengan 1 warning nonfatal.
+
+## Log 67: Operator Pipe Pencarian Health Keluar dari WSL
+* **Masalah**: `rg ... | head` menjalankan `head` di PowerShell, lalu regex dengan `|` juga ditafsirkan sebagai command shell.
+* **Root Cause**: Quote/operator tidak bertahan konsisten melewati PowerShell ke WSL.
+* **Solusi**: Hindari pipe lintas-shell dan pakai beberapa pola `rg -e` tanpa operator alternation.
+
+## Log 68: Parser Status Menganggap services Berbentuk List
+* **Masalah**: Pembacaan snapshot berhasil mencetak `degraded`, lalu gagal saat memanggil `.get()` pada nama service.
+* **Root Cause**: Field `services` adalah map `{nama: status}`, bukan list objek.
+* **Solusi**: Baca map langsung. Snapshot membuktikan backend/WA/tunnel online dan AgentMemory unknown sehingga overall degraded.
+
+## Log 69: Warning LanceDB Fork Masih Muncul Setelah Lazy Connection
+* **Masalah**: Log startup production masih menampilkan warning experimental fork support dari LanceDB saat MCP subprocess dimulai.
+* **Root Cause**: Re-index Arsip membuka koneksi LanceDB sebelum seluruh MCP child selesai di-fork; lazy module import saja belum cukup mengubah urutan startup.
+* **Solusi**: Sistem tetap online, tetapi perbaikan lanjutan harus memindahkan re-index/warmup LanceDB setelah MCP startup atau memakai multiprocessing `spawn`/`forkserver`, lalu diverifikasi terhadap deadlock.
+
+## Log 70: Audit Dry-run Membatalkan Output Investigasi Paralel
+* **Masalah**: `npm audit fix --dry-run --json` exit 1 karena vulnerability belum terselesaikan, sehingga output query versi dan trace LanceDB dalam batch paralel tidak terkumpul.
+* **Root Cause**: Orkestrasi batch menghentikan hasil agregat ketika salah satu command menghasilkan exit nonzero yang memang diharapkan dari audit.
+* **Solusi**: Jalankan query versi dan trace satu per satu. Hasil resmi npm: AgentMemory 0.9.27 masih versi terbaru dan vulnerability direct tidak punya fix otomatis.
+
+## Log 71: Ruff main.py Menemukan E402 Baseline
+* **Masalah**: Ruff pada semua file tersentuh menemukan empat E402 di `main.py`.
+* **Root Cause**: `uvloop.install()`, Sentry, dan konfigurasi logging sengaja dijalankan sebelum import modul aplikasi; pola ini sudah ada sebelum perbaikan LanceDB.
+* **Solusi**: Jangan memindahkan urutan startup hanya untuk lint. Jalankan Ruff pada file logika yang berubah; full pytest dan startup production menjadi gate untuk `main.py`.
+
+## Log 72: Memindahkan Thread Index Saja Belum Menghilangkan Warning LanceDB
+* **Masalah**: Startup pertama setelah thread index dipindahkan masih menampilkan warning pada setiap fork MCP.
+* **Root Cause**: Import top-level `lancedb` di Arsip dan Repo RAG sudah menginisialisasi runtime native sebelum koneksi/database dipakai.
+* **Solusi**: Lazy-import `lancedb` di `_get_db()` dan `_connect_db()`, selain menunda thread index. Startup berikutnya bersih dan index Arsip tetap menghasilkan 897 dokumen BM25 setelah MCP siap.

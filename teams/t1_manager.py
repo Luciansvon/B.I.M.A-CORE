@@ -63,8 +63,8 @@ class CostOptimizerTool(BaseTool):
                 model = "deepseek-v4-flash"
                 cost_per_m = 0.28
             else:
-                model = "gemini-3-flash-preview"
-                cost_per_m = 0.15
+                model = "deepseek-v4-flash"
+                cost_per_m = 0.28
                 
             cost = (tokens / 1_000_000) * cost_per_m
             

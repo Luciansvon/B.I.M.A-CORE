@@ -33,7 +33,7 @@ def _enabled(name: str, default: str = "0") -> bool:
 def _pick_model(task: str) -> tuple[str, str]:
     if MARKETPLACE_PATTERN.search(task):
         return os.environ.get(
-            "BROWSER_USE_MODEL_MARKETPLACE", "google/gemini-2.5-flash"
+            "BROWSER_USE_MODEL_MARKETPLACE", "google/gemini-3.5-flash"
         ), "marketplace"
     return os.environ.get("BROWSER_USE_MODEL", "google/gemini-3.5-flash"), "default"
 

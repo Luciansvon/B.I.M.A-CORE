@@ -20,13 +20,15 @@ Incoming Message (Discord / WhatsApp / REST API)
        ▼
 [manager.py] ── (LLM-based fallback routing)
        │
-       ├────────────────────────┬────────────────────────┤
-       ▼                        ▼                        ▼
-[intel.py]                  [arsip.py]               [mekanik.py]
-Web RAG, Threads            Obsidian Vault,          Code Execution,
-Sherlock OSINT              Marp Slide Gen           Codebase Visualizer
-       │                        │                        │
-       └────────────────────────┼────────────────────────┘
+       ├──────────────┬──────────────┬──────────────┬──────────────┤
+       ▼              ▼              ▼              ▼              ▼
+[intel.py]        [arsip.py]     [mekanik.py]    [kodok.py]    [observer.py]
+Web RAG, Threads   Obsidian       Code            Repo RAG      Desktop screen
+Sherlock OSINT     Vault, Marp    Execution       Explain/      capture (Windows
+                   Slide Gen                      Search/       bridge, `/lihat`)
+                                                   Visualizer
+       │              │              │              │              │
+       └──────────────┴──────────────┴──────────────┴──────────────┘
                                 ▼
                        [BimaState Output]
 ```
@@ -73,6 +75,14 @@ Sherlock OSINT              Marp Slide Gen           Codebase Visualizer
 - Analyzes Python import dependencies in the workspace relative to `BASE_DIR` using the Abstract Syntax Tree (`ast`).
 - Outputs an interactive, browser-loadable network map (`outputs/codebase_map_*.html`) powered by Cytoscape.js with directory filters and physics layout switching.
 
+### 🐸 Kodok — Code Doctor & Repo Whisperer
+- Answers questions about the BIMA_CORE codebase itself: explain a file, find a function/class, summarize a module, or check RAG index status — always grounded in the semantic + AST-chunked repo index (`tools/repo_rag_tools.py`), never from memory.
+- Reachable via natural-language triggers ("jelasin file X", "cari fungsi Y", "index udah jalan?") through the fast-path regex classifier, with the LLM manager as a routing fallback (`[ROUTE: kodok]`).
+
+### 🖥️ Observer — Desktop Screen Bridge
+- On-demand screen observation via a Windows desktop bridge (`core/desktop_bridge_client.py`); describes the active app/window and what's happening, triggered by `/lihat` or phrases like "cek layar gue".
+- Observation-only in the current phase — no remote action/execution is wired up (`DESKTOP_EXECUTE_ENABLED` is hardcoded `False`).
+
 ### 🛡️ MCP Security Scan (Bumblebee Audit)
 - Audits `config_mcp.json` automatically on startup.
 - Verifies execution command whitelists (`npx`, `uvx`, `node`, `python3`).
@@ -116,11 +126,13 @@ BIMA_CORE/
 ├── teams/                     # CrewAI agent definitions
 │   ├── t1_manager.py          # State tracking & token budget tools
 │   ├── t5_intel.py            # Web scraping, Sherlock, and browser automation agents
-│   └── t8_mekanik.py          # Code execution and file management tools
+│   ├── t8_mekanik.py          # Code execution and file management tools
+│   └── t10_kodok.py           # Code Doctor — repo explain/search/summarize agent
 │
 ├── tools/                     # CrewAI custom tools
 │   ├── slide_generator.py     # Marp compile wrapper
-│   └── code_visualizer.py     # AST dependency analysis to Cytoscape.js
+│   ├── code_visualizer.py     # AST dependency analysis to Cytoscape.js
+│   └── repo_rag_tools.py      # Semantic + AST-chunked repo RAG tools (used by Kodok)
 │
 ├── whatsapp/                  # Node.js WhatsApp Web API bridge
 └── Bima_Vault/                # Obsidian markdown notes (RAG dataset)
@@ -189,7 +201,7 @@ THREADS_MEDIA_CHANNEL_ID=your-channel-id
 ### 4. Run Application
 ```bash
 # Verify syntax & health
-python healthcheck.py
+python scripts/healthcheck.py
 
 # Start application locally
 python main.py
@@ -251,7 +263,7 @@ Register-ScheduledTask -TaskName "WSL-BIMA-Boot" -Action $action -Trigger $trigg
 |---|---|
 | `!threads [topic] [--image]` | Runs Threads drafting flow. Lists trends if no topic provided. |
 | `!arsip [subcommand]` | Manage Obsidian vault notes. Subcommands: `help`, `hubungkan` (link semantik & rapikan), `index` (re-index). |
-| `!qc` + PDF/PNG/JPG | Review drawing details (Gemini Flash Vision). Generates issue coordinates. |
+| `!qc` + PDF/PNG/JPG | Review drawing details (Gemini Flash Vision). Generates issue coordinates. Vision model, page cap, and target resolution are tunable via `QC_MODEL` / `QC_MAX_PAGES` / `QC_TARGET_WIDTH_PX` / `QC_MAX_FILE_MB` in `.env` (falls back to `config.py` defaults). |
 | `!ocr` + Image | Extract text (Indonesian/English) via Gemini Vision (VLM); `easyocr` offline fallback. |
 | `!status` | Inspect CPU, memory, Disk, and PM2 load using `psutil`. |
 | `!play <query/URL>` | Enqueue music to current voice channel (supports playlists up to 50 tracks). |

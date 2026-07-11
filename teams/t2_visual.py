@@ -8,7 +8,7 @@ from pathlib import Path
 from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import FileReadTool
-from config import visual_llm, OUTPUT_DIR
+from config import visual_llm, OUTPUT_DIR, VISUAL_MODEL_NAME
 from tools.slide_generator import SlideGeneratorTool
 
 # ============================================================
@@ -21,7 +21,7 @@ def _gemini_vision(image_b64: str, content_type: str, prompt: str, max_tokens: i
         base_url="https://openrouter.ai/api/v1"
     )
     result = client.chat.completions.create(
-        model="google/gemini-3-flash-preview",
+        model=VISUAL_MODEL_NAME,
         messages=[{
             "role": "user",
             "content": [
@@ -391,7 +391,7 @@ class AudioTranscriber(BaseTool):
             )
 
             result = client.chat.completions.create(
-                model="google/gemini-2.5-flash",
+                model=VISUAL_MODEL_NAME,
                 messages=[{
                     "role": "user",
                     "content": [
@@ -649,7 +649,7 @@ class ImageAnalyzerTool(BaseTool):
             )
             
             result = client.chat.completions.create(
-                model="google/gemini-3-flash-preview",
+                model=VISUAL_MODEL_NAME,
                 messages=[{
                     "role": "user",
                     "content": [
@@ -712,7 +712,7 @@ class ImageToCodeTool(BaseTool):
             )
             
             result = client.chat.completions.create(
-                model="google/gemini-3-flash-preview",
+                model=VISUAL_MODEL_NAME,
                 messages=[{
                     "role": "user",
                     "content": [

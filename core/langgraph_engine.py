@@ -98,6 +98,10 @@ def route_from_manager(state: BimaState) -> str:
         logger.info("[LANGGRAPH ROUTER] Manager → Node Kodok")
         _delegate('manager', 'kodok', reason=', '.join(active_teams))
         return "kodok_node"
+    if "observer" in active_teams:
+        logger.info("[LANGGRAPH ROUTER] Manager → Node Observer")
+        _delegate('manager', 'observer', reason=', '.join(active_teams))
+        return "observer_node"
     if "canvas" in active_teams:
         logger.info("[LANGGRAPH ROUTER] Manager → Node Canvas")
         _delegate('manager', 'canvas', reason=', '.join(active_teams))
@@ -219,6 +223,7 @@ workflow.add_conditional_edges(
         "mekanik_node": "mekanik_node",
         "saham_node": "saham_node",
         "kodok_node": "kodok_node",
+        "observer_node": "observer_node",
         "canvas_node": "canvas_node",
         END: "memory_finalizer_node"
     }
