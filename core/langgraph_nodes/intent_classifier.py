@@ -33,7 +33,7 @@ _VAULT_NEGATED = re.compile(
     re.IGNORECASE,
 )
 _VAULT_ACTION = re.compile(
-    r"\b(simpan|catat|arsipkan|tulis)\b",
+    r"\b(simpan|catat|arsipkan|tulis|cari|buka|apa\s+isi)\b",
     re.IGNORECASE,
 )
 
