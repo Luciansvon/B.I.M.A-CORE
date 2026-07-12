@@ -7,6 +7,19 @@ from crewai import Task, Crew
 
 logger = logging.getLogger('bima_core')
 
+
+def _get_upstream_data(state: BimaState, limit: int = 3000) -> str:
+    temp_data = state.get("temp_data", {}) or {}
+    for key in ("last_search_result", "last_browser_result"):
+        raw = temp_data.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if text:
+            return text[:limit]
+    return ""
+
+
 async def arsip_node(state: BimaState) -> dict:
     """
     Node untuk menangani penyimpanan dan pencarian data di Vault Obsidian menggunakan Arsip Agent.
@@ -17,23 +30,13 @@ async def arsip_node(state: BimaState) -> dict:
 
     logger.info("[LANGGRAPH ARSIP] Mengakses vault Obsidian...")
 
-    prev_messages = state.get("messages", []) or []
-    upstream_text = ""
-    if prev_messages:
-        last = prev_messages[-1]
-        upstream_text = (getattr(last, "content", "") or str(last))[:3000]
-
-    temp_data = state.get("temp_data", {}) or {}
-    search_raw = str(temp_data.get("last_search_result", ""))[:2000]
-
-    has_upstream = bool(upstream_text.strip() or search_raw.strip())
+    upstream_text = _get_upstream_data(state)
+    has_upstream = bool(upstream_text)
 
     if has_upstream:
         instruksi = f"""
 === DATA DARI TIM SEBELUMNYA ===
 {upstream_text}
-
-{('--- Data mentah pencarian ---\n' + search_raw) if search_raw else ''}
 ================================
 
 PRIORITAS WAJIB:

@@ -18,11 +18,12 @@ _SAHAM_KEYWORDS = re.compile(
 )
 
 _VAULT_SAVE = re.compile(
-    r'\b(simpan|catat|arsipkan|tulis)\b.{0,40}\b(vault|obsidian|catatan)\b',
+    r"\b(simpan|catat|arsipkan)\b(?:.{0,50}\b(vault|obsidian|catatan)\b)?",
     re.IGNORECASE,
 )
 _VAULT_SEARCH = re.compile(
-    r'\bcari\b.{0,30}\b(vault|obsidian|catatan)\b',
+    r"\b(cari|apa\s+isi|buka|ingat)\b.{0,50}\b(vault|obsidian|catatan)\b"
+    r"|\b(vault|obsidian|catatan)\b.{0,50}\b(cari|apa\s+isi|buka|ingat)\b",
     re.IGNORECASE,
 )
 
@@ -126,10 +127,10 @@ def classify_intent(user_request: str, has_attachment: bool) -> tuple[list[str],
     if _TICKER_HARGA.search(text) or _TICKER_DOLLAR.search(text) or _SAHAM_KEYWORDS.search(text):
         return ["saham"], 0.92, "saham/ticker"
 
-    if _VAULT_SAVE.search(text):
-        return ["arsip"], 0.90, "simpan ke vault"
     if _VAULT_SEARCH.search(text):
         return ["arsip"], 0.88, "cari di vault"
+    if _VAULT_SAVE.search(text):
+        return ["arsip"], 0.90, "simpan ke vault"
 
     if _RUN_CODE.search(text):
         return ["mekanik"], 0.90, "eksekusi kode"
