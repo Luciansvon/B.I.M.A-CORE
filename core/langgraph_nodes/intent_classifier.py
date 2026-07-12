@@ -29,7 +29,7 @@ _VAULT_SEARCH = re.compile(
     re.IGNORECASE,
 )
 _VAULT_NEGATED = re.compile(
-    r"\b(jangan|tidak\s+(?:usah|perlu)|gak\s+usah|nggak\s+usah|ga\s+usah)\b",
+    r"\b(jangan|tidak|gak|nggak|ga|tak|belum|enggak)\b",
     re.IGNORECASE,
 )
 _VAULT_ACTION = re.compile(

@@ -50,6 +50,11 @@ def test_explicit_vault_write_routes_to_arsip() -> None:
         "simpan ini ke vault jangan dulu",
         "jangan cari catatan di vault",
         "tidak perlu buka catatan vault",
+        "gak perlu simpan ini ke vault",
+        "ga perlu cari catatan di vault",
+        "nggak perlu buka catatan vault",
+        "aku gak mau arsipkan ini ke vault",
+        "tidak mau tulis ini ke obsidian",
     ],
 )
 def test_non_vault_requests_fall_back_to_manager(user_request: str) -> None:
