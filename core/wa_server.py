@@ -30,6 +30,7 @@ app = FastAPI(title="B.I.M.A WA Bridge")
 
 class ChatRequest(BaseModel):
     message: str
+    sender_id: str = ""
     token: str = ""
     attachment_paths: list[str] = []
 
@@ -52,6 +53,10 @@ async def chat(req: ChatRequest):
 
     if req.token != _WA_TOKEN:
         raise HTTPException(status_code=401, detail="Token tidak valid")
+
+    sender_id = req.sender_id.strip()
+    if not sender_id:
+        return JSONResponse({"error": "Sender ID wajib diisi"}, status_code=400)
 
     message = req.message.strip()
     # Voice-only flow: message boleh kosong asal ada audio attachment (bakal di-transcribe)
@@ -125,7 +130,9 @@ Gunakan info waktu ini saat menjawab.
             konteks_waktu=konteks_waktu,
             attachment_paths=other_paths,
             progress_callback=None,
+            discord_user_id=sender_id,
             source_channel="whatsapp",
+            conversation_id=sender_id,
         )
 
         # Simpan sesi

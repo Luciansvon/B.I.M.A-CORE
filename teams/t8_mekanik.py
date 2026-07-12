@@ -1,14 +1,17 @@
 import os
 import re
 import sys
+import logging
 import subprocess
 import tempfile
-import traceback
 from pathlib import Path
 from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import FileReadTool
 from config import mekanik_llm, OUTPUT_DIR, BASE_DIR
+from core.public_errors import public_failure
+
+logger = logging.getLogger("bima_core")
 
 # Deteksi OS untuk Python path
 if sys.platform == "win32":
@@ -86,7 +89,8 @@ with open(r"{temp_path}", "r", encoding="utf-8") as f:
                 pass
             return "❌ TIMEOUT: Kode berjalan lebih dari 20 detik, dihentikan."
         except Exception as e:
-            return f"❌ GAGAL EKSEKUSI: {e}\n{traceback.format_exc()}"
+            logger.exception("[MEKANIK] Gagal eksekusi kode")
+            return public_failure("Gagal eksekusi kode")
 
 class AutoRetryTool(BaseTool):
     name: str = "Auto Retry Debug Tool"
@@ -206,7 +210,8 @@ KEMBALIKAN HANYA kode Python yang sudah diperbaiki, tanpa penjelasan, tanpa mark
                             current_code = fixed
                             print(f"[MEKANIK] Kode diperbaiki, coba lagi...")
                         except Exception as e:
-                            history.append(f"Gagal auto-fix: {e}")
+                            logger.exception("[MEKANIK] Auto-fix gagal")
+                            history.append("Gagal auto-fix; detail teknis dicatat di log.")
 
             except subprocess.TimeoutExpired:
                 try:
@@ -216,7 +221,10 @@ KEMBALIKAN HANYA kode Python yang sudah diperbaiki, tanpa penjelasan, tanpa mark
                     pass
                 history.append(f"Percobaan {attempt}: TIMEOUT")
             except Exception as e:
-                history.append(f"Percobaan {attempt}: {e}")
+                logger.exception("[MEKANIK] Percobaan auto-retry gagal")
+                history.append(
+                    f"Percobaan {attempt}: gagal; detail teknis dicatat di log."
+                )
 
         return f"""❌ GAGAL setelah {max_retry} percobaan.
 
@@ -239,14 +247,26 @@ class FileSaverTool(BaseTool):
             if "|" not in input_str:
                 return "Format salah. Gunakan: 'nama_file|konten'"
             filename, content = input_str.split("|", 1)
+            from core.path_security import safe_named_output_path
+            try:
+                filepath = safe_named_output_path(
+                    OUTPUT_DIR,
+                    filename,
+                    default_name="hasil.txt",
+                )
+            except ValueError:
+                return "FAILED|Path tidak diizinkan"
             from core.permission_gate import check_permission_sync
-            if not check_permission_sync("Menulis/Menyimpan File", f"Menyimpan file '{filename.strip()}' dengan isi:\n{content}"):
+            if not check_permission_sync(
+                "Menulis/Menyimpan File",
+                f"Menyimpan file '{filepath}' dengan isi:\n{content}",
+            ):
                 return "❌ AKSES DITOLAK: Tindakan tidak disetujui oleh Bima."
-            filepath = OUTPUT_DIR / filename.strip()
             filepath.write_text(content.strip(), encoding="utf-8")
-            return f"SUCCESS|{filepath}|File berhasil disimpan: {filename.strip()}"
+            return f"SUCCESS|{filepath}|File berhasil disimpan: {filepath.name}"
         except Exception as e:
-            return f"FAILED|{e}"
+            logger.exception("[MEKANIK] Gagal menyimpan file")
+            return public_failure("Gagal menyimpan file")
 
 class GitAutomationTool(BaseTool):
     name: str = "Git Automation Tool"
@@ -282,7 +302,8 @@ class GitAutomationTool(BaseTool):
             else:
                 return "Perintah Git tidak dikenal. Gunakan 'status', 'commit|pesan', atau 'push'."
         except Exception as e:
-            return f"Error eksekusi Git: {e}"
+            logger.exception("[MEKANIK] Gagal menjalankan Git")
+            return public_failure("Gagal menjalankan Git")
 
 class SecurityScannerTool(BaseTool):
     name: str = "Security Scanner Tool"
@@ -312,7 +333,8 @@ class SecurityScannerTool(BaseTool):
                 return "✅ Kode bersih dari syntax error dan aman."
             return "\n\n".join(output)
         except Exception as e:
-            return f"Error saat scanning (pastikan flake8 & bandit terinstall): {e}"
+            logger.exception("[MEKANIK] Security scan gagal")
+            return public_failure("Security scan gagal")
 
 mekanik_agent = Agent(
     role='SRE & Auto-Healing Code Mechanic',

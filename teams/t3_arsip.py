@@ -1,8 +1,13 @@
 import os
 import re
 import logging
+import math
 import json
+import hashlib
+import shutil
+import tempfile
 import threading
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from crewai import Agent
@@ -18,6 +23,8 @@ logger = logging.getLogger('bima_core')
 embedder = get_embedder("arsip")
 _db = None
 _db_lock = threading.Lock()
+_index_lock = threading.Lock()
+_vault_save_lock = threading.Lock()
 
 
 def _get_db():
@@ -38,13 +45,16 @@ _reranker = None
 def _get_reranker():
     global _reranker
     if _reranker is None:
+        import torch
         from sentence_transformers import CrossEncoder
-        # Force CPU — reranker cuma dipake buat RAG search, gak butuh GPU.
-        # Free VRAM buat F5-TTS + embedder Qwen3 di RTX 3050 4GB.
-        # Model: bge-reranker-v2-m3 (multilingual) — benchmark RAG Indonesia recall@1 40%->100% vs ms-marco (English).
-        # RERANKER_MODEL env override ke path lokal (default HF id untuk portabilitas).
+        # Reranker RAG search. Default GPU kalau tersedia — di CPU ~5x lebih lambat
+        # (rerank 10 kandidat: ~4770ms CPU vs ~980ms GPU). Dengan F5-TTS dimatikan,
+        # VRAM RTX 3050 4GB cukup buat embedder Qwen3 (~1.25GB) + reranker bareng.
+        # Override manual via env RERANKER_DEVICE (mis. "cpu" kalau VRAM dipakai proses lain).
+        # Model: bge-reranker-v2-m3 (multilingual) — recall RAG Indonesia jauh lebih baik.
         model = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
-        _reranker = CrossEncoder(model, device="cpu")
+        device = os.environ.get("RERANKER_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
+        _reranker = CrossEncoder(model, device=device)
     return _reranker
 
 
@@ -138,14 +148,44 @@ def _ensure_fts_index():
         logger.warning(f"[ARSIP] FTS index ga tersedia (LanceDB versi lama?): {e}. Search akan dense-only.")
 
 
-def index_vault():
+_bm25_index = None
+_bm25_lock = threading.Lock()
+
+
+def _document_embedding_text(filename: str, heading: str, content: str) -> str:
+    """Teks yang di-embedding saat indexing: sertakan nama file + heading supaya
+    query yang menyebut topik/judul lebih mudah menemukan bagian yang tepat."""
+    return f"Document: {filename}\nSection: {heading}\nContent: {content}"
+
+
+def _set_bm25_index(index) -> None:
+    global _bm25_index
+    with _bm25_lock:
+        _bm25_index = index
+
+
+def _get_bm25_index():
+    """Cache BM25 di RAM; dimuat sekali, diinvalidasi lewat _set_bm25_index()
+    setelah index_vault() membangun ulang. Kalau file hilang/rusak → None."""
+    global _bm25_index
+    if _bm25_index is None:
+        with _bm25_lock:
+            if _bm25_index is None:
+                path = Path(__file__).parent.parent / "search_index" / "bm25.pkl"
+                if path.exists():
+                    from core.bm25_index import BM25Index
+                    _bm25_index = BM25Index.load(path)
+    return _bm25_index
+
+
+def _index_vault_unlocked(full_rebuild: bool = False) -> None:
     vault = Path(OBSIDIAN_PATH)
     if not vault.exists():
         print(f"[ARSIP] Folder vault tidak ditemukan: {vault}")
         return
 
     _drop_legacy_table_if_needed()
-    existing = _read_existing_mtime()
+    existing = {} if full_rebuild else _read_existing_mtime()
     new_docs: list[dict] = []
     paths_to_refresh: list[str] = []
     n_new, n_updated, n_skipped = 0, 0, 0
@@ -164,7 +204,8 @@ def index_vault():
             if not chunks:
                 continue
             for idx, ch in enumerate(chunks):
-                vec = embedder.encode(ch["content"]).tolist()
+                embedding_text = _document_embedding_text(file.name, ch["heading"], ch["content"])
+                vec = embedder.encode(embedding_text).tolist()
                 new_docs.append({
                     "filename": file.name,
                     "path": path_str,
@@ -182,13 +223,24 @@ def index_vault():
         except Exception as e:
             print(f"[ARSIP] Skip {file.name}: {e}")
 
+    if full_rebuild:
+        if not new_docs:
+            print("[ARSIP] Vault kosong, full rebuild dibatalkan.")
+            return
+        try:
+            _get_db().create_table("vault", data=new_docs, mode="overwrite")
+            _rebuild_bm25_index()
+            print(f"[ARSIP] Full rebuild selesai: {len(new_docs)} chunk.")
+        except Exception as e:
+            print(f"[ARSIP] Full rebuild gagal: {e}")
+        return
+
     if not _table_exists():
         if not new_docs:
             print("[ARSIP] Vault kosong, belum ada catatan untuk diindex.")
             return
         try:
             _get_db().create_table("vault", data=new_docs, mode='overwrite')
-            _ensure_fts_index()
             print(f"[ARSIP] {len(new_docs)} chunk dari {n_new} catatan berhasil diindex (full).")
             _rebuild_bm25_index()
         except Exception as e:
@@ -205,12 +257,15 @@ def index_vault():
                 logger.warning(f"[ARSIP] Gagal delete chunks lama {p}: {e}")
         if new_docs:
             tbl.add(new_docs)
-        if new_docs or paths_to_refresh:
-            _ensure_fts_index()
         print(f"[ARSIP] Re-index: {n_new} file baru, {n_updated} file diupdate, {n_skipped} file di-skip (unchanged).")
         _rebuild_bm25_index()
     except Exception as e:
         print(f"[ARSIP] Incremental update gagal: {e}")
+
+
+def index_vault(full_rebuild: bool = False) -> None:
+    with _index_lock:
+        _index_vault_unlocked(full_rebuild)
 
 
 def _rebuild_bm25_index():
@@ -229,6 +284,7 @@ def _rebuild_bm25_index():
             bm25_idx = build_from_corpus(items)
             bm25_path = Path(os.path.dirname(__file__)) / "../search_index/bm25.pkl"
             bm25_idx.save(bm25_path)
+            _set_bm25_index(bm25_idx)
             print(f"[ARSIP] BM25 index built and saved with {len(items)} items.")
     except Exception as e:
         print(f"[ARSIP] Gagal build BM25 index: {e}")
@@ -243,6 +299,35 @@ def _rrf_fuse(rankings: list[list[str]], k: int = 60) -> dict:
     return scores
 
 
+def _passes_relevance_gate(scores, threshold: float = 0.52) -> bool:
+    """Gate berbasis skor reranker (logit -> sigmoid). Kalau kandidat terbaik pun
+    di bawah ambang, retrieval dianggap tidak menemukan konteks yang relevan.
+    Ambang 0.52 dipilih dari benchmark Vault: hit asli >=0.555, true-negative 0.500."""
+    if len(scores) == 0:
+        return False
+    best = max(float(score) for score in scores)
+    probability = 1.0 / (1.0 + math.exp(-best))
+    return probability >= threshold
+
+
+def _neighbor_chunk_ids(chunk_id: int) -> list[int]:
+    return list(range(max(0, chunk_id - 1), chunk_id + 2))
+
+
+def _fetch_neighbor_rows(tbl, row) -> list[dict]:
+    """Ambil chunk tetangga (satu sebelum + satu sesudah) dari FILE yang sama
+    sebagai konteks tambahan, tanpa menyeberang file."""
+    chunk_id = int(row["chunk_id"])
+    ids = _neighbor_chunk_ids(chunk_id)
+    safe_path = str(row["path"]).replace("'", "''")
+    condition = (
+        f"path = '{safe_path}' AND chunk_id >= {ids[0]} "
+        f"AND chunk_id <= {ids[-1]}"
+    )
+    frame = tbl.search().where(condition).limit(3).to_pandas()
+    return frame.sort_values("chunk_id").to_dict("records")
+
+
 def search_vault(query: str, top_k: int = 3) -> str:
     try:
         tbl = _get_db().open_table("vault")
@@ -250,34 +335,26 @@ def search_vault(query: str, top_k: int = 3) -> str:
         logger.warning(f"[ARSIP] Tabel vault belum ada / tidak bisa dibuka: {e}")
         return "Vault belum diindex. Tidak ada catatan ditemukan."
 
-    fetch_k = max(top_k * 5, 20)
+    fetch_k = max(top_k * 3, 10)
 
     try:
-        query_vec = embedder.encode(query).tolist()
+        query_vec = embedder.encode_query(query).tolist()
         dense_df = tbl.search(query_vec).limit(fetch_k).to_pandas()
     except Exception as e:
         logger.error(f"[ARSIP] Dense search gagal: {e}", exc_info=True)
         return f"Pencarian vault gagal: {e}"
 
-    try:
-        fts_df = tbl.search(query, query_type="fts").limit(fetch_k).to_pandas()
-    except Exception as e:
-        logger.info(f"[ARSIP] FTS skip ({e}). Pakai dense-only.")
-        fts_df = None
-
     def _doc_id(row) -> str:
         chunk = row['chunk_id'] if 'chunk_id' in row.index else 0
         return f"{row['path']}::{chunk}"
 
-    bm25_path = Path(os.path.dirname(__file__)) / "../search_index/bm25.pkl"
     bm25_hits = []
-    if bm25_path.exists():
+    bm25_idx = _get_bm25_index()
+    if bm25_idx is not None:
         try:
-            from core.bm25_index import BM25Index
-            bm25_idx = BM25Index.load(bm25_path)
             bm25_hits = bm25_idx.search(query, top_k=fetch_k)
         except Exception as e:
-            logger.warning(f"[ARSIP] Gagal load/search BM25 index: {e}")
+            logger.warning(f"[ARSIP] BM25 search gagal: {e}")
 
     vector_hits = []
     for _, r in dense_df.iterrows():
@@ -286,14 +363,11 @@ def search_vault(query: str, top_k: int = 3) -> str:
         vector_hits.append((_doc_id(r), score))
 
     from core.bm25_index import hybrid_merge
-    merged_hits = hybrid_merge(vector_hits, bm25_hits, w_vector=0.6, w_bm25=0.4, top_k=fetch_k)
+    merged_hits = hybrid_merge(vector_hits, bm25_hits, w_vector=0.6, w_bm25=0.4, top_k=10)
 
     all_rows: dict = {}
     for _, r in dense_df.iterrows():
         all_rows[_doc_id(r)] = r
-    if fts_df is not None and not fts_df.empty:
-        for _, r in fts_df.iterrows():
-            all_rows.setdefault(_doc_id(r), r)
 
     for doc_id, _ in merged_hits:
         if doc_id not in all_rows:
@@ -309,105 +383,292 @@ def search_vault(query: str, top_k: int = 3) -> str:
                     logger.warning(f"[ARSIP] Gagal query row {doc_id} dari DB: {e}")
 
     candidates = [all_rows[doc_id] for doc_id, _ in merged_hits if doc_id in all_rows]
-
     if not candidates:
         return "Tidak ada catatan relevan ditemukan di vault."
 
+    gate_ok = True
     try:
         reranker = _get_reranker()
         pairs = [(query, str(c['content'])) for c in candidates]
         rerank_scores = reranker.predict(pairs)
         scored = sorted(zip(rerank_scores, candidates), key=lambda x: float(x[0]), reverse=True)
-        top = [c for _, c in scored[:top_k]]
+        top_scored = scored[:top_k]
+        top = [c for _, c in top_scored]
+        gate_ok = _passes_relevance_gate([s for s, _ in top_scored])
     except Exception as e:
         logger.warning(f"[ARSIP] Rerank gagal ({e}). Pakai urutan hybrid.")
         top = candidates[:top_k]
 
-    output = []
-    for row in top:
-        heading = row['heading'] if 'heading' in row.index else ''
-        head_str = f" / {heading}" if heading else ""
-        output.append(f"File: {row['filename']}{head_str}\n{row['content'][:500]}")
+    if not gate_ok:
+        return "Tidak ada catatan relevan ditemukan di vault."
+
+    output: list[str] = []
+    seen: set[tuple[str, int]] = set()
+    remaining = 3000
+    for primary in top:
+        try:
+            context_rows = _fetch_neighbor_rows(tbl, primary)
+        except Exception as exc:
+            logger.warning(f"[ARSIP] Neighbor lookup gagal: {exc}")
+            context_rows = [primary.to_dict() if hasattr(primary, "to_dict") else primary]
+        for row in context_rows:
+            key = (str(row["path"]), int(row["chunk_id"]))
+            if key in seen or remaining <= 0:
+                continue
+            seen.add(key)
+            heading = str(row.get("heading", "") or "")
+            label = f"File: {row['filename']}" + (f" / {heading}" if heading else "")
+            block = f"{label}\n{str(row['content'])}"
+            block = block[:remaining]
+            output.append(block)
+            remaining -= len(block)
     return "\n---\n".join(output)
 
 # ============================================================
 # Tool SIMPAN ke Vault (BARU!)
 # ============================================================
+_VAULT_CATEGORIES = {"Inbox", "Riset", "Proyek", "Personal", "Saham"}
+
+
+def _normalize_category(value: object) -> str:
+    if not isinstance(value, str):
+        return "Inbox"
+    category = value.strip().title()
+    return category if category in _VAULT_CATEGORIES else "Inbox"
+
+
+def _slug(value: str, limit: int = 100) -> str:
+    ascii_value = (
+        unicodedata.normalize("NFKD", value)
+        .encode("ascii", "ignore")
+        .decode()
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
+    if len(slug) <= limit:
+        return slug
+    suffix = hashlib.sha256(slug.encode("utf-8")).hexdigest()[:8]
+    return f"{slug[:limit - 9].rstrip('-')}-{suffix}"
+
+
+def _content_digest(content: str) -> str:
+    normalized = " ".join(content.split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _atomic_write(filepath: Path, content: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=filepath.parent,
+            prefix=f".{filepath.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def _yaml_value(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _new_note(
+    title: str,
+    content: str,
+    category: str,
+    tags: list[str],
+    source: str,
+    digest: str,
+    timestamp: str,
+) -> str:
+    return f"""---
+title: {_yaml_value(title)}
+created: {_yaml_value(timestamp)}
+updated: {_yaml_value(timestamp)}
+category: {_yaml_value(category)}
+tags: {_yaml_value(tags)}
+source: {_yaml_value(source)}
+content_hash: {_yaml_value(digest)}
+content_hashes: {_yaml_value([digest])}
+---
+
+# {title}
+
+<!-- anisa:content-hash:{digest} -->
+
+{content.strip()}
+"""
+
+
+def _split_frontmatter(content: str) -> tuple[str, str] | None:
+    if not content.startswith("---\n"):
+        return None
+    frontmatter, separator, body = content[4:].partition("\n---\n")
+    if not separator:
+        return None
+    return frontmatter, body
+
+
+def _trusted_content_hashes(content: str) -> list[str]:
+    split = _split_frontmatter(content)
+    if split is None:
+        return []
+    frontmatter, _ = split
+    hashes: list[str] = []
+    for key in ("content_hash", "content_hashes"):
+        match = re.search(rf"^{key}:\s*(.+)$", frontmatter, flags=re.MULTILINE)
+        if match is None:
+            continue
+        try:
+            value = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if (
+                isinstance(item, str)
+                and re.fullmatch(r"[0-9a-f]{64}", item)
+                and item not in hashes
+            ):
+                hashes.append(item)
+    return hashes
+
+
+def _find_existing_note(
+    vault_dir: Path, safe_title: str, digest: str
+) -> tuple[Path | None, Path | None]:
+    existing_note: Path | None = None
+    for note in sorted(vault_dir.rglob("*.md")):
+        old_content = note.read_text(encoding="utf-8", errors="ignore")
+        if digest in _trusted_content_hashes(old_content):
+            return note, existing_note
+        if existing_note is None and _slug(note.stem) == safe_title:
+            existing_note = note
+    return None, existing_note
+
+
+def _refresh_frontmatter(content: str, timestamp: str, digest: str) -> str:
+    split = _split_frontmatter(content)
+    if split is None:
+        return content
+    frontmatter, body = split
+    hashes = _trusted_content_hashes(content)
+    if digest not in hashes:
+        hashes.append(digest)
+    for key, value in (
+        ("updated", timestamp),
+        ("content_hash", digest),
+        ("content_hashes", hashes),
+    ):
+        field = f"{key}: {_yaml_value(value)}"
+        if re.search(rf"^{key}:.*$", frontmatter, flags=re.MULTILINE):
+            frontmatter = re.sub(
+                rf"^{key}:.*$", field, frontmatter, count=1, flags=re.MULTILINE
+            )
+        else:
+            frontmatter = f"{frontmatter.rstrip()}\n{field}"
+    return f"---\n{frontmatter}\n---\n{body}"
+
+
 class VaultSaveTool(BaseTool):
     name: str = "Vault Save Tool"
-    description: str = """Simpan data baru ke vault Obsidian Bima.
-    Gunakan untuk menyimpan hasil riset, catatan proyek, atau data penting.
-    Input format: JSON string dengan field "title" dan "content".
-    Contoh: {"title": "Harga Kayu Pinus April 2026", "content": "Data hasil riset dari Tokopedia..."}"""
+    description: str = """Simpan catatan terorganisasi ke vault Obsidian Bima.
+    Input wajib JSON: {"title":"...","content":"...","category":"Inbox|Riset|Proyek|Personal|Saham","tags":["..."],"source":"..."}.
+    Category yang tidak valid otomatis menjadi Inbox."""
 
     def _run(self, input_json: str) -> str:
         try:
             try:
                 data = json.loads(input_json)
-            except json.JSONDecodeError as e:
-                return f"FAILED|JSON tidak valid: {e}. Format harus: {{\"title\": \"...\", \"content\": \"...\"}}"
+            except (json.JSONDecodeError, TypeError):
+                return "FAILED|JSON tidak valid."
 
             if not isinstance(data, dict):
                 return "FAILED|Input harus objek JSON dengan field 'title' dan 'content'."
 
-            title = data.get("title") or f"catatan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            content = data.get("content", "")
-
-            # Bersihkan nama file (anti path-traversal)
-            safe_title = "".join(c for c in str(title) if c.isalnum() or c in (' ', '-', '_')).strip()
-            safe_title = safe_title.replace(' ', '_')[:100]  # cap panjang
+            title = data.get("title")
+            content = data.get("content")
+            if not isinstance(title, str) or not title.strip():
+                return "FAILED|Field 'title' wajib string nonempty."
+            if not isinstance(content, str) or not content.strip():
+                return "FAILED|Field 'content' wajib string nonempty."
+            title = title.strip()
+            category = _normalize_category(data.get("category"))
+            raw_tags = data.get("tags", [])
+            tags: list[str] = []
+            if isinstance(raw_tags, list):
+                for item in raw_tags:
+                    if not isinstance(item, str):
+                        continue
+                    tag = _slug(item)
+                    if tag and tag not in tags:
+                        tags.append(tag)
+                    if len(tags) == 8:
+                        break
+            raw_source = data.get("source", "Bima")
+            source = raw_source.strip()[:500] if isinstance(raw_source, str) else "Bima"
+            source = source or "Bima"
+            safe_title = _slug(title)
             if not safe_title:
-                safe_title = f"catatan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                return "FAILED|Judul tidak menghasilkan nama file yang valid."
 
-            filename = f"{safe_title}.md"
             vault_dir = Path(OBSIDIAN_PATH).resolve()
-            vault_dir.mkdir(parents=True, exist_ok=True)
-            filepath = (vault_dir / filename).resolve()
-
-            # Pastikan filepath BENAR-BENAR di dalam vault_dir (anti traversal)
+            filepath = (vault_dir / category / f"{safe_title}.md").resolve()
             try:
                 filepath.relative_to(vault_dir)
             except ValueError:
-                return f"FAILED|Path tidak aman terdeteksi: {filepath}"
-            
-            # Deteksi duplikat
-            status_msg = "baru"
-            if filepath.exists():
-                old_content = filepath.read_text(encoding="utf-8", errors="ignore")
-                if content[:200] in old_content:
-                    return f"SKIPPED|{filepath}|Catatan '{filename}' sudah ada dengan konten serupa. Tidak disimpan ulang."
-                # File ada tapi konten berbeda → append timestamp agar tidak ditimpa
-                safe_title += f"_{datetime.now().strftime('%H%M%S')}"
-                filename = f"{safe_title}.md"
-                filepath = vault_dir / filename
-                status_msg = "versi baru"
-            
-            # Format markdown
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            markdown_content = f"""# {title}
+                return "FAILED|Path target tidak aman."
 
-**Disimpan:** {timestamp} WIB
-**Sumber:** ANISA Auto-Save
+            digest = _content_digest(content)
+            timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+            with _vault_save_lock:
+                vault_dir.mkdir(parents=True, exist_ok=True)
+                duplicate_note, existing_note = _find_existing_note(
+                    vault_dir, safe_title, digest
+                )
+                if duplicate_note is not None:
+                    return (
+                        f"SKIPPED|{duplicate_note}|"
+                        "Konten yang sama sudah ada di vault."
+                    )
 
----
+                if existing_note is not None:
+                    old_content = existing_note.read_text(encoding="utf-8", errors="ignore")
+                    if backup_file(existing_note) is None:
+                        return f"FAILED|Backup gagal; catatan lama tidak diubah: {existing_note}"
+                    updated = _refresh_frontmatter(old_content, timestamp, digest).rstrip()
+                    updated += (
+                        f"\n\n## Update {timestamp}\n\n"
+                        f"<!-- anisa:content-hash:{digest} -->\n\n{content.strip()}\n"
+                    )
+                    _atomic_write(existing_note, updated)
+                    filepath = existing_note
+                    status_msg = "update"
+                else:
+                    filepath.parent.mkdir(parents=True, exist_ok=True)
+                    _atomic_write(
+                        filepath,
+                        _new_note(title, content, category, tags, source, digest, timestamp),
+                    )
+                    status_msg = "baru"
 
-{content}
-
----
-
-*Catatan ini disimpan otomatis oleh B.I.M.A Core*
-"""
-            filepath.write_text(markdown_content, encoding="utf-8")
-            
-            # Re-index vault (jangan sampai crash proses save)
             try:
                 index_vault()
             except Exception as e:
-                print(f"[ARSIP] Re-index gagal setelah save: {e}")
-            
-            return f"SUCCESS|{filepath}|Data {status_msg} berhasil disimpan ke vault: {filename}"
+                logger.warning(f"[ARSIP] Re-index gagal setelah save: {e}")
+
+            return f"SUCCESS|{filepath}|Data {status_msg} berhasil disimpan ke vault."
         except Exception as e:
-            return f"FAILED|Gagal simpan ke vault: {e}"
+            logger.error(f"[ARSIP] Gagal simpan ke vault: {e}")
+            return "FAILED|Gagal simpan ke vault. Detail tersimpan di log lokal."
 
 class VaultSearchTool(BaseTool):
     name: str = "Vault Search Tool"
@@ -424,18 +685,56 @@ class VaultIndexTool(BaseTool):
         index_vault()
         return "Vault berhasil diindex ulang!"
 
-def backup_file(filepath: Path) -> None:
+def backup_file(filepath: Path) -> Path | None:
+    backup_path: Path | None = None
     try:
         backup_dir = Path(__file__).parent.parent / "outputs" / "backup"
         backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"{filepath.stem}_{timestamp}{filepath.suffix}"
-        backup_path = backup_dir / backup_name
-        import shutil
-        shutil.copy2(filepath, backup_path)
-        logger.info(f"[LINKER] Backup dibuat untuk {filepath.name} -> {backup_name}")
+        fd, backup_name = tempfile.mkstemp(
+            prefix=f"{filepath.stem}_{timestamp}_",
+            suffix=filepath.suffix,
+            dir=backup_dir,
+        )
+        os.close(fd)
+        backup_path = Path(backup_name)
+        shutil.copyfile(filepath, backup_path)
+        shutil.copystat(filepath, backup_path)
+        logger.info(
+            f"[LINKER] Backup dibuat untuk {filepath.name} -> {backup_path.name}"
+        )
+        return backup_path
     except Exception as e:
+        if backup_path is not None:
+            backup_path.unlink(missing_ok=True)
         logger.error(f"[LINKER] Gagal membuat backup file {filepath}: {e}")
+        return None
+
+
+_RELATED_START = "<!-- anisa:related:start -->"
+_RELATED_END = "<!-- anisa:related:end -->"
+_MARKED_RELATED = re.compile(
+    re.escape(_RELATED_START) + r"[\s\S]*?" + re.escape(_RELATED_END)
+)
+# Blok "Catatan Terkait" lama tanpa marker yang isinya HANYA wiki link sampai
+# akhir file — ini aman dibuang/migrasi. Konten manual (bukan wiki link) di
+# bawah heading TIDAK cocok pola ini, jadi tidak akan terhapus.
+_LEGACY_RELATED = re.compile(
+    r"(?ms)\n*^#{2,3}\s+Catatan Terkait\s*$"
+    r"(?:\n\s*-\s+\[\[[^\n]+\]\]\s*)+\Z"
+)
+
+
+def _replace_related_block(content: str, related_notes: list[str]) -> str:
+    """Ganti HANYA blok "Catatan Terkait" milik Anisa (di antara marker), tanpa
+    menyentuh konten manual di luar marker. Blok legacy link-only ikut dimigrasi."""
+    lines = "\n".join(f"- [[{name}]]" for name in related_notes)
+    block = f"{_RELATED_START}\n### Catatan Terkait\n{lines}\n{_RELATED_END}"
+    if _MARKED_RELATED.search(content):
+        return _MARKED_RELATED.sub(block, content, count=1)
+    base = _LEGACY_RELATED.sub("", content).rstrip()
+    return f"{base}\n\n{block}\n"
+
 
 class VaultLinkerTool(BaseTool):
     name: str = "Vault Linker Tool"
@@ -532,9 +831,6 @@ class VaultLinkerTool(BaseTool):
                     if modified_chunks:
                         content = "".join(chunks)
 
-                # Clean up old Catatan Terkait section if present
-                content = re.sub(r'\n*(?:###?|##)\s+Catatan\s+Terkait[\s\S]*$', '', content).strip()
-
                 # Get semantic related notes (vector search)
                 related_notes = []
                 try:
@@ -555,12 +851,11 @@ class VaultLinkerTool(BaseTool):
                 except Exception as ex:
                     logger.debug(f"[LINKER] Skip semantic search for {filepath.name}: {ex}")
 
-                # Append related notes section if we have any
+                # Segarkan blok "Catatan Terkait" HANYA di dalam marker Anisa;
+                # konten manual di bawah marker tidak ikut terhapus.
                 if related_notes:
-                    content += "\n\n### Catatan Terkait\n"
-                    for t in related_notes:
-                        content += f"- [[{t}]]\n"
-                        inline_links_added += 1
+                    content = _replace_related_block(content, related_notes)
+                    inline_links_added += len(related_notes)
 
                 # Organizer Formatting: Collapse blank lines & clean lines
                 lines = [line.rstrip() for line in content.split("\n")]
@@ -590,6 +885,13 @@ def _index_vault_safe():
         index_vault()
     except Exception as e:
         print(f"[ARSIP] ⚠️ Background index vault gagal: {e}")
+    # Prewarm jalur retrieval biar query pertama tidak kena cold-start.
+    try:
+        embedder.encode_query("warmup")
+        _get_reranker().predict([("warmup", "warmup")])
+        _get_bm25_index()
+    except Exception as e:
+        logger.warning(f"[ARSIP] Prewarm retrieval gagal: {e}")
 
 
 def start_vault_index_background():
@@ -616,7 +918,8 @@ arsip_agent = Agent(
     ATURAN WAJIB:
     - Kalau task description mengandung blok "DATA DARI TIM SEBELUMNYA" → kamu DILARANG panggil VaultSearchTool. Datanya sudah ada, langsung pakai VaultSaveTool.
     - Kalau diminta "simpan", "arsipkan", "catat" → LANGSUNG panggil VaultSaveTool.
-    - Format input VaultSaveTool HARUS JSON: {"title": "...", "content": "..."}
+    - Format input VaultSaveTool HARUS JSON: {"title":"...","content":"...","category":"Inbox|Riset|Proyek|Personal|Saham","tags":["..."],"source":"..."}
+    - Pilih category dari allowlist sesuai isi catatan; kalau ragu pakai Inbox.
     - VaultSearchTool hanya dipakai kalau Bima eksplisit minta CARI di vault dan tidak ada data dari tim sebelumnya.
     - Hubungkan catatan menggunakan VaultLinkerTool jika Bima minta merapikan atau menyambungkan wiki link.
     - Jangan bilang "tidak bisa" — kamu PUNYA tool simpan!

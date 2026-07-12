@@ -5,9 +5,12 @@ import json
 import re
 from pathlib import Path
 
-def load_env():
-    env_path = Path('.env')
-    env_data = {}
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_PATH = PROJECT_ROOT / ".env"
+
+
+def load_env(env_path: Path = ENV_PATH) -> dict[str, str]:
+    env_data: dict[str, str] = {}
     if env_path.exists():
         with open(env_path, 'r', encoding='utf-8') as f:
             for line in f:

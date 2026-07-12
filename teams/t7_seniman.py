@@ -8,6 +8,7 @@ from crewai_tools import FileReadTool
 from config import seniman_llm, OUTPUT_DIR
 from core.output_prune import prune_outputs
 from tools.prompt_optimizer import PromptOptimizerTool
+from tools.diagram_tool import DiagramGeneratorTool
 
 
 def _safe_filename(raw: str, default: str) -> str:
@@ -304,47 +305,6 @@ class CuttingListTool(BaseTool):
         except Exception as e:
             return f"FAILED|{e}"
 
-class MermaidDiagramTool(BaseTool):
-    name: str = "Mermaid Diagram Tool"
-    description: str = """Buat diagram arsitektur, flowchart, atau mind map menggunakan sintaks Mermaid.js.
-    Input format: string berisi kode murni Mermaid.js tanpa backticks markdown.
-    Contoh:
-    graph TD;
-        A-->B;
-        A-->C;"""
-
-    def _run(self, mermaid_code: str) -> str:
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            fname = f"diagram_{timestamp}.html"
-            fpath = OUTPUT_DIR / fname
-            
-            html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Architecture Diagram</title>
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({{ startOnLoad: true, theme: 'dark' }});
-    </script>
-    <style>
-        body {{ background-color: #0f172a; color: #fff; display: flex; justify-content: center; padding: 2rem; font-family: sans-serif; }}
-        .mermaid {{ background-color: #1e293b; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
-    </style>
-</head>
-<body>
-    <div class="mermaid">
-{mermaid_code}
-    </div>
-</body>
-</html>"""
-            fpath.write_text(html_content, encoding="utf-8")
-            return f"SUCCESS|{fpath}|Diagram Mermaid berhasil di-generate."
-        except Exception as e:
-            return f"FAILED|Gagal generate diagram: {e}"
-
 class HTMLGeneratorTool(BaseTool):
     name: str = "HTML Generator Tool"
     description: str = """Buat file HTML (.html) single-file interaktif dengan berbagai pilihan template.
@@ -408,7 +368,7 @@ seniman_agent = Agent(
     - Diminta dokumen HTML interaktif/invoice/proposal print-ready → gunakan HTMLGeneratorTool
     - Diminta SVG/pola potong → gunakan SVGGeneratorTool
     - Diminta cutting list → gunakan CuttingListTool
-    - Diminta flowchart/diagram arsitektur → gunakan MermaidDiagramTool
+    - Diminta flowchart/diagram arsitektur → gunakan DiagramGeneratorTool
     - Diminta optimize/rewrite/perbaikin prompt → gunakan PromptOptimizerTool
     - TIDAK diminta apapun → jangan buat file, cukup balas dengan teks""",
     backstory="""Kamu adalah Seniman Data dari B.I.M.A Core.
@@ -420,7 +380,7 @@ seniman_agent = Agent(
     4. Kalau diminta dokumen HTML → gunakan HTMLGeneratorTool (pilih template yang sesuai)
     5. Kalau diminta cutting list → gunakan CuttingListTool
     6. Kalau diminta SVG → gunakan SVGGeneratorTool
-    7. Kalau diminta diagram/flowchart/mind map → gunakan MermaidDiagramTool
+    7. Kalau diminta diagram/flowchart/mind map → gunakan DiagramGeneratorTool
     8. Kalau diminta optimize/rewrite/perbaikin prompt → gunakan PromptOptimizerTool
     9. Setelah buat file, kembalikan path dengan format SUCCESS|path|keterangan
 
@@ -452,7 +412,7 @@ seniman_agent = Agent(
     - URL WAJIB valid: Wikipedia, .gov, .edu, .org, jurnal open-access. JANGAN dikarang.
     - Kalau ragu link spesifik → pakai homepage situsnya saja.""",
     llm=seniman_llm,
-    tools=[DashboardGeneratorTool(), HTMLGeneratorTool(), SVGGeneratorTool(), CuttingListTool(), MermaidDiagramTool(), PromptOptimizerTool(), FileReadTool()],
+    tools=[DashboardGeneratorTool(), HTMLGeneratorTool(), SVGGeneratorTool(), CuttingListTool(), DiagramGeneratorTool(), PromptOptimizerTool(), FileReadTool()],
     allow_delegation=True,
     verbose=True
 )

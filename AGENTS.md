@@ -9,11 +9,11 @@ setiap mau plan buatin pake file md biar bisa di audit sama bima.
 - **What**: Python multi-agent AI bot named **Anisa**. Discord + WhatsApp + REST. LangGraph state machine orchestrates 10 specialist agents.
 - **Owner**: Bima — solo dev. Reply casual Bahasa Indonesia.
 - **Run env**: WSL Ubuntu di Windows host. Python venv at `bima_env/`. Production via PM2.
-- **Workflow**: EXPLORE → PLAN → CODE → VERIFY with explicit approval gates. See [`claude.md`](claude.md) for the full rules — they are mandatory.
+- **Workflow**: EXPLORE → PLAN → CODE → VERIFY with explicit approval gates. See [`CLAUDE.md`](CLAUDE.md) for the full rules — they are mandatory.
 
 ## Operating Rules
 
-Full rules live in [`claude.md`](claude.md) (same content as `Rules for agent.md`). Memorize all 8 rules. The non-negotiable ones:
+Full rules live in [`CLAUDE.md`](CLAUDE.md) — the "Alur Kerja Wajib (Operating Workflow)" section. That is the canonical copy; `Rules for agent.md` and `.clauderules` are stubs pointing back here. Memorize all 8 rules. The non-negotiable ones:
 
 1. **Never skip phases.** Always EXPLORE first (read/grep code), then PLAN (numbered list, wait for approval), then CODE (one step at a time, show diff), then VERIFY (run tests/lint, do not auto-patch failures).
 2. **Context before assumption.** Read or grep before claiming a symbol/file/API exists. When uncertain, say "I don't know" and ask.
@@ -26,7 +26,7 @@ Full rules live in [`claude.md`](claude.md) (same content as `Rules for agent.md
 
 - **Don't over-ask on trivial ops.** Once a plan is approved, stop asking permission for obvious follow-ups (pre-warming a model, restarting a service, running smoke tests). Just do them. Reserve asking for: scope change, new dependency, destructive ops, ambiguous business logic.
 - **Bahasa Indonesia casual** for replies. Code/identifiers stay English.
-- **Strict EXPLORE→PLAN→CODE→VERIFY discipline.** Bima wrote these rules himself across `claude.md` + `Rules for agent.md`.
+- **Strict EXPLORE→PLAN→CODE→VERIFY discipline.** Bima wrote these rules himself; canonical copy is `CLAUDE.md` (auto-loaded by Claude Code).
 
 ## Stack
 
@@ -273,8 +273,8 @@ For external API call sites, use `core/api_retry.py:call_with_retry()` to wrap w
 ## Quick links
 
 - [README.md](README.md) — public-facing project overview, install, deployment
-- [claude.md](claude.md) — full operating rules (mandatory)
-- [Rules for agent.md](Rules%20for%20agent.md) — same rules (kept in sync)
+- [CLAUDE.md](CLAUDE.md) — full operating rules (mandatory, canonical source)
+- [Rules for agent.md](Rules%20for%20agent.md) / [.clauderules](.clauderules) — stubs pointing back to CLAUDE.md
 - [config_mcp.json](config_mcp.json) — MCP server map
 - [ecosystem.config.js](ecosystem.config.js) — PM2 process definitions
 - [requirements.txt](requirements.txt) — Python deps

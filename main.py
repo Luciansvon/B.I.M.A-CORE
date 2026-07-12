@@ -83,15 +83,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"WA bridge gagal start (bot tetap jalan): {e}")
 
-    # Start dashboard server (FastAPI + WebSocket) di background thread.
-    # Bind ke 127.0.0.1 — bima-tunnel cloudflared yg expose ke internet (auth-gated).
-    try:
-        from core.dashboard_server import start_in_background
-        _dash_port = int(os.environ.get("DASHBOARD_PORT", "8000"))
-        start_in_background(host="127.0.0.1", port=_dash_port)
-        logger.info(f"[main] dashboard server started → http://127.0.0.1:{_dash_port}")
-    except Exception as e:
-        logger.warning(f"Dashboard server gagal start (bot tetap jalan tanpa dashboard): {e}")
+    # Dashboard server dimatikan — sudah tidak dipakai.
 
     # AgentMemory lifecycle dikelola PM2 sebagai service terpisah.
     try:
