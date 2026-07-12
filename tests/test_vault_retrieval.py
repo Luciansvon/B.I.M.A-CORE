@@ -14,8 +14,9 @@ def test_contextual_embedding_text() -> None:
 @pytest.mark.parametrize(
     "scores, expected",
     [
-        ([-4.0, -5.0], False),
-        ([0.0, -5.0], True),
+        ([-4.0, -5.0], False),  # jelas tidak relevan
+        ([0.3, -5.0], True),    # sigmoid(0.3)=0.574 >= 0.52 -> lolos
+        ([0.0, -5.0], False),   # sigmoid(0.0)=0.500 < 0.52 -> ditolak (batas true-negative)
         ([], False),
     ],
 )

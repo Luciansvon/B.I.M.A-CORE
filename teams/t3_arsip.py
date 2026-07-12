@@ -45,13 +45,16 @@ _reranker = None
 def _get_reranker():
     global _reranker
     if _reranker is None:
+        import torch
         from sentence_transformers import CrossEncoder
-        # Force CPU — reranker cuma dipake buat RAG search, gak butuh GPU.
-        # Free VRAM buat F5-TTS + embedder Qwen3 di RTX 3050 4GB.
-        # Model: bge-reranker-v2-m3 (multilingual) — benchmark RAG Indonesia recall@1 40%->100% vs ms-marco (English).
-        # RERANKER_MODEL env override ke path lokal (default HF id untuk portabilitas).
+        # Reranker RAG search. Default GPU kalau tersedia — di CPU ~5x lebih lambat
+        # (rerank 10 kandidat: ~4770ms CPU vs ~980ms GPU). Dengan F5-TTS dimatikan,
+        # VRAM RTX 3050 4GB cukup buat embedder Qwen3 (~1.25GB) + reranker bareng.
+        # Override manual via env RERANKER_DEVICE (mis. "cpu" kalau VRAM dipakai proses lain).
+        # Model: bge-reranker-v2-m3 (multilingual) — recall RAG Indonesia jauh lebih baik.
         model = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
-        _reranker = CrossEncoder(model, device="cpu")
+        device = os.environ.get("RERANKER_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
+        _reranker = CrossEncoder(model, device=device)
     return _reranker
 
 
@@ -296,9 +299,10 @@ def _rrf_fuse(rankings: list[list[str]], k: int = 60) -> dict:
     return scores
 
 
-def _passes_relevance_gate(scores, threshold: float = 0.2) -> bool:
+def _passes_relevance_gate(scores, threshold: float = 0.52) -> bool:
     """Gate berbasis skor reranker (logit -> sigmoid). Kalau kandidat terbaik pun
-    di bawah ambang, retrieval dianggap tidak menemukan konteks yang relevan."""
+    di bawah ambang, retrieval dianggap tidak menemukan konteks yang relevan.
+    Ambang 0.52 dipilih dari benchmark Vault: hit asli >=0.555, true-negative 0.500."""
     if len(scores) == 0:
         return False
     best = max(float(score) for score in scores)
