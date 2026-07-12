@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import math
 import json
 import hashlib
 import shutil
@@ -144,14 +145,44 @@ def _ensure_fts_index():
         logger.warning(f"[ARSIP] FTS index ga tersedia (LanceDB versi lama?): {e}. Search akan dense-only.")
 
 
-def _index_vault_unlocked() -> None:
+_bm25_index = None
+_bm25_lock = threading.Lock()
+
+
+def _document_embedding_text(filename: str, heading: str, content: str) -> str:
+    """Teks yang di-embedding saat indexing: sertakan nama file + heading supaya
+    query yang menyebut topik/judul lebih mudah menemukan bagian yang tepat."""
+    return f"Document: {filename}\nSection: {heading}\nContent: {content}"
+
+
+def _set_bm25_index(index) -> None:
+    global _bm25_index
+    with _bm25_lock:
+        _bm25_index = index
+
+
+def _get_bm25_index():
+    """Cache BM25 di RAM; dimuat sekali, diinvalidasi lewat _set_bm25_index()
+    setelah index_vault() membangun ulang. Kalau file hilang/rusak → None."""
+    global _bm25_index
+    if _bm25_index is None:
+        with _bm25_lock:
+            if _bm25_index is None:
+                path = Path(__file__).parent.parent / "search_index" / "bm25.pkl"
+                if path.exists():
+                    from core.bm25_index import BM25Index
+                    _bm25_index = BM25Index.load(path)
+    return _bm25_index
+
+
+def _index_vault_unlocked(full_rebuild: bool = False) -> None:
     vault = Path(OBSIDIAN_PATH)
     if not vault.exists():
         print(f"[ARSIP] Folder vault tidak ditemukan: {vault}")
         return
 
     _drop_legacy_table_if_needed()
-    existing = _read_existing_mtime()
+    existing = {} if full_rebuild else _read_existing_mtime()
     new_docs: list[dict] = []
     paths_to_refresh: list[str] = []
     n_new, n_updated, n_skipped = 0, 0, 0
@@ -170,7 +201,8 @@ def _index_vault_unlocked() -> None:
             if not chunks:
                 continue
             for idx, ch in enumerate(chunks):
-                vec = embedder.encode(ch["content"]).tolist()
+                embedding_text = _document_embedding_text(file.name, ch["heading"], ch["content"])
+                vec = embedder.encode(embedding_text).tolist()
                 new_docs.append({
                     "filename": file.name,
                     "path": path_str,
@@ -188,13 +220,24 @@ def _index_vault_unlocked() -> None:
         except Exception as e:
             print(f"[ARSIP] Skip {file.name}: {e}")
 
+    if full_rebuild:
+        if not new_docs:
+            print("[ARSIP] Vault kosong, full rebuild dibatalkan.")
+            return
+        try:
+            _get_db().create_table("vault", data=new_docs, mode="overwrite")
+            _rebuild_bm25_index()
+            print(f"[ARSIP] Full rebuild selesai: {len(new_docs)} chunk.")
+        except Exception as e:
+            print(f"[ARSIP] Full rebuild gagal: {e}")
+        return
+
     if not _table_exists():
         if not new_docs:
             print("[ARSIP] Vault kosong, belum ada catatan untuk diindex.")
             return
         try:
             _get_db().create_table("vault", data=new_docs, mode='overwrite')
-            _ensure_fts_index()
             print(f"[ARSIP] {len(new_docs)} chunk dari {n_new} catatan berhasil diindex (full).")
             _rebuild_bm25_index()
         except Exception as e:
@@ -211,17 +254,15 @@ def _index_vault_unlocked() -> None:
                 logger.warning(f"[ARSIP] Gagal delete chunks lama {p}: {e}")
         if new_docs:
             tbl.add(new_docs)
-        if new_docs or paths_to_refresh:
-            _ensure_fts_index()
         print(f"[ARSIP] Re-index: {n_new} file baru, {n_updated} file diupdate, {n_skipped} file di-skip (unchanged).")
         _rebuild_bm25_index()
     except Exception as e:
         print(f"[ARSIP] Incremental update gagal: {e}")
 
 
-def index_vault() -> None:
+def index_vault(full_rebuild: bool = False) -> None:
     with _index_lock:
-        _index_vault_unlocked()
+        _index_vault_unlocked(full_rebuild)
 
 
 def _rebuild_bm25_index():
@@ -240,6 +281,7 @@ def _rebuild_bm25_index():
             bm25_idx = build_from_corpus(items)
             bm25_path = Path(os.path.dirname(__file__)) / "../search_index/bm25.pkl"
             bm25_idx.save(bm25_path)
+            _set_bm25_index(bm25_idx)
             print(f"[ARSIP] BM25 index built and saved with {len(items)} items.")
     except Exception as e:
         print(f"[ARSIP] Gagal build BM25 index: {e}")
@@ -254,6 +296,34 @@ def _rrf_fuse(rankings: list[list[str]], k: int = 60) -> dict:
     return scores
 
 
+def _passes_relevance_gate(scores, threshold: float = 0.2) -> bool:
+    """Gate berbasis skor reranker (logit -> sigmoid). Kalau kandidat terbaik pun
+    di bawah ambang, retrieval dianggap tidak menemukan konteks yang relevan."""
+    if len(scores) == 0:
+        return False
+    best = max(float(score) for score in scores)
+    probability = 1.0 / (1.0 + math.exp(-best))
+    return probability >= threshold
+
+
+def _neighbor_chunk_ids(chunk_id: int) -> list[int]:
+    return list(range(max(0, chunk_id - 1), chunk_id + 2))
+
+
+def _fetch_neighbor_rows(tbl, row) -> list[dict]:
+    """Ambil chunk tetangga (satu sebelum + satu sesudah) dari FILE yang sama
+    sebagai konteks tambahan, tanpa menyeberang file."""
+    chunk_id = int(row["chunk_id"])
+    ids = _neighbor_chunk_ids(chunk_id)
+    safe_path = str(row["path"]).replace("'", "''")
+    condition = (
+        f"path = '{safe_path}' AND chunk_id >= {ids[0]} "
+        f"AND chunk_id <= {ids[-1]}"
+    )
+    frame = tbl.search().where(condition).limit(3).to_pandas()
+    return frame.sort_values("chunk_id").to_dict("records")
+
+
 def search_vault(query: str, top_k: int = 3) -> str:
     try:
         tbl = _get_db().open_table("vault")
@@ -261,34 +331,26 @@ def search_vault(query: str, top_k: int = 3) -> str:
         logger.warning(f"[ARSIP] Tabel vault belum ada / tidak bisa dibuka: {e}")
         return "Vault belum diindex. Tidak ada catatan ditemukan."
 
-    fetch_k = max(top_k * 5, 20)
+    fetch_k = max(top_k * 3, 10)
 
     try:
-        query_vec = embedder.encode(query).tolist()
+        query_vec = embedder.encode_query(query).tolist()
         dense_df = tbl.search(query_vec).limit(fetch_k).to_pandas()
     except Exception as e:
         logger.error(f"[ARSIP] Dense search gagal: {e}", exc_info=True)
         return f"Pencarian vault gagal: {e}"
 
-    try:
-        fts_df = tbl.search(query, query_type="fts").limit(fetch_k).to_pandas()
-    except Exception as e:
-        logger.info(f"[ARSIP] FTS skip ({e}). Pakai dense-only.")
-        fts_df = None
-
     def _doc_id(row) -> str:
         chunk = row['chunk_id'] if 'chunk_id' in row.index else 0
         return f"{row['path']}::{chunk}"
 
-    bm25_path = Path(os.path.dirname(__file__)) / "../search_index/bm25.pkl"
     bm25_hits = []
-    if bm25_path.exists():
+    bm25_idx = _get_bm25_index()
+    if bm25_idx is not None:
         try:
-            from core.bm25_index import BM25Index
-            bm25_idx = BM25Index.load(bm25_path)
             bm25_hits = bm25_idx.search(query, top_k=fetch_k)
         except Exception as e:
-            logger.warning(f"[ARSIP] Gagal load/search BM25 index: {e}")
+            logger.warning(f"[ARSIP] BM25 search gagal: {e}")
 
     vector_hits = []
     for _, r in dense_df.iterrows():
@@ -297,14 +359,11 @@ def search_vault(query: str, top_k: int = 3) -> str:
         vector_hits.append((_doc_id(r), score))
 
     from core.bm25_index import hybrid_merge
-    merged_hits = hybrid_merge(vector_hits, bm25_hits, w_vector=0.6, w_bm25=0.4, top_k=fetch_k)
+    merged_hits = hybrid_merge(vector_hits, bm25_hits, w_vector=0.6, w_bm25=0.4, top_k=10)
 
     all_rows: dict = {}
     for _, r in dense_df.iterrows():
         all_rows[_doc_id(r)] = r
-    if fts_df is not None and not fts_df.empty:
-        for _, r in fts_df.iterrows():
-            all_rows.setdefault(_doc_id(r), r)
 
     for doc_id, _ in merged_hits:
         if doc_id not in all_rows:
@@ -320,25 +379,45 @@ def search_vault(query: str, top_k: int = 3) -> str:
                     logger.warning(f"[ARSIP] Gagal query row {doc_id} dari DB: {e}")
 
     candidates = [all_rows[doc_id] for doc_id, _ in merged_hits if doc_id in all_rows]
-
     if not candidates:
         return "Tidak ada catatan relevan ditemukan di vault."
 
+    gate_ok = True
     try:
         reranker = _get_reranker()
         pairs = [(query, str(c['content'])) for c in candidates]
         rerank_scores = reranker.predict(pairs)
         scored = sorted(zip(rerank_scores, candidates), key=lambda x: float(x[0]), reverse=True)
-        top = [c for _, c in scored[:top_k]]
+        top_scored = scored[:top_k]
+        top = [c for _, c in top_scored]
+        gate_ok = _passes_relevance_gate([s for s, _ in top_scored])
     except Exception as e:
         logger.warning(f"[ARSIP] Rerank gagal ({e}). Pakai urutan hybrid.")
         top = candidates[:top_k]
 
-    output = []
-    for row in top:
-        heading = row['heading'] if 'heading' in row.index else ''
-        head_str = f" / {heading}" if heading else ""
-        output.append(f"File: {row['filename']}{head_str}\n{row['content'][:500]}")
+    if not gate_ok:
+        return "Tidak ada catatan relevan ditemukan di vault."
+
+    output: list[str] = []
+    seen: set[tuple[str, int]] = set()
+    remaining = 3000
+    for primary in top:
+        try:
+            context_rows = _fetch_neighbor_rows(tbl, primary)
+        except Exception as exc:
+            logger.warning(f"[ARSIP] Neighbor lookup gagal: {exc}")
+            context_rows = [primary.to_dict() if hasattr(primary, "to_dict") else primary]
+        for row in context_rows:
+            key = (str(row["path"]), int(row["chunk_id"]))
+            if key in seen or remaining <= 0:
+                continue
+            seen.add(key)
+            heading = str(row.get("heading", "") or "")
+            label = f"File: {row['filename']}" + (f" / {heading}" if heading else "")
+            block = f"{label}\n{str(row['content'])}"
+            block = block[:remaining]
+            output.append(block)
+            remaining -= len(block)
     return "\n---\n".join(output)
 
 # ============================================================
@@ -802,6 +881,13 @@ def _index_vault_safe():
         index_vault()
     except Exception as e:
         print(f"[ARSIP] ⚠️ Background index vault gagal: {e}")
+    # Prewarm jalur retrieval biar query pertama tidak kena cold-start.
+    try:
+        embedder.encode_query("warmup")
+        _get_reranker().predict([("warmup", "warmup")])
+        _get_bm25_index()
+    except Exception as e:
+        logger.warning(f"[ARSIP] Prewarm retrieval gagal: {e}")
 
 
 def start_vault_index_background():

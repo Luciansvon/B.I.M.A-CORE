@@ -149,6 +149,13 @@ class Embedder:
             return np.stack([self._encode_cloud_one(t) for t in text])
         return self._get_local().encode(text)
 
+    def encode_query(self, text: str) -> np.ndarray:
+        """Embed sebuah query. Untuk arsip lokal (Qwen3) pakai retrieval prompt
+        `query`; selain itu jalur `encode()` biasa (dokumen tetap tanpa prompt)."""
+        if self.backend == "local" and self.domain == "arsip":
+            return self._get_local().encode(text, prompt_name="query")
+        return self.encode(text)
+
 
 @lru_cache(maxsize=8)
 def get_embedder(domain: str = "arsip") -> Embedder:

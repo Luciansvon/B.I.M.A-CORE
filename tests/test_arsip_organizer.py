@@ -250,7 +250,7 @@ def test_index_vault_serializes_full_transactions(
     state = {"active": 0, "max_active": 0}
     state_lock = threading.Lock()
 
-    def fake_index() -> None:
+    def fake_index(full_rebuild: bool = False) -> None:
         with state_lock:
             state["active"] += 1
             state["max_active"] = max(state["max_active"], state["active"])
