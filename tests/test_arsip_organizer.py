@@ -308,3 +308,42 @@ def test_long_title_slugs_have_stable_collision_resistant_suffixes(vault: Path) 
     notes = list((vault / "Inbox").glob("*.md"))
     assert len(notes) == 2
     assert all(len(note.stem) <= 100 for note in notes)
+
+
+def test_related_block_replacement_preserves_manual_tail() -> None:
+    original = (
+        "# Catatan\n\nIsi\n\n"
+        "<!-- anisa:related:start -->\n"
+        "### Catatan Terkait\n- [[Lama]]\n"
+        "<!-- anisa:related:end -->\n\n"
+        "## Lampiran Manual\nJangan hapus ini.\n"
+    )
+
+    result = t3_arsip._replace_related_block(original, ["Baru"])
+
+    assert "[[Lama]]" not in result
+    assert "[[Baru]]" in result
+    assert "## Lampiran Manual\nJangan hapus ini." in result
+
+
+def test_unmarked_manual_related_section_is_not_deleted() -> None:
+    original = "# Catatan\n\n### Catatan Terkait\nKomentar manual Bima.\n"
+
+    result = t3_arsip._replace_related_block(original, ["Baru"])
+
+    assert "Komentar manual Bima." in result
+    assert "<!-- anisa:related:start -->" in result
+
+
+def test_legacy_link_only_related_section_is_migrated() -> None:
+    original = (
+        "# Catatan\n\nIsi manual.\n\n"
+        "### Catatan Terkait\n- [[Lama]]\n"
+    )
+
+    result = t3_arsip._replace_related_block(original, ["Baru"])
+
+    assert "Isi manual." in result
+    assert "[[Lama]]" not in result
+    assert result.count("### Catatan Terkait") == 1
+    assert "<!-- anisa:related:start -->" in result

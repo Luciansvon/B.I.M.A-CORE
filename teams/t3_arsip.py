@@ -627,6 +627,32 @@ def backup_file(filepath: Path) -> Path | None:
         logger.error(f"[LINKER] Gagal membuat backup file {filepath}: {e}")
         return None
 
+
+_RELATED_START = "<!-- anisa:related:start -->"
+_RELATED_END = "<!-- anisa:related:end -->"
+_MARKED_RELATED = re.compile(
+    re.escape(_RELATED_START) + r"[\s\S]*?" + re.escape(_RELATED_END)
+)
+# Blok "Catatan Terkait" lama tanpa marker yang isinya HANYA wiki link sampai
+# akhir file — ini aman dibuang/migrasi. Konten manual (bukan wiki link) di
+# bawah heading TIDAK cocok pola ini, jadi tidak akan terhapus.
+_LEGACY_RELATED = re.compile(
+    r"(?ms)\n*^#{2,3}\s+Catatan Terkait\s*$"
+    r"(?:\n\s*-\s+\[\[[^\n]+\]\]\s*)+\Z"
+)
+
+
+def _replace_related_block(content: str, related_notes: list[str]) -> str:
+    """Ganti HANYA blok "Catatan Terkait" milik Anisa (di antara marker), tanpa
+    menyentuh konten manual di luar marker. Blok legacy link-only ikut dimigrasi."""
+    lines = "\n".join(f"- [[{name}]]" for name in related_notes)
+    block = f"{_RELATED_START}\n### Catatan Terkait\n{lines}\n{_RELATED_END}"
+    if _MARKED_RELATED.search(content):
+        return _MARKED_RELATED.sub(block, content, count=1)
+    base = _LEGACY_RELATED.sub("", content).rstrip()
+    return f"{base}\n\n{block}\n"
+
+
 class VaultLinkerTool(BaseTool):
     name: str = "Vault Linker Tool"
     description: str = """Merapikan semua catatan di vault Obsidian Bima,
@@ -722,9 +748,6 @@ class VaultLinkerTool(BaseTool):
                     if modified_chunks:
                         content = "".join(chunks)
 
-                # Clean up old Catatan Terkait section if present
-                content = re.sub(r'\n*(?:###?|##)\s+Catatan\s+Terkait[\s\S]*$', '', content).strip()
-
                 # Get semantic related notes (vector search)
                 related_notes = []
                 try:
@@ -745,12 +768,11 @@ class VaultLinkerTool(BaseTool):
                 except Exception as ex:
                     logger.debug(f"[LINKER] Skip semantic search for {filepath.name}: {ex}")
 
-                # Append related notes section if we have any
+                # Segarkan blok "Catatan Terkait" HANYA di dalam marker Anisa;
+                # konten manual di bawah marker tidak ikut terhapus.
                 if related_notes:
-                    content += "\n\n### Catatan Terkait\n"
-                    for t in related_notes:
-                        content += f"- [[{t}]]\n"
-                        inline_links_added += 1
+                    content = _replace_related_block(content, related_notes)
+                    inline_links_added += len(related_notes)
 
                 # Organizer Formatting: Collapse blank lines & clean lines
                 lines = [line.rstrip() for line in content.split("\n")]
