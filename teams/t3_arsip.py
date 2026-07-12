@@ -2,7 +2,10 @@ import os
 import re
 import logging
 import json
+import hashlib
+import shutil
 import threading
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from crewai import Agent
@@ -18,6 +21,7 @@ logger = logging.getLogger('bima_core')
 embedder = get_embedder("arsip")
 _db = None
 _db_lock = threading.Lock()
+_vault_save_lock = threading.Lock()
 
 
 def _get_db():
@@ -333,81 +337,174 @@ def search_vault(query: str, top_k: int = 3) -> str:
 # ============================================================
 # Tool SIMPAN ke Vault (BARU!)
 # ============================================================
+_VAULT_CATEGORIES = {"Inbox", "Riset", "Proyek", "Personal", "Saham"}
+_CONTENT_HASH_MARKER = re.compile(r"<!-- anisa:content-hash:([0-9a-f]{64}) -->")
+
+
+def _slug(value: str, limit: int = 100) -> str:
+    ascii_value = (
+        unicodedata.normalize("NFKD", value)
+        .encode("ascii", "ignore")
+        .decode()
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
+    return slug[:limit].rstrip("-")
+
+
+def _content_digest(content: str) -> str:
+    normalized = " ".join(content.split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _atomic_write(filepath: Path, content: str) -> None:
+    temp_path = filepath.with_suffix(f"{filepath.suffix}.tmp")
+    try:
+        temp_path.write_text(content, encoding="utf-8")
+        os.replace(temp_path, filepath)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _yaml_value(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _new_note(
+    title: str,
+    content: str,
+    category: str,
+    tags: list[str],
+    source: str,
+    digest: str,
+    timestamp: str,
+) -> str:
+    return f"""---
+title: {_yaml_value(title)}
+created: {_yaml_value(timestamp)}
+updated: {_yaml_value(timestamp)}
+category: {_yaml_value(category)}
+tags: {_yaml_value(tags)}
+source: {_yaml_value(source)}
+content_hash: {_yaml_value(digest)}
+---
+
+# {title}
+
+<!-- anisa:content-hash:{digest} -->
+
+{content.strip()}
+"""
+
+
+def _refresh_frontmatter(content: str, timestamp: str, digest: str) -> str:
+    if not content.startswith("---\n"):
+        return content
+    frontmatter, separator, body = content[4:].partition("\n---\n")
+    if not separator:
+        return content
+    for key, value in (("updated", timestamp), ("content_hash", digest)):
+        field = f"{key}: {_yaml_value(value)}"
+        if re.search(rf"^{key}:.*$", frontmatter, flags=re.MULTILINE):
+            frontmatter = re.sub(
+                rf"^{key}:.*$", field, frontmatter, count=1, flags=re.MULTILINE
+            )
+        else:
+            frontmatter = f"{frontmatter.rstrip()}\n{field}"
+    return f"---\n{frontmatter}\n---\n{body}"
+
+
 class VaultSaveTool(BaseTool):
     name: str = "Vault Save Tool"
-    description: str = """Simpan data baru ke vault Obsidian Bima.
-    Gunakan untuk menyimpan hasil riset, catatan proyek, atau data penting.
-    Input format: JSON string dengan field "title" dan "content".
-    Contoh: {"title": "Harga Kayu Pinus April 2026", "content": "Data hasil riset dari Tokopedia..."}"""
+    description: str = """Simpan catatan terorganisasi ke vault Obsidian Bima.
+    Input wajib JSON: {"title":"...","content":"...","category":"Inbox|Riset|Proyek|Personal|Saham","tags":["..."],"source":"..."}.
+    Category yang tidak valid otomatis menjadi Inbox."""
 
     def _run(self, input_json: str) -> str:
         try:
             try:
                 data = json.loads(input_json)
-            except json.JSONDecodeError as e:
-                return f"FAILED|JSON tidak valid: {e}. Format harus: {{\"title\": \"...\", \"content\": \"...\"}}"
+            except (json.JSONDecodeError, TypeError):
+                return "FAILED|JSON tidak valid."
 
             if not isinstance(data, dict):
                 return "FAILED|Input harus objek JSON dengan field 'title' dan 'content'."
 
-            title = data.get("title") or f"catatan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            content = data.get("content", "")
-
-            # Bersihkan nama file (anti path-traversal)
-            safe_title = "".join(c for c in str(title) if c.isalnum() or c in (' ', '-', '_')).strip()
-            safe_title = safe_title.replace(' ', '_')[:100]  # cap panjang
+            title = data.get("title")
+            content = data.get("content")
+            if not isinstance(title, str) or not title.strip():
+                return "FAILED|Field 'title' wajib string nonempty."
+            if not isinstance(content, str) or not content.strip():
+                return "FAILED|Field 'content' wajib string nonempty."
+            title = title.strip()
+            category = data.get("category")
+            category = category if category in _VAULT_CATEGORIES else "Inbox"
+            raw_tags = data.get("tags", [])
+            tags: list[str] = []
+            if isinstance(raw_tags, list):
+                for item in raw_tags:
+                    if not isinstance(item, str):
+                        continue
+                    tag = _slug(item)
+                    if tag and tag not in tags:
+                        tags.append(tag)
+                    if len(tags) == 8:
+                        break
+            raw_source = data.get("source", "Bima")
+            source = raw_source.strip()[:500] if isinstance(raw_source, str) else "Bima"
+            source = source or "Bima"
+            safe_title = _slug(title)
             if not safe_title:
-                safe_title = f"catatan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                return "FAILED|Judul tidak menghasilkan nama file yang valid."
 
-            filename = f"{safe_title}.md"
             vault_dir = Path(OBSIDIAN_PATH).resolve()
-            vault_dir.mkdir(parents=True, exist_ok=True)
-            filepath = (vault_dir / filename).resolve()
-
-            # Pastikan filepath BENAR-BENAR di dalam vault_dir (anti traversal)
+            filepath = (vault_dir / category / f"{safe_title}.md").resolve()
             try:
                 filepath.relative_to(vault_dir)
             except ValueError:
-                return f"FAILED|Path tidak aman terdeteksi: {filepath}"
-            
-            # Deteksi duplikat
-            status_msg = "baru"
-            if filepath.exists():
-                old_content = filepath.read_text(encoding="utf-8", errors="ignore")
-                if content[:200] in old_content:
-                    return f"SKIPPED|{filepath}|Catatan '{filename}' sudah ada dengan konten serupa. Tidak disimpan ulang."
-                # File ada tapi konten berbeda → append timestamp agar tidak ditimpa
-                safe_title += f"_{datetime.now().strftime('%H%M%S')}"
-                filename = f"{safe_title}.md"
-                filepath = vault_dir / filename
-                status_msg = "versi baru"
-            
-            # Format markdown
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            markdown_content = f"""# {title}
+                return "FAILED|Path target tidak aman."
 
-**Disimpan:** {timestamp} WIB
-**Sumber:** ANISA Auto-Save
+            digest = _content_digest(content)
+            timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+            with _vault_save_lock:
+                vault_dir.mkdir(parents=True, exist_ok=True)
+                md_files = sorted(vault_dir.rglob("*.md"))
+                existing_note: Path | None = None
+                for note in md_files:
+                    old_content = note.read_text(encoding="utf-8", errors="ignore")
+                    if digest in _CONTENT_HASH_MARKER.findall(old_content):
+                        return f"SKIPPED|{note}|Konten yang sama sudah ada di vault."
+                    if existing_note is None and _slug(note.stem) == safe_title:
+                        existing_note = note
 
----
+                if existing_note is not None:
+                    old_content = existing_note.read_text(encoding="utf-8", errors="ignore")
+                    if backup_file(existing_note) is None:
+                        return f"FAILED|Backup gagal; catatan lama tidak diubah: {existing_note}"
+                    updated = _refresh_frontmatter(old_content, timestamp, digest).rstrip()
+                    updated += (
+                        f"\n\n## Update {timestamp}\n\n"
+                        f"<!-- anisa:content-hash:{digest} -->\n\n{content.strip()}\n"
+                    )
+                    _atomic_write(existing_note, updated)
+                    filepath = existing_note
+                    status_msg = "update"
+                else:
+                    filepath.parent.mkdir(parents=True, exist_ok=True)
+                    _atomic_write(
+                        filepath,
+                        _new_note(title, content, category, tags, source, digest, timestamp),
+                    )
+                    status_msg = "baru"
 
-{content}
-
----
-
-*Catatan ini disimpan otomatis oleh B.I.M.A Core*
-"""
-            filepath.write_text(markdown_content, encoding="utf-8")
-            
-            # Re-index vault (jangan sampai crash proses save)
             try:
                 index_vault()
             except Exception as e:
-                print(f"[ARSIP] Re-index gagal setelah save: {e}")
-            
-            return f"SUCCESS|{filepath}|Data {status_msg} berhasil disimpan ke vault: {filename}"
+                logger.warning(f"[ARSIP] Re-index gagal setelah save: {e}")
+
+            return f"SUCCESS|{filepath}|Data {status_msg} berhasil disimpan ke vault."
         except Exception as e:
-            return f"FAILED|Gagal simpan ke vault: {e}"
+            logger.error(f"[ARSIP] Gagal simpan ke vault: {e}")
+            return "FAILED|Gagal simpan ke vault. Detail tersimpan di log lokal."
 
 class VaultSearchTool(BaseTool):
     name: str = "Vault Search Tool"
@@ -424,18 +521,19 @@ class VaultIndexTool(BaseTool):
         index_vault()
         return "Vault berhasil diindex ulang!"
 
-def backup_file(filepath: Path) -> None:
+def backup_file(filepath: Path) -> Path | None:
     try:
         backup_dir = Path(__file__).parent.parent / "outputs" / "backup"
         backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_name = f"{filepath.stem}_{timestamp}{filepath.suffix}"
         backup_path = backup_dir / backup_name
-        import shutil
         shutil.copy2(filepath, backup_path)
         logger.info(f"[LINKER] Backup dibuat untuk {filepath.name} -> {backup_name}")
+        return backup_path
     except Exception as e:
         logger.error(f"[LINKER] Gagal membuat backup file {filepath}: {e}")
+        return None
 
 class VaultLinkerTool(BaseTool):
     name: str = "Vault Linker Tool"
@@ -616,7 +714,8 @@ arsip_agent = Agent(
     ATURAN WAJIB:
     - Kalau task description mengandung blok "DATA DARI TIM SEBELUMNYA" → kamu DILARANG panggil VaultSearchTool. Datanya sudah ada, langsung pakai VaultSaveTool.
     - Kalau diminta "simpan", "arsipkan", "catat" → LANGSUNG panggil VaultSaveTool.
-    - Format input VaultSaveTool HARUS JSON: {"title": "...", "content": "..."}
+    - Format input VaultSaveTool HARUS JSON: {"title":"...","content":"...","category":"Inbox|Riset|Proyek|Personal|Saham","tags":["..."],"source":"..."}
+    - Pilih category dari allowlist sesuai isi catatan; kalau ragu pakai Inbox.
     - VaultSearchTool hanya dipakai kalau Bima eksplisit minta CARI di vault dan tidak ada data dari tim sebelumnya.
     - Hubungkan catatan menggunakan VaultLinkerTool jika Bima minta merapikan atau menyambungkan wiki link.
     - Jangan bilang "tidak bisa" — kamu PUNYA tool simpan!

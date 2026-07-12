@@ -128,6 +128,9 @@ async def test_upstream_data_is_saved_directly_without_crew(
         {
             "title": "Simpan hasil riset kursi rotan",
             "content": upstream,
+            "category": "Riset",
+            "tags": [],
+            "source": "Browser",
         }
     ]
     assert result["is_finished"] is True
