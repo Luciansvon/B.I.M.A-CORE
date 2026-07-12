@@ -250,10 +250,13 @@ async def canvas_node(state: BimaState) -> dict:
     user_id = state.get("discord_user_id", "")
 
     if not user_id:
-        # Tanpa user_id kita gak bisa track session. Bilang ke user.
+        # Tanpa identity channel kita gak bisa track session.
         return {
             "messages": [AIMessage(
-                content="⚠️ Canvas mode butuh user ID Discord. Coba lagi di chat Discord — atau kalau lagi test, set state.discord_user_id manual."
+                content=(
+                    "⚠️ Canvas mode butuh identitas user dari channel chat. "
+                    "Coba kirim ulang dari sesi yang sama."
+                )
             )],
             "is_finished": True,
         }

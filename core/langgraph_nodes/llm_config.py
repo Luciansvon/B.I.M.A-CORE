@@ -1,7 +1,8 @@
+import asyncio
 import os
 import logging
 from langchain_openai import ChatOpenAI
-from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.callbacks import AsyncCallbackHandler
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -91,7 +92,7 @@ heavy_llm = get_langchain_llm(_COMPLEXITY_MAP["heavy"])
 
 
 # T1-D: CostTracker callback — capture OpenRouter cost dari response metadata
-class CostTracker(BaseCallbackHandler):
+class CostTracker(AsyncCallbackHandler):
     """Async-safe callback. Parse cost dari response.usage.cost (OpenRouter extra_body
     usage feature) dan akumulasi ke persistent SQLite per user per hari.
     """
@@ -99,7 +100,7 @@ class CostTracker(BaseCallbackHandler):
     def __init__(self, user_id: str):
         self.user_id = str(user_id)
 
-    def on_llm_end(self, response, **kwargs):
+    async def on_llm_end(self, response, **kwargs):
         try:
             for gen in response.generations:
                 for g in gen:
@@ -115,7 +116,11 @@ class CostTracker(BaseCallbackHandler):
                         cost = (umeta or {}).get("cost")
                     if cost:
                         from core.gen_rate_limit import add_actual_cost
-                        add_actual_cost(self.user_id, float(cost))
+                        await asyncio.to_thread(
+                            add_actual_cost,
+                            self.user_id,
+                            float(cost),
+                        )
                         return
         except Exception as e:
             logger.debug(f"[CostTracker] Parse cost gagal (non-fatal): {e}")

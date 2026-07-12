@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "start": "agentmemory"
+    "start": "agentmemory --tools core"
   },
   "dependencies": {
     "@agentmemory/agentmemory": "0.9.27"

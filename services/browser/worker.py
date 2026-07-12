@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import json
 import logging
@@ -15,6 +16,7 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VIDEO_BASE_DIR = PROJECT_ROOT / "outputs" / "browser_use"
 MARKETPLACE_PROFILE_DIR = VIDEO_BASE_DIR / "profile_marketplace"
+MARKETPLACE_PROFILE_LOCK = VIDEO_BASE_DIR / ".profile_marketplace.lock"
 MARKETPLACE_PATTERN = re.compile(
     r"\b(tokopedia|shopee|lazada|bukalapak|tiktokshop|tiktok\s+shop|tiktok\.com/shop)\b",
     re.IGNORECASE,
@@ -47,6 +49,20 @@ def _step_callback():
         logger.info("step=%s url=%s", step_number or counter["value"], str(url)[:120])
 
     return on_step
+
+
+@contextmanager
+def _marketplace_profile_lock():
+    """Serialize Chromium access to the persistent marketplace profile."""
+    import fcntl
+
+    MARKETPLACE_PROFILE_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with MARKETPLACE_PROFILE_LOCK.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 async def run_task(task: str) -> dict:
@@ -92,16 +108,30 @@ async def run_task(task: str) -> dict:
         base_url="https://openrouter.ai/api/v1",
         temperature=0.1,
     )
-    agent = Agent(
-        task=task,
-        llm=llm,
-        browser_profile=BrowserProfile(**profile_kwargs),
-        step_timeout=STEP_TIMEOUT,
-        register_new_step_callback=_step_callback(),
-        enable_signal_handler=False,
-    )
-    history = await agent.run(max_steps=MAX_STEPS)
+    profile_lock = _marketplace_profile_lock() if persistent else nullcontext()
+    with profile_lock:
+        agent = Agent(
+            task=task,
+            llm=llm,
+            browser_profile=BrowserProfile(**profile_kwargs),
+            step_timeout=STEP_TIMEOUT,
+            register_new_step_callback=_step_callback(),
+            enable_signal_handler=False,
+        )
+        history = await agent.run(max_steps=MAX_STEPS)
+
     result = history.final_result() if hasattr(history, "final_result") else str(history)
+    is_done = history.is_done() if hasattr(history, "is_done") else False
+    is_successful = (
+        history.is_successful() if hasattr(history, "is_successful") else None
+    )
+    if not is_done or is_successful is not True:
+        logger.warning(
+            "browser task incomplete: done=%s successful=%s",
+            is_done,
+            is_successful,
+        )
+        return {"ok": False, "error": "browser task incomplete"}
 
     video_path = None
     if session_dir is not None:

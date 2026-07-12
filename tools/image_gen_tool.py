@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from crewai.tools import BaseTool
+from core.path_security import resolve_allowed_path
 
 logger = logging.getLogger("bima_core")
 
@@ -62,16 +63,29 @@ class ImageGenTool(BaseTool):
             content_parts: list[dict] = []
             for img_path in reference_image_paths[:3]:  # cap 3 ref images
                 try:
-                    mime = _guess_mime(img_path)
-                    with open(img_path, "rb") as f:
-                        b64 = base64.b64encode(f.read()).decode()
+                    safe_img_path = resolve_allowed_path(
+                        img_path,
+                        (_OUTPUT_DIR,),
+                        base_dir=_OUTPUT_DIR.parent,
+                        allowed_suffixes=set(_MIME_MAP),
+                    )
+                except ValueError:
+                    logger.warning(
+                        "[IMAGE_GEN] Tolak reference image di luar outputs"
+                    )
+                    return "FAILED|Reference image tidak diizinkan"
+                try:
+                    mime = _guess_mime(str(safe_img_path))
+                    with safe_img_path.open("rb") as handle:
+                        b64 = base64.b64encode(handle.read()).decode()
                     content_parts.append({
                         "type": "image_url",
                         "image_url": {"url": f"data:{mime};base64,{b64}"},
                     })
-                    ref_used.append(img_path)
-                except Exception as e:
-                    logger.warning(f"[IMAGE_GEN] Skip ref image {img_path}: {e}")
+                    ref_used.append(str(safe_img_path))
+                except OSError:
+                    logger.exception("[IMAGE_GEN] Gagal membaca reference image")
+                    return "FAILED|Reference image gagal dibaca"
             content_parts.append({"type": "text", "text": prompt})
             user_content: str | list[dict] = content_parts
         else:

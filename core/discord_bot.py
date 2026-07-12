@@ -17,6 +17,10 @@ from core.furniture_qc import handle_qc_command
 from core.cutlist import handle_cutlist_command
 from core.ocr import handle_ocr_command
 from core.music_commands import handle_music_command
+from core.discord_attachment_policy import (
+    has_supported_image_attachment,
+    image_only_prompt,
+)
 from teams.t1_manager import simpan_sesi
 
 # Logging diatur di main.py (loguru + stdlib intercept). Cukup ambil logger di sini.
@@ -368,14 +372,17 @@ async def on_message(message):
     if client.user in message.mentions:
         perintah = perintah.replace(f'<@{client.user.id}>', '').replace(f'<@!{client.user.id}>', '').strip()
 
-    # Voice-only Discord upload: perintah boleh kosong asal ada audio attachment
+    # Attachment audio/gambar boleh diproses walau tanpa caption.
     _DISCORD_AUDIO_EXTS = {".ogg", ".oga", ".opus", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
     has_audio_attachment = any(
         Path(att.filename).suffix.lower() in _DISCORD_AUDIO_EXTS
         for att in (message.attachments or [])
     )
+    has_image_attachment = has_supported_image_attachment(
+        att.filename for att in (message.attachments or [])
+    )
 
-    if not perintah and not has_audio_attachment:
+    if not perintah and not has_audio_attachment and not has_image_attachment:
         return
 
     # === !saham command pre-route ===
@@ -420,7 +427,9 @@ async def on_message(message):
             snap = snapshot()
             await message.reply(format_status_text(snap))
         except Exception as e:
-            await message.reply(f"❌ Gagal ambil status: `{e}`")
+            logger.exception("Gagal ambil status")
+            from core.public_errors import public_message
+            await message.reply(public_message("Gagal ambil status"))
         return
 
     # === Music commands (!play, !skip, !queue, !pause, !resume, !stop, !np, !leave, !loop, !music) ===
@@ -486,8 +495,11 @@ async def on_message(message):
                 tr_block = "[VOICE TRANSCRIPT]\n" + "\n".join(transcripts)
                 perintah = f"{tr_block}\n\n{perintah}" if perintah else tr_block
 
-        # Auto-append "baca file" cuma kalau ada non-audio attachment + perintah belum nyebut keyword
-        if other_files and not any(k in perintah.lower() for k in ['gambar', 'foto', 'pdf', 'lihat', 'analisis', 'baca', 'baca file', 'voice transcript']):
+        # Gambar tanpa caption langsung diarahkan ke Vision.
+        if other_files and not perintah and has_image_attachment:
+            perintah = image_only_prompt(perintah)
+        # Auto-append "baca file" kalau caption belum menyebut intent attachment.
+        elif other_files and not any(k in perintah.lower() for k in ['gambar', 'foto', 'pdf', 'lihat', 'analisis', 'baca', 'baca file', 'voice transcript']):
             perintah += " baca file"
 
         # Replace downloaded_files dengan non-audio biar visual_node ga error analyze audio
@@ -507,7 +519,10 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
     # T1-D: Daily LLM cost guardrail — block kalau user sudah lewat budget hari ini
     try:
         from core.gen_rate_limit import check_daily_cost
-        allowed, err_msg = check_daily_cost(str(message.author.id))
+        allowed, err_msg = await asyncio.to_thread(
+            check_daily_cost,
+            str(message.author.id),
+        )
         if not allowed:
             await message.reply(err_msg)
             return
@@ -534,6 +549,7 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
             progress_callback=update_progress,
             discord_user_id=str(message.author.id),
             source_channel="discord",
+            conversation_id=str(message.channel.id),
         )
         
         # Simpan sesi (untuk histori dan memori)
@@ -588,7 +604,8 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
     except Exception as e:
         logger.error(f"ERROR SISTEM: {e}", exc_info=True)
         try:
-            await message.reply(f"Aduh Bima sayang, ada error: `{e}`")
+            from core.public_errors import public_message
+            await message.reply(public_message("Gagal memproses permintaan"))
         except Exception as reply_err:
             logger.error(f"Gagal kirim pesan error ke Discord: {reply_err}")
 
