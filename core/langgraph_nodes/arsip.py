@@ -1,8 +1,9 @@
 import logging
 import asyncio
+import json
 from langchain_core.messages import AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
-from teams.t3_arsip import arsip_agent
+from teams.t3_arsip import VaultSaveTool, arsip_agent
 from crewai import Task, Crew
 
 logger = logging.getLogger('bima_core')
@@ -34,18 +35,22 @@ async def arsip_node(state: BimaState) -> dict:
     has_upstream = bool(upstream_text)
 
     if has_upstream:
-        instruksi = f"""
-=== DATA DARI TIM SEBELUMNYA ===
-{upstream_text}
-================================
+        payload = {
+            "title": user_request.strip() or "Hasil Riset",
+            "content": upstream_text,
+        }
+        hasil_raw = await asyncio.to_thread(
+            VaultSaveTool()._run,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        hasil_str = str(hasil_raw)
+        logger.info(f"[LANGGRAPH ARSIP] Save upstream selesai: {hasil_str[:100]}...")
+        return {
+            "messages": [AIMessage(content=hasil_str)],
+            "is_finished": True,
+        }
 
-PRIORITAS WAJIB:
-- Karena tim sebelumnya sudah kasih data di atas, tugasmu **LANGSUNG SIMPAN** ke vault pakai VaultSaveTool.
-- JANGAN panggil VaultSearchTool dulu — datanya sudah lengkap di atas.
-- Format input VaultSaveTool HARUS JSON: {{"title": "judul ringkas berdasar permintaan Bima", "content": "rangkum data dari tim sebelumnya"}}
-- Setelah save berhasil, balas dengan konfirmasi ramah ke Bima."""
-    else:
-        instruksi = """
+    instruksi = """
 Tugasmu:
 1. Jika diminta menyimpan: gunakan VaultSaveTool.
 2. Jika diminta mencari: gunakan VaultSearchTool.
