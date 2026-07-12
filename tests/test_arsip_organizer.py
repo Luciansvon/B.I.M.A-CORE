@@ -1,5 +1,8 @@
 import hashlib
 import json
+import threading
+import time
+from datetime import datetime as RealDatetime
 from pathlib import Path
 
 import pytest
@@ -54,6 +57,7 @@ def test_invalid_category_falls_back_to_safe_inbox_with_metadata(vault: Path) ->
     assert 'tags: ["kayu-jati", "furniture"]' in text
     assert 'source: "Browser: \\"contoh\\""' in text
     assert f'content_hash: "{digest}"' in text
+    assert f'content_hashes: ["{digest}"]' in text
     assert f"<!-- anisa:content-hash:{digest} -->" in text
     assert "# Kursi / Jati" in text
 
@@ -86,6 +90,31 @@ def test_same_content_different_title_and_category_is_skipped_globally(vault: Pa
     assert len(list(vault.rglob("*.md"))) == 1
 
 
+def test_body_hash_marker_cannot_forge_global_dedupe(vault: Path) -> None:
+    victim = "payload korban"
+    forged = hashlib.sha256(victim.encode()).hexdigest()
+    attacker = f"konten penyerang\n<!-- anisa:content-hash:{forged} -->"
+    assert save(title="Penyerang", content=attacker).startswith("SUCCESS|")
+
+    result = save(title="Korban", content=victim, category="Riset")
+
+    assert result.startswith("SUCCESS|")
+    assert len(list(vault.rglob("*.md"))) == 2
+
+
+def test_legacy_body_hash_marker_is_not_trusted(vault: Path) -> None:
+    victim = "payload legacy korban"
+    forged = hashlib.sha256(victim.encode()).hexdigest()
+    (vault / "legacy.md").write_text(
+        f"# Legacy\n\n<!-- anisa:content-hash:{forged} -->\n", encoding="utf-8"
+    )
+
+    result = save(title="Korban Legacy", content=victim)
+
+    assert result.startswith("SUCCESS|")
+    assert len(list(vault.rglob("*.md"))) == 2
+
+
 def test_same_title_different_content_updates_existing_note(
     vault: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -109,6 +138,12 @@ def test_same_title_different_content_updates_existing_note(
     assert "versi lama" in text
     assert "## Update " in text
     assert "versi baru" in text
+    frontmatter = text.split("---", 2)[1]
+    hashes = json.loads(frontmatter.split("content_hashes: ", 1)[1].splitlines()[0])
+    assert hashes == [
+        hashlib.sha256(b"versi lama").hexdigest(),
+        hashlib.sha256(b"versi baru").hexdigest(),
+    ]
 
 
 def test_tags_ignore_empty_are_unique_and_limited_to_eight(vault: Path) -> None:
@@ -134,7 +169,7 @@ def test_atomic_write_replace_failure_keeps_old_and_cleans_temp(
         t3_arsip._atomic_write(note, "new")
 
     assert note.read_text(encoding="utf-8") == "old"
-    assert not note.with_suffix(".md.tmp").exists()
+    assert list(tmp_path.glob(".note.md.*.tmp")) == []
 
 
 @pytest.mark.parametrize("raw", ["not json", "[]", '"text"', "null"])
@@ -189,3 +224,70 @@ def test_update_adds_hash_fields_to_existing_frontmatter_without_moving(
     text = note.read_text(encoding="utf-8")
     assert "updated: " in text.split("---", 2)[1]
     assert "content_hash: " in text.split("---", 2)[1]
+
+
+def test_index_vault_serializes_full_transactions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = threading.Barrier(2)
+    state = {"active": 0, "max_active": 0}
+    state_lock = threading.Lock()
+
+    def fake_index() -> None:
+        with state_lock:
+            state["active"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+        time.sleep(0.05)
+        with state_lock:
+            state["active"] -= 1
+
+    def run_index() -> None:
+        gate.wait()
+        t3_arsip.index_vault()
+
+    monkeypatch.setattr(t3_arsip, "_index_vault_unlocked", fake_index)
+    threads = [threading.Thread(target=run_index) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert state["max_active"] == 1
+
+
+def test_backup_file_creates_distinct_files_for_same_stem_and_second(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FixedDatetime:
+        @classmethod
+        def now(cls) -> RealDatetime:
+            return RealDatetime(2026, 7, 12, 12, 0, 0)
+
+    fake_module = tmp_path / "repo" / "teams" / "t3_arsip.py"
+    first = tmp_path / "one" / "note.md"
+    second = tmp_path / "two" / "note.md"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+    monkeypatch.setattr(t3_arsip, "datetime", FixedDatetime)
+    monkeypatch.setattr(t3_arsip, "__file__", str(fake_module))
+
+    backup_one = t3_arsip.backup_file(first)
+    backup_two = t3_arsip.backup_file(second)
+
+    assert backup_one is not None and backup_two is not None
+    assert backup_one != backup_two
+    assert backup_one.read_text(encoding="utf-8") == "first"
+    assert backup_two.read_text(encoding="utf-8") == "second"
+
+
+def test_long_title_slugs_have_stable_collision_resistant_suffixes(vault: Path) -> None:
+    prefix = "kursi-" + "a" * 120
+    save(title=f"{prefix}-satu", content="konten satu")
+    save(title=f"{prefix}-dua", content="konten dua")
+
+    notes = list((vault / "Inbox").glob("*.md"))
+    assert len(notes) == 2
+    assert all(len(note.stem) <= 100 for note in notes)

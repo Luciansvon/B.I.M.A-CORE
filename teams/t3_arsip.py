@@ -4,6 +4,7 @@ import logging
 import json
 import hashlib
 import shutil
+import tempfile
 import threading
 import unicodedata
 from pathlib import Path
@@ -21,6 +22,7 @@ logger = logging.getLogger('bima_core')
 embedder = get_embedder("arsip")
 _db = None
 _db_lock = threading.Lock()
+_index_lock = threading.Lock()
 _vault_save_lock = threading.Lock()
 
 
@@ -142,7 +144,7 @@ def _ensure_fts_index():
         logger.warning(f"[ARSIP] FTS index ga tersedia (LanceDB versi lama?): {e}. Search akan dense-only.")
 
 
-def index_vault():
+def _index_vault_unlocked() -> None:
     vault = Path(OBSIDIAN_PATH)
     if not vault.exists():
         print(f"[ARSIP] Folder vault tidak ditemukan: {vault}")
@@ -215,6 +217,11 @@ def index_vault():
         _rebuild_bm25_index()
     except Exception as e:
         print(f"[ARSIP] Incremental update gagal: {e}")
+
+
+def index_vault() -> None:
+    with _index_lock:
+        _index_vault_unlocked()
 
 
 def _rebuild_bm25_index():
@@ -338,7 +345,6 @@ def search_vault(query: str, top_k: int = 3) -> str:
 # Tool SIMPAN ke Vault (BARU!)
 # ============================================================
 _VAULT_CATEGORIES = {"Inbox", "Riset", "Proyek", "Personal", "Saham"}
-_CONTENT_HASH_MARKER = re.compile(r"<!-- anisa:content-hash:([0-9a-f]{64}) -->")
 
 
 def _normalize_category(value: object) -> str:
@@ -355,7 +361,10 @@ def _slug(value: str, limit: int = 100) -> str:
         .decode()
     )
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
-    return slug[:limit].rstrip("-")
+    if len(slug) <= limit:
+        return slug
+    suffix = hashlib.sha256(slug.encode("utf-8")).hexdigest()[:8]
+    return f"{slug[:limit - 9].rstrip('-')}-{suffix}"
 
 
 def _content_digest(content: str) -> str:
@@ -364,12 +373,24 @@ def _content_digest(content: str) -> str:
 
 
 def _atomic_write(filepath: Path, content: str) -> None:
-    temp_path = filepath.with_suffix(f"{filepath.suffix}.tmp")
+    temp_path: Path | None = None
     try:
-        temp_path.write_text(content, encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=filepath.parent,
+            prefix=f".{filepath.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_path = Path(temp_file.name)
         os.replace(temp_path, filepath)
     finally:
-        temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _yaml_value(value: object) -> str:
@@ -393,6 +414,7 @@ category: {_yaml_value(category)}
 tags: {_yaml_value(tags)}
 source: {_yaml_value(source)}
 content_hash: {_yaml_value(digest)}
+content_hashes: {_yaml_value([digest])}
 ---
 
 # {title}
@@ -403,13 +425,66 @@ content_hash: {_yaml_value(digest)}
 """
 
 
-def _refresh_frontmatter(content: str, timestamp: str, digest: str) -> str:
+def _split_frontmatter(content: str) -> tuple[str, str] | None:
     if not content.startswith("---\n"):
-        return content
+        return None
     frontmatter, separator, body = content[4:].partition("\n---\n")
     if not separator:
+        return None
+    return frontmatter, body
+
+
+def _trusted_content_hashes(content: str) -> list[str]:
+    split = _split_frontmatter(content)
+    if split is None:
+        return []
+    frontmatter, _ = split
+    hashes: list[str] = []
+    for key in ("content_hash", "content_hashes"):
+        match = re.search(rf"^{key}:\s*(.+)$", frontmatter, flags=re.MULTILINE)
+        if match is None:
+            continue
+        try:
+            value = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if (
+                isinstance(item, str)
+                and re.fullmatch(r"[0-9a-f]{64}", item)
+                and item not in hashes
+            ):
+                hashes.append(item)
+    return hashes
+
+
+def _find_existing_note(
+    vault_dir: Path, safe_title: str, digest: str
+) -> tuple[Path | None, Path | None]:
+    existing_note: Path | None = None
+    for note in sorted(vault_dir.rglob("*.md")):
+        old_content = note.read_text(encoding="utf-8", errors="ignore")
+        if digest in _trusted_content_hashes(old_content):
+            return note, existing_note
+        if existing_note is None and _slug(note.stem) == safe_title:
+            existing_note = note
+    return None, existing_note
+
+
+def _refresh_frontmatter(content: str, timestamp: str, digest: str) -> str:
+    split = _split_frontmatter(content)
+    if split is None:
         return content
-    for key, value in (("updated", timestamp), ("content_hash", digest)):
+    frontmatter, body = split
+    hashes = _trusted_content_hashes(content)
+    if digest not in hashes:
+        hashes.append(digest)
+    for key, value in (
+        ("updated", timestamp),
+        ("content_hash", digest),
+        ("content_hashes", hashes),
+    ):
         field = f"{key}: {_yaml_value(value)}"
         if re.search(rf"^{key}:.*$", frontmatter, flags=re.MULTILINE):
             frontmatter = re.sub(
@@ -473,14 +548,14 @@ class VaultSaveTool(BaseTool):
             timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
             with _vault_save_lock:
                 vault_dir.mkdir(parents=True, exist_ok=True)
-                md_files = sorted(vault_dir.rglob("*.md"))
-                existing_note: Path | None = None
-                for note in md_files:
-                    old_content = note.read_text(encoding="utf-8", errors="ignore")
-                    if digest in _CONTENT_HASH_MARKER.findall(old_content):
-                        return f"SKIPPED|{note}|Konten yang sama sudah ada di vault."
-                    if existing_note is None and _slug(note.stem) == safe_title:
-                        existing_note = note
+                duplicate_note, existing_note = _find_existing_note(
+                    vault_dir, safe_title, digest
+                )
+                if duplicate_note is not None:
+                    return (
+                        f"SKIPPED|{duplicate_note}|"
+                        "Konten yang sama sudah ada di vault."
+                    )
 
                 if existing_note is not None:
                     old_content = existing_note.read_text(encoding="utf-8", errors="ignore")
@@ -528,16 +603,27 @@ class VaultIndexTool(BaseTool):
         return "Vault berhasil diindex ulang!"
 
 def backup_file(filepath: Path) -> Path | None:
+    backup_path: Path | None = None
     try:
         backup_dir = Path(__file__).parent.parent / "outputs" / "backup"
         backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"{filepath.stem}_{timestamp}{filepath.suffix}"
-        backup_path = backup_dir / backup_name
-        shutil.copy2(filepath, backup_path)
-        logger.info(f"[LINKER] Backup dibuat untuk {filepath.name} -> {backup_name}")
+        fd, backup_name = tempfile.mkstemp(
+            prefix=f"{filepath.stem}_{timestamp}_",
+            suffix=filepath.suffix,
+            dir=backup_dir,
+        )
+        os.close(fd)
+        backup_path = Path(backup_name)
+        shutil.copyfile(filepath, backup_path)
+        shutil.copystat(filepath, backup_path)
+        logger.info(
+            f"[LINKER] Backup dibuat untuk {filepath.name} -> {backup_path.name}"
+        )
         return backup_path
     except Exception as e:
+        if backup_path is not None:
+            backup_path.unlink(missing_ok=True)
         logger.error(f"[LINKER] Gagal membuat backup file {filepath}: {e}")
         return None
 
