@@ -341,6 +341,13 @@ _VAULT_CATEGORIES = {"Inbox", "Riset", "Proyek", "Personal", "Saham"}
 _CONTENT_HASH_MARKER = re.compile(r"<!-- anisa:content-hash:([0-9a-f]{64}) -->")
 
 
+def _normalize_category(value: object) -> str:
+    if not isinstance(value, str):
+        return "Inbox"
+    category = value.strip().title()
+    return category if category in _VAULT_CATEGORIES else "Inbox"
+
+
 def _slug(value: str, limit: int = 100) -> str:
     ascii_value = (
         unicodedata.normalize("NFKD", value)
@@ -436,8 +443,7 @@ class VaultSaveTool(BaseTool):
             if not isinstance(content, str) or not content.strip():
                 return "FAILED|Field 'content' wajib string nonempty."
             title = title.strip()
-            category = data.get("category")
-            category = category if category in _VAULT_CATEGORIES else "Inbox"
+            category = _normalize_category(data.get("category"))
             raw_tags = data.get("tags", [])
             tags: list[str] = []
             if isinstance(raw_tags, list):

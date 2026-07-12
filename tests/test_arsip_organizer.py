@@ -58,6 +58,23 @@ def test_invalid_category_falls_back_to_safe_inbox_with_metadata(vault: Path) ->
     assert "# Kursi / Jati" in text
 
 
+@pytest.mark.parametrize("category", [["Riset"], {"name": "Riset"}, 7, None])
+def test_non_string_category_saves_safely_to_inbox(
+    vault: Path, category: object
+) -> None:
+    result = save(title="Kategori Aman", content="isi kategori", category=category)
+
+    assert result.startswith("SUCCESS|")
+    assert (vault / "Inbox" / "kategori-aman.md").exists()
+
+
+def test_category_string_is_normalized_with_strip_and_title(vault: Path) -> None:
+    result = save(title="Kategori Riset", content="isi riset", category="  riset ")
+
+    assert result.startswith("SUCCESS|")
+    assert (vault / "Riset" / "kategori-riset.md").exists()
+
+
 def test_same_content_different_title_and_category_is_skipped_globally(vault: Path) -> None:
     assert save(title="Catatan Satu", content="isi   sama", category="Riset").startswith(
         "SUCCESS|"
