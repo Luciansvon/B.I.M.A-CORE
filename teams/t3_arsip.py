@@ -383,10 +383,10 @@ def _atomic_write(filepath: Path, content: str) -> None:
             suffix=".tmp",
             delete=False,
         ) as temp_file:
+            temp_path = Path(temp_file.name)
             temp_file.write(content)
             temp_file.flush()
             os.fsync(temp_file.fileno())
-            temp_path = Path(temp_file.name)
         os.replace(temp_path, filepath)
     finally:
         if temp_path is not None:

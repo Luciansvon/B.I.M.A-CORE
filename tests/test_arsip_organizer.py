@@ -172,6 +172,23 @@ def test_atomic_write_replace_failure_keeps_old_and_cleans_temp(
     assert list(tmp_path.glob(".note.md.*.tmp")) == []
 
 
+def test_atomic_write_fsync_failure_keeps_old_and_cleans_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = tmp_path / "note.md"
+    note.write_text("old", encoding="utf-8")
+
+    def fail_fsync(_fd: int) -> None:
+        raise OSError("fsync failed")
+
+    monkeypatch.setattr(t3_arsip.os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="fsync failed"):
+        t3_arsip._atomic_write(note, "new")
+
+    assert note.read_text(encoding="utf-8") == "old"
+    assert list(tmp_path.glob(".note.md.*.tmp")) == []
+
+
 @pytest.mark.parametrize("raw", ["not json", "[]", '"text"', "null"])
 def test_invalid_json_or_non_dict_returns_failed(vault: Path, raw: str) -> None:
     assert t3_arsip.VaultSaveTool()._run(raw).startswith("FAILED|")
