@@ -30,6 +30,13 @@ def test_explicit_vault_save_routes_to_arsip() -> None:
     assert confidence >= 0.85
 
 
+def test_explicit_vault_write_routes_to_arsip() -> None:
+    teams, confidence, _ = classify_intent("tulis ini ke vault", False)
+
+    assert teams == ["arsip"]
+    assert confidence >= 0.85
+
+
 @pytest.mark.parametrize(
     "user_request",
     [
@@ -38,6 +45,9 @@ def test_explicit_vault_save_routes_to_arsip() -> None:
         "catat pengeluaran hari ini di spreadsheet",
         "jangan simpan ini ke vault",
         "aku ingat catatan kuliah itu",
+        "tidak perlu simpan ini ke vault",
+        "ga usah catat ini ke obsidian",
+        "simpan ini ke vault jangan dulu",
     ],
 )
 def test_non_vault_requests_fall_back_to_manager(user_request: str) -> None:
