@@ -17,7 +17,7 @@ from core.furniture_qc import handle_qc_command
 from core.cutlist import handle_cutlist_command
 from core.ocr import handle_ocr_command
 from core.music_commands import handle_music_command
-from teams.t1_manager import simpan_sesi
+from memory.memory_engine import add_session
 
 # Logging diatur di main.py (loguru + stdlib intercept). Cukup ambil logger di sini.
 logger = logging.getLogger('bima_core')
@@ -537,7 +537,7 @@ Saat mencari data real-time, gunakan tahun/bulan yang sesuai.
         )
         
         # Simpan sesi (untuk histori dan memori)
-        simpan_sesi(perintah_lengkap, hasil_str)
+        add_session(perintah_lengkap, hasil_str)
 
         # Bersihkan baris SUCCESS dari teks tampilan agar user tidak lihat raw metadata
         display_str = re.sub(r'\nSUCCESS\|[^\n]+', '', hasil_str).strip()

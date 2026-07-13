@@ -325,6 +325,11 @@ _STREAM_DEBOUNCE_S = 0.6
 _DISCORD_MAX = 1900
 
 
+def is_user_facing_stream_event(event: dict) -> bool:
+    metadata = event.get("metadata", {}) or {}
+    return metadata.get("langgraph_node") != "manager_node"
+
+
 async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment_paths: list = None, progress_callback=None, discord_user_id: str = "", source_channel: str = ""):
     # T1-A: progress_callback TIDAK masuk state — function gak msgpack-serializable,
     # akan crash checkpointer aput(). Register ke module dict, lookup di notify_progress.
@@ -375,6 +380,8 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
         async for event in app.astream_events(initial_state, version="v2", config=config):
             kind = event.get("event")
             if kind == "on_chat_model_stream":
+                if not is_user_facing_stream_event(event):
+                    continue
                 chunk = event.get("data", {}).get("chunk")
                 token = getattr(chunk, "content", "") or ""
                 if token:

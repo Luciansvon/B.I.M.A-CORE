@@ -310,3 +310,43 @@
 * **Masalah**: Startup pertama setelah thread index dipindahkan masih menampilkan warning pada setiap fork MCP.
 * **Root Cause**: Import top-level `lancedb` di Arsip dan Repo RAG sudah menginisialisasi runtime native sebelum koneksi/database dipakai.
 * **Solusi**: Lazy-import `lancedb` di `_get_db()` dan `_connect_db()`, selain menunda thread index. Startup berikutnya bersih dan index Arsip tetap menghasilkan 897 dokumen BM25 setelah MCP siap.
+
+## Log 73: LangGraph Manager Bukan Orchestrator Penuh
+* **Masalah**: Nama dan prompt `manager_node` menyiratkan otak orkestrator, tetapi runtime hanya memilih `active_teams` atau membalas chat santai. Node ini tidak membuat `current_plan`, tidak memantau hasil spesialis, tidak melakukan reroute, dan tidak menyintesis output akhir.
+* **Root Cause**: Urutan spesialis sudah ditentukan statis di `langgraph_engine.py`; seluruh node spesialis langsung menuju node berikutnya atau `memory_finalizer_node` tanpa kembali ke manager.
+* **Solusi**: Perlakukan komponen ini sebagai router/chat fallback. Jangan menghidupkan CrewAI hierarchical manager; pisahkan menjadi router terstruktur dan chat node hanya jika refactor disetujui.
+
+## Log 74: Fast-path Hanya Menangani Sekitar 12-14 Persen Request
+* **Masalah**: Audit `logs/error.log` menemukan 28 fast-path versus 206 fallback, sehingga sekitar 88% request tetap memanggil LLM manager. Uji classifier saat ini terhadap 500 prompt nyata di `memory.db` juga hanya memberi 14% fast-path.
+* **Root Cause**: Regex sengaja konservatif dan tidak menangani chat santai, perintah dokumen umum, HTML/dashboard umum, riset Intel umum, serta semua multi-step.
+* **Solusi**: Pertahankan fallback LLM untuk request ambigu, tetapi tambah fast-path hanya untuk perintah eksplisit yang aman. Chat santai tetap membutuhkan chat node; jangan paksa semua bahasa natural menjadi regex.
+
+## Log 75: Manager Menghasilkan Narasi Tersembunyi Sebelum Delegasi
+* **Masalah**: Manager selalu membuat jawaban natural lengkap lalu memasukkannya ke `messages`, walau request akan diteruskan ke spesialis dan output final memakai pesan spesialis. Pesan tersembunyi ini ikut masuk context summarizer dan kadang dijadikan `upstream_block` oleh Admin/Seniman.
+* **Root Cause**: Satu prompt mencampur dua tugas berbeda: klasifikasi rute dan pembuatan balasan chat.
+* **Solusi**: Untuk rute spesialis, hasilkan schema route-only dan simpan pada state khusus. Panggil generator balasan hanya pada cabang santai; kirim data antarnode lewat `temp_data`, bukan pesan manager tersembunyi.
+
+## Log 76: MCP Manager Terpasang ke Agent yang Tidak Dieksekusi
+* **Masalah**: MCP `sequential_thinking`, Memory, dan Time untuk target `manager` di-start lalu di-inject ke `teams.t1_manager:manager_agent`, sedangkan agent tersebut tidak pernah masuk `Crew.kickoff()`. `manager_node` LangGraph yang aktif tidak menerima tool itu.
+* **Root Cause**: Nama `manager` di registry menunjuk CrewAI manager lama, sementara orkestrasi produksi sudah berpindah ke LangGraph manager.
+* **Solusi**: Hapus target `manager` dari MCP yang tidak punya consumer aktif dan nonaktifkan `sequential_thinking` bila tidak dipakai agent lain. Pindahkan `simpan_sesi()` ke `memory_engine.py` sebelum menghapus agent lama.
+
+## Log 77: Kontrak Route Manager Tidak Punya Regression Test
+* **Masalah**: Parser manual untuk 22 tag route tidak memiliki test langsung; prompt masih menulis "20 pilihan", dan output/tag invalid diam-diam jatuh ke `santai` sehingga pekerjaan spesialis bisa terlewat.
+* **Root Cause**: Test yang ada hanya mencakup beberapa regex Arsip dan registry MCP, bukan kontrak prompt-parser-router manager.
+* **Solusi**: Gunakan structured output dengan enum route tervalidasi dan tambahkan test parametrik untuk seluruh route, urutan multi-team, serta invalid-output fallback yang eksplisit.
+
+## Log 78: Full Suite Memiliki Enam Failure Marp Baseline
+* **Masalah**: Full pytest sebelum dan sesudah hardening manager gagal pada enam test `tests/test_slide_generator.py`.
+* **Root Cause**: Marp CLI/Chromium menghasilkan `ERR_UNHANDLED_REJECTION` pada Node.js 22.22.2; failure sudah ada sebelum perubahan manager.
+* **Solusi**: Bima menyetujui failure ini sebagai baseline di luar scope. Hasil akhir manager: 332 test lulus dan hanya enam failure Marp yang sama; slide generator tidak diubah.
+
+## Log 79: Test MCP Masih Mewajibkan Akses Manager Mati
+* **Masalah**: Full suite pertama setelah penghapusan CrewAI manager gagal di `test_manager_memory_tools_are_read_only` karena key `manager` sudah tidak ada.
+* **Root Cause**: Regression test lama masih mengunci kontrak MCP milik `teams/t1_manager.py`, padahal agent dan seluruh target MCP-nya sengaja dihapus.
+* **Solusi**: Ganti kontrak test menjadi `test_legacy_manager_has_no_mcp_access`; Memory MCP hanya untuk Arsip dan Sequential Thinking tetap disabled. Targeted MCP/registry lulus 6 test.
+
+## Log 80: Hardening LangGraph Manager Terverifikasi
+* **Masalah**: Manager sebelumnya menerima route invalid secara diam-diam, menyimpan narasi tersembunyi, memblokir event loop saat baca SQLite, dan membocorkan token route ke stream.
+* **Root Cause**: Routing memakai rantai substring manual dan manager mencampur klasifikasi dengan balasan spesialis.
+* **Solusi**: Tambahkan mapping canonical 22 route dan parser fail-closed, output route-only untuk spesialis, `asyncio.to_thread()` untuk SQLite, filter stream manager, serta current-turn upstream guard. Focused regression lulus 64 test; compile/import engine lulus; PM2 online; healthcheck lulus 50 check dengan 2 warning; startup membuktikan Sequential Thinking disabled dan tidak ada injeksi MCP ke manager.

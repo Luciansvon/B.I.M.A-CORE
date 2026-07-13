@@ -353,7 +353,7 @@ def _run_command_sync(command: str):
     try:
         from core.utils import get_waktu
         from core.langgraph_engine import run_langgraph_engine
-        from teams.t1_manager import simpan_sesi
+        from memory.memory_engine import add_session
         
         waktu = get_waktu()
         konteks_waktu = f"""
@@ -382,7 +382,7 @@ Gunakan info waktu ini saat menjawab.
         
         # Simpan sesi
         try:
-            simpan_sesi(command, hasil)
+            add_session(command, hasil)
         except Exception as e:
             logger.warning(f"[DASHBOARD CMD] Gagal simpan sesi: {e}")
         

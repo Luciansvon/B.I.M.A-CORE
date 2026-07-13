@@ -3,7 +3,7 @@ import asyncio
 import re
 from pathlib import Path
 from langchain_core.messages import AIMessage
-from core.langgraph_nodes.state import BimaState, notify_progress
+from core.langgraph_nodes.state import BimaState, get_current_upstream_text, notify_progress
 from teams.t4_admin import admin_agent, detect_style, detect_format, STYLES
 from crewai import Task, Crew
 
@@ -27,14 +27,11 @@ async def admin_node(state: BimaState) -> dict:
     search_data = temp_data.get("last_search_result", "")
     data_context = f"\n\n=== DATA UNTUK DIJADIKAN DOKUMEN ===\n{search_data}\n=== AKHIR DATA ===" if search_data else ""
 
-    # Upstream agent's polished output (manager, intel, arsip, seniman)
-    prev_messages = state.get("messages", []) or []
+    # Upstream agent's polished output from this graph run.
+    upstream_text = get_current_upstream_text(state, "admin")
     upstream_block = ""
-    if prev_messages:
-        last = prev_messages[-1]
-        upstream_text = (getattr(last, "content", "") or str(last))[:2500]
-        if upstream_text.strip():
-            upstream_block = f"\n\n=== ANALISIS / OUTPUT TIM SEBELUMNYA ===\n{upstream_text}"
+    if upstream_text:
+        upstream_block = f"\n\n=== ANALISIS / OUTPUT TIM SEBELUMNYA ===\n{upstream_text}"
 
     # History fallback kalau user_request singkat
     history_block = ""

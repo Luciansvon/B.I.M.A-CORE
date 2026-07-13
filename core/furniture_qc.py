@@ -1485,20 +1485,20 @@ async def handle_qc_wa(message_text: str, attachment_paths: list[str]) -> dict:
 
 
 def _log_qc_session(perintah: str, result: "QCResult") -> None:
-    """Persist QC outcome ke T1 session log biar history-able lewat manager memory.
+    """Persist QC outcome ke session log supaya tersedia di histori internal.
 
     Best-effort — gagal log gak boleh ganggu user reply.
     """
     try:
-        from teams.t1_manager import simpan_sesi
+        from memory.memory_engine import add_session
         hasil = (
             f"[QC] verdict={result.overall_verdict} "
             f"issues={len(result.issues)} (crit={sum(1 for i in result.issues if i.severity == 'critical')}). "
             f"{result.summary}"
         )
-        simpan_sesi(perintah, hasil)
+        add_session(perintah, hasil)
     except Exception as e:
-        logger.debug(f"[qc] simpan_sesi skip: {e}")
+        logger.debug(f"[qc] add_session skip: {e}")
 
 
 async def _review_one_discord_attachment(message, att) -> None:

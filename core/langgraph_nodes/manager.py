@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import re
-from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
 from core.langgraph_nodes.llm_config import default_llm, compress_context
@@ -10,11 +9,58 @@ from core import agentmemory_client
 
 logger = logging.getLogger('bima_core')
 
+ROUTE_TEAMS = {
+    "santai": ["santai"],
+    "intel": ["intel"],
+    "seniman": ["seniman"],
+    "admin": ["admin"],
+    "visual": ["visual"],
+    "arsip": ["arsip"],
+    "lifestyle": ["lifestyle"],
+    "mekanik": ["mekanik"],
+    "saham": ["saham"],
+    "kodok": ["kodok"],
+    "observer": ["observer"],
+    "seniman+admin": ["seniman", "admin"],
+    "arsip+seniman": ["arsip", "seniman"],
+    "arsip+admin": ["arsip", "admin"],
+    "arsip+seniman+admin": ["arsip", "seniman", "admin"],
+    "intel+seniman": ["intel", "seniman"],
+    "intel+admin": ["intel", "admin"],
+    "intel+arsip": ["intel", "arsip"],
+    "intel+seniman+admin": ["intel", "seniman", "admin"],
+    "intel+arsip+seniman": ["intel", "arsip", "seniman"],
+    "intel+arsip+admin": ["intel", "arsip", "admin"],
+    "intel+arsip+seniman+admin": ["intel", "arsip", "seniman", "admin"],
+}
+
+_ROUTE_TAG = re.compile(r"\[ROUTE:\s*([a-z]+(?:\+[a-z]+)*)\]", re.IGNORECASE)
+
+
+class ManagerRouteError(ValueError):
+    """LLM manager mengembalikan route di luar kontrak graph."""
+
+
+def parse_manager_output(content: str) -> tuple[str, list[str], str]:
+    matches = _ROUTE_TAG.findall(content or "")
+    if len(matches) != 1:
+        raise ManagerRouteError(f"expected one route tag, got {len(matches)}")
+
+    route = matches[0].lower()
+    teams = ROUTE_TEAMS.get(route)
+    if teams is None:
+        raise ManagerRouteError(f"unknown route: {route}")
+
+    reply = _ROUTE_TAG.sub("", content, count=1).strip()
+    if route == "santai" and not reply:
+        raise ManagerRouteError("santai route requires a reply")
+    return route, list(teams), reply
+
 async def manager_node(state: BimaState) -> dict:
     await notify_progress(state, "🧠 *Anisa lagi mikir strategi...*")
-    messages = state.get("messages", [])
     user_request = state.get("user_request", "")
     realtime_context = state.get("realtime_context", "")
+    recent_context = await asyncio.to_thread(get_recent_context, 5)
 
     # Episodic recall dari agentmemory (semantic). Empty string kalau server down.
     agentmem_block = await agentmemory_client.recall(user_request, 5)
@@ -53,7 +99,7 @@ ANTI-HALLU FITUR SISTEM (WAJIB):
 {realtime_context}
 
 {summary_section}{agentmem_section}=== HISTORI PERCAKAPAN TERAKHIR ===
-{compress_context(get_recent_context(5), target_ratio=0.5)}
+{compress_context(recent_context, target_ratio=0.5)}
 ===================================
 
 GROUND TRUTH RULES (anti-hallu, WAJIB):
@@ -104,10 +150,10 @@ PRINSIP "TANYA DULU SEBELUM ACTION":
 - Untuk request rekomendasi produk/pilihan (laptop, HP, gadget, dll), JIKA Bima belum kasih kriteria tegas → diskusikan opsi dulu di [ROUTE: santai]. Action research baru dijalankan setelah Bima konfirmasi.
 - Lebih baik klarifikasi dengan pertanyaan singkat daripada eksekusi yang melenceng dari maksud Bima.
 
-Balas dengan format khusus di baris PERTAMA (pilih SATU dari 20 pilihan di atas):
-[ROUTE: xxx]
-
-Lalu di baris berikutnya tulis jawaban analisis kritis dan hangatmu."""
+FORMAT OUTPUT WAJIB:
+- Kalau route `santai`: baris pertama `[ROUTE: santai]`, lalu balasan untuk Bima.
+- Kalau route spesialis: keluarkan tepat satu tag `[ROUTE: ...]` tanpa narasi lain.
+- Pilih tepat satu dari 22 route di atas."""
 
     logger.info("[LANGGRAPH MANAGER] Membaca request dan memikirkan strategi...")
     chunks: list = []
@@ -116,97 +162,16 @@ Lalu di baris berikutnya tulis jawaban analisis kritis dan hangatmu."""
     ):
         chunks.append(ch)
     raw_content = "".join(getattr(c, "content", "") or "" for c in chunks)
-    response = AIMessage(content=raw_content)
+    route, active_teams, reply = parse_manager_output(raw_content)
+    logger.info(
+        f"[LANGGRAPH MANAGER] Keputusan rute: {route.upper()} | "
+        f"Tim aktif: {active_teams}"
+    )
 
-    content = response.content
-    upper_content = content.upper()
-
-    # Deteksi routing — cek kombinasi TERPANJANG dulu agar tidak salah potong
-    next_route = "santai"
-    active_teams = ["santai"]
-
-    # Cek kombinasi TERPANJANG dulu agar tidak salah potong substring
-    if "[ROUTE: INTEL+ARSIP+SENIMAN+ADMIN]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel", "arsip", "seniman", "admin"]
-    elif "[ROUTE: INTEL+ARSIP+SENIMAN]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel", "arsip", "seniman"]
-    elif "[ROUTE: INTEL+ARSIP+ADMIN]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel", "arsip", "admin"]
-    elif "[ROUTE: INTEL+SENIMAN+ADMIN]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel", "seniman", "admin"]
-    elif "[ROUTE: INTEL+SENIMAN]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel", "seniman"]
-    elif "[ROUTE: INTEL+ADMIN]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel", "admin"]
-    elif "[ROUTE: INTEL+ARSIP]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel", "arsip"]
-    elif "[ROUTE: INTEL]" in upper_content:
-        next_route = "intel"
-        active_teams = ["intel"]
-    elif "[ROUTE: ARSIP+SENIMAN+ADMIN]" in upper_content:
-        next_route = "arsip"
-        active_teams = ["arsip", "seniman", "admin"]
-    elif "[ROUTE: ARSIP+SENIMAN]" in upper_content:
-        next_route = "arsip"
-        active_teams = ["arsip", "seniman"]
-    elif "[ROUTE: ARSIP+ADMIN]" in upper_content:
-        next_route = "arsip"
-        active_teams = ["arsip", "admin"]
-    elif "[ROUTE: SENIMAN+ADMIN]" in upper_content:
-        next_route = "seniman"
-        active_teams = ["seniman", "admin"]
-    elif "[ROUTE: SENIMAN]" in upper_content:
-        next_route = "seniman"
-        active_teams = ["seniman"]
-    elif "[ROUTE: ADMIN]" in upper_content:
-        next_route = "admin"
-        active_teams = ["admin"]
-    elif "[ROUTE: VISUAL]" in upper_content:
-        next_route = "visual"
-        active_teams = ["visual"]
-    elif "[ROUTE: LIFESTYLE]" in upper_content:
-        next_route = "lifestyle"
-        active_teams = ["lifestyle"]
-    elif "[ROUTE: MEKANIK]" in upper_content:
-        next_route = "mekanik"
-        active_teams = ["mekanik"]
-    elif "[ROUTE: SAHAM]" in upper_content:
-        next_route = "saham"
-        active_teams = ["saham"]
-    elif "[ROUTE: KODOK]" in upper_content:
-        next_route = "kodok"
-        active_teams = ["kodok"]
-    elif "[ROUTE: OBSERVER]" in upper_content:
-        next_route = "observer"
-        active_teams = ["observer"]
-    elif "[ROUTE: ARSIP]" in upper_content:
-        next_route = "arsip"
-        active_teams = ["arsip"]
-
-    # Bersihkan tag rute dari teks balasan
-    content = re.sub(r"\[ROUTE:\s*[a-z+]+\]", "", content, flags=re.IGNORECASE).strip()
-
-    # Fallback kalau LLM cuma stream tag tanpa narasi → Discord 50006 protector
-    if not content:
-        if next_route == "santai":
-            content = "Hai Bima ✨ Mau aku bantu apa nih?"
-        else:
-            content = f"Oke, aku bakal handle ini lewat tim {next_route}, tunggu sebentar ya."
-        logger.warning(f"[LANGGRAPH MANAGER] Empty content pasca strip ROUTE, fallback ke default")
-
-    response.content = content
-
-    logger.info(f"[LANGGRAPH MANAGER] Keputusan rute: {next_route.upper()} | Tim aktif: {active_teams}")
-
-    return {
-        "messages": [response],
+    update = {
         "active_teams": active_teams,
-        "is_finished": (next_route == "santai")
+        "is_finished": route == "santai",
     }
+    if route == "santai":
+        update["messages"] = [AIMessage(content=reply)]
+    return update
