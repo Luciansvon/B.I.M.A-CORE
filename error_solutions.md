@@ -385,3 +385,13 @@
 * **Masalah**: Command gabungan untuk patch index dan pembuatan blob berhenti dengan `unexpected EOF while looking for matching quote`.
 * **Root Cause**: Quote variabel Bash bertabrakan dengan lapisan quote PowerShell saat seluruh proses digabung dalam satu command.
 * **Solusi**: Pecah staging menjadi command pendek: patch WhatsApp, buat hash blob log, update index, lalu stage file baru secara terpisah.
+
+## Log 89: Command Verifikasi PR Gagal di Quote Lintas Shell
+* **Masalah**: Command gabungan untuk membaca JSON PR, membandingkan hash, dan mencetak status berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: Substitusi command dan format string kembali melewati quote PowerShell serta Bash dalam satu baris panjang.
+* **Solusi**: Jalankan pemeriksaan PR, hash branch, dan file sementara sebagai command terpisah tanpa interpolasi bertingkat.
+
+## Log 90: Separator Log Hilang pada Blob Staging Selektif
+* **Masalah**: Diff staged pertama menempelkan header Log 89 langsung setelah Log 88 tanpa baris kosong.
+* **Root Cause**: `sed` dimulai tepat dari header Log 89, sehingga separator kosong sebelum header tidak ikut ke blob Git.
+* **Solusi**: Sisipkan satu newline eksplisit antara isi HEAD dan blok log baru, lalu cek ulang staged diff sebelum commit.
