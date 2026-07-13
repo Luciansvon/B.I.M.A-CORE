@@ -350,3 +350,38 @@
 * **Masalah**: Manager sebelumnya menerima route invalid secara diam-diam, menyimpan narasi tersembunyi, memblokir event loop saat baca SQLite, dan membocorkan token route ke stream.
 * **Root Cause**: Routing memakai rantai substring manual dan manager mencampur klasifikasi dengan balasan spesialis.
 * **Solusi**: Tambahkan mapping canonical 22 route dan parser fail-closed, output route-only untuk spesialis, `asyncio.to_thread()` untuk SQLite, filter stream manager, serta current-turn upstream guard. Focused regression lulus 64 test; compile/import engine lulus; PM2 online; healthcheck lulus 50 check dengan 2 warning; startup membuktikan Sequential Thinking disabled dan tidak ada injeksi MCP ke manager.
+## Log 82: Preview Kerja Hilang Setelah Stream Manager Diblokir
+* **Masalah**: Discord/WhatsApp tidak lagi memberi preview yang cukup jelas saat Anisa memproses request setelah hardening Manager.
+* **Root Cause**: Stream `manager_node` sengaja diblokir agar tag `[ROUTE: ...]` dan narasi internal tidak bocor; WhatsApp hanya mempertahankan indikator typing tanpa pesan status.
+* **Solusi**: Pertahankan filter stream Manager dan status node Discord. Di WhatsApp, kirim satu pesan status umum lalu edit pesan yang sama menjadi jawaban, status voice, atau error tanpa menambah protokol streaming.
+* **Verifikasi**: Helper progress lulus 3 test, `node --check whatsapp/index.js` lulus, regression filter Manager tetap lulus, dan `bima-whatsapp` online setelah restart.
+
+## Log 83: Patch Plan Ditolak karena Prefix Baris Hilang
+* **Masalah**: Percobaan pertama membuat plan gagal dengan `invalid hunk` dan file plan tidak terbentuk.
+* **Root Cause**: Satu baris command di blok Markdown tidak diawali prefix `+` yang diwajibkan format `Add File` pada `apply_patch`.
+* **Solusi**: Pastikan setiap baris file baru memiliki prefix patch, lalu ulangi patch. Percobaan kedua berhasil tanpa perubahan parsial dari percobaan pertama.
+
+## Log 84: Diff Check Terhalang Mixed CRLF/LF Lama
+* **Masalah**: `git diff --check` menandai hampir seluruh `whatsapp/index.js` dan `error_solutions.md` sebagai trailing whitespace walau perubahan fitur hanya beberapa hunk.
+* **Root Cause**: Kedua file sudah memakai campuran line ending CRLF/LF sebelum task, sehingga karakter CR dibaca sebagai whitespace pada diff besar terhadap HEAD.
+* **Solusi**: Atas persetujuan Bima, jangan normalisasi seluruh file karena akan memperbesar diff dan menyentuh perubahan lokal lain. Verifikasi task memakai diff semantik `git diff -w`, syntax check, focused test, dan smoke runtime.
+
+## Log 85: OpenRouter Menolak Manager karena Batas Token Melebihi Kredit
+* **Masalah**: Smoke `/bot tes preview` memicu dua respons HTTP 402 dari OpenRouter; request meminta hingga 65.536 token sedangkan saldo hanya mencukupi sekitar 34.578 token.
+* **Root Cause**: `default_llm = get_langchain_llm()` tidak memberi `max_tokens`, sehingga request memakai batas maksimum model yang terlalu mahal untuk saldo aktif.
+* **Solusi**: Tangani sebagai task config terpisah: beri batas `max_tokens` eksplisit yang wajar pada LLM routing atau tambah kredit OpenRouter. Config tidak diubah dalam task preview; fallback graph tetap menyelesaikan request dan WA mengirim satu chunk.
+
+## Log 86: GitHub CLI Tidak Terpasang dan Sudo Memerlukan Password
+* **Masalah**: Publish awal gagal karena `gh` tidak ditemukan; instalasi paket sistem juga tidak bisa berjalan noninteraktif karena `sudo` meminta password.
+* **Root Cause**: GitHub CLI belum tersedia di PATH WSL dan user tidak memiliki passwordless sudo.
+* **Solusi**: Instal binary resmi GitHub CLI v2.96.0 ke `~/.local/bin/gh` tanpa sudo setelah SHA-256 tarball cocok dengan checksum rilis resmi. `gh auth status` kemudian mengonfirmasi akun `Luciansvon` sudah aktif.
+
+## Log 87: Patch Semantik Gagal Masuk ke Git Index
+* **Masalah**: `git diff -w | git apply --cached --check` gagal pada `whatsapp/index.js:21` walau hunk fitur benar.
+* **Root Cause**: Patch semantik masih membawa karakter CR dari working tree mixed CRLF/LF, sedangkan versi file di Git index memakai LF.
+* **Solusi**: Hapus karakter CR hanya dari aliran patch sebelum `git apply --cached`; jangan normalisasi working tree. Verifikasi staged diff tetap hanya memuat hunk fitur.
+
+## Log 88: Command Staging Gabungan Gagal di Quote Lintas Shell
+* **Masalah**: Command gabungan untuk patch index dan pembuatan blob berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: Quote variabel Bash bertabrakan dengan lapisan quote PowerShell saat seluruh proses digabung dalam satu command.
+* **Solusi**: Pecah staging menjadi command pendek: patch WhatsApp, buat hash blob log, update index, lalu stage file baru secara terpisah.
