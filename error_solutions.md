@@ -460,3 +460,9 @@
 * **Root Cause**: Commit dijalankan oleh Git Windows pada checkout UNC WSL; file pack dimiliki user Linux dan operasi maintenance lintas filesystem gagal walau penulisan commit berhasil.
 * **Solusi**: Perlakukan sebagai kegagalan maintenance, bukan kegagalan commit. Jalankan maintenance repository melalui Git WSL pada task terpisah bila pack perlu dirapikan.
 * **Verifikasi**: Commit tetap terbentuk dengan 24 file; ownership dan mode `.git/objects/pack` valid untuk user `bima_lucian` di WSL.
+
+## Log 99: JSON PM2 Mengandung UTF-8 BOM
+* **Masalah**: Parser Python gagal membaca output `pm2 jlist` dengan `JSONDecodeError: Unexpected UTF-8 BOM`.
+* **Root Cause**: Pipeline PowerShell/WSL meneruskan BOM di awal stream JSON, sedangkan `json.load(sys.stdin)` memakai decoder UTF-8 biasa.
+* **Solusi**: Untuk status singkat gunakan `pm2 status`, atau decode byte stream dengan `utf-8-sig` sebelum `json.loads`.
+* **Verifikasi**: Status PM2 sebelumnya menunjukkan empat process online; smoke endpoint port 8000 dan 8001 tetap sukses pada pemeriksaan yang sama.
