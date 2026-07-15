@@ -275,6 +275,7 @@
 * **Masalah**: `npm audit --audit-level=high` menemukan 15 vulnerability: 10 moderate, 4 high, dan 1 critical.
 * **Root Cause**: `@agentmemory/agentmemory@0.9.27` membawa rantai `iii-sdk`, OpenTelemetry lama, serta `@xenova/transformers`/`onnxruntime-web` dengan `protobufjs` rentan.
 * **Solusi**: Jangan start AgentMemory di PM2. Tahan service sampai versi upstream aman atau dependency override tervalidasi; backend utama tetap dapat berjalan dengan status degraded.
+* **Verifikasi 2026-07-15**: 0.9.27 masih versi terbaru, `AGENTMEMORY_ENABLED` tidak disetel, dan `npm audit fix --dry-run --json` tetap menyisakan 15 vulnerability. Package AgentMemory membawa override `protobufjs`, tetapi npm hanya menerapkan `overrides` dari root project; uji root override atau versi upstream baru di environment terpisah sebelum service diaktifkan.
 
 ## Log 66: Path Healthcheck di Dokumentasi Tidak Sesuai Repo
 * **Masalah**: Command `python healthcheck.py` gagal karena file tidak ada di root.
@@ -310,3 +311,152 @@
 * **Masalah**: Startup pertama setelah thread index dipindahkan masih menampilkan warning pada setiap fork MCP.
 * **Root Cause**: Import top-level `lancedb` di Arsip dan Repo RAG sudah menginisialisasi runtime native sebelum koneksi/database dipakai.
 * **Solusi**: Lazy-import `lancedb` di `_get_db()` dan `_connect_db()`, selain menunda thread index. Startup berikutnya bersih dan index Arsip tetap menghasilkan 897 dokumen BM25 setelah MCP siap.
+
+## Log 73: Alert Security Repo Publik Tidak Bisa Dibaca
+* **Masalah**: Audit `modiqo/waggle` mendapat HTTP 403 saat meminta Code Scanning dan Dependabot alerts.
+* **Root Cause**: Endpoint alert GitHub hanya dapat dibaca dengan izin admin repository; autentikasi lokal bukan pemilik repo tersebut.
+* **Solusi**: Jangan menyimpulkan repo bebas vulnerability. Nilai source, workflow, dan release publik; minta maintainer mengekspor alert atau lakukan scanner lokal pada source yang dipin bila audit lebih lanjut disetujui.
+
+## Log 74: `jq` Tidak Tersedia di WSL
+* **Masalah**: Parsing hasil benchmark Waggle gagal dengan `jq: command not found`.
+* **Root Cause**: Environment WSL tidak memasang executable `jq`, meskipun `gh --jq` memiliki evaluator internal.
+* **Solusi**: Gunakan `gh api ... --jq '<expression>'` langsung agar tidak membutuhkan dependency tambahan.
+
+## Log 75: `gh` Hilang dari PATH WSL Non-login
+* **Masalah**: `wsl.exe -d Ubuntu -- gh api ...` gagal dengan `gh: command not found`, padahal command yang sama tersedia melalui shell login.
+* **Root Cause**: Invocation WSL non-login tidak memuat konfigurasi PATH tempat GitHub CLI terpasang.
+* **Solusi**: Jalankan `gh` melalui `wsl.exe -d Ubuntu -- bash -lc "gh api ..."` pada environment ini.
+
+## Log 76: Reader PM2 Observability Selalu Mengembalikan Kosong
+* **Masalah**: `core/observability_scheduler._get_pm2_status()` mengembalikan `[]`, sehingga scheduler tidak dapat mendeteksi proses PM2 yang offline.
+* **Root Cause**: `subprocess.run(["pm2", "jlist"], shell=True)` memakai list argumen bersama shell pada POSIX. `pm2` dijalankan tanpa subcommand `jlist`, output bukan JSON, lalu exception disembunyikan oleh safe-fail.
+* **Solusi**: Hapus `shell=True`, pertahankan argv `['pm2', 'jlist']`, log warning saat command/JSON gagal, dan tambah regression test yang memastikan empat proses dapat diparse.
+* **Verifikasi**: Reader observability menghasilkan `[]`; reader maintenance dengan command tanpa shell menghasilkan empat proses `stopped` pada PM2 yang sama.
+
+## Log 77: Environment Python Aktif Memiliki 9 Konflik Dependency
+* **Masalah**: `uv pip check --python bima_env/bin/python` menemukan 9 incompatibility pada pyarrow, protobuf, lance-namespace, rich, fsspec, aiofiles, starlette, dan pasangan torch/torchvision.
+* **Root Cause**: `bima_env` memuat dependency fitur voice/browser/data yang dipasang di luar metadata `pyproject.toml`. Dibanding lock aktif, dry-run akan menghapus 163 package dan memasang 31 package.
+* **Solusi**: Jangan jalankan `uv sync` langsung pada production. Inventaris dependency runtime yang benar, masukkan ke group project yang sesuai, bangun environment baru dari lock, lalu gate dengan 299 pytest serta smoke voice/browser sebelum switch.
+* **Verifikasi**: `uv lock --check` lulus, tetapi `uv sync --active --frozen --dry-run` membuktikan environment aktif tidak identik dengan lock.
+
+## Log 78: Audit Python Menemukan Tiga Package Rentan
+* **Masalah**: `uv audit --frozen` menemukan 5 record advisory yang mewakili 3 package: `chromadb==1.1.1`, `diskcache==5.6.3`, dan `json-repair==0.25.2`.
+* **Root Cause**: ChromaDB masuk transitif dari CrewAI dan belum punya patched release; DiskCache memakai pickle untuk cache lokal; json-repair versi lama rentan CPU DoS melalui circular schema `$ref`.
+* **Solusi**: Jangan expose Chroma server dan tunggu/validasi upstream fix; batasi write access cache DiskCache serta rencanakan serializer aman; constraint json-repair ke `>=0.60.1` hanya setelah compatibility test CrewAI dan Furniture QC.
+* **Verifikasi**: Dependency tree menunjukkan ChromaDB/json-repair dari `crewai==1.6.1`, sedangkan DiskCache adalah dependency langsung. Pemakaian json-repair di Furniture QC tidak memberi argumen schema, jadi jalur DoS spesifik tidak langsung terbuka di call site itu.
+
+## Log 79: Bandit Menemukan Security Debt pada Source
+* **Masalah**: Bandit memindai 20.639 baris dan melaporkan 99 low, 13 medium, serta 7 high.
+* **Root Cause**: Lima high MD5 dipakai hanya untuk slug filename dan merupakan false positive kriptografi. Risiko nyata mencakup `shell=True` di observability/cloud backup, pickle load indeks BM25, dan download model Hugging Face tanpa revision pin.
+* **Solusi**: Perbaiki observability sesuai Log 76; ubah helper Git backup menjadi argv tanpa shell; pin commit model melalui `TTS_HF_REVISION`; dan rebuild/validasi indeks BM25 dari corpus tepercaya sebelum load. Jangan mass-suppress dengan `# nosec`.
+* **Verifikasi**: Full pytest tetap lulus 299 test dan MCP audit secure; audit ini report-only sehingga source belum diubah.
+
+## Log 80: Git WSL Membaca 63 File Berubah karena Mismatch CRLF
+* **Masalah**: `git diff --check` melalui Git WSL melaporkan trailing whitespace pada ribuan baris dan `git status` melihat 63 file berubah, sementara Git Windows hanya melihat 5 entry workspace.
+* **Root Cause**: Git Windows memakai system config `core.autocrlf=true`; Git WSL tidak mempunyai nilai `core.autocrlf`. Perbedaan normalisasi line-ending membuat file CRLF lama terlihat berubah penuh dari WSL.
+* **Solusi**: Jangan normalisasi massal dalam task maintenance. Gunakan Git Windows untuk gate worktree ini atau buat task terpisah untuk `.gitattributes` dan migrasi line-ending terkontrol.
+* **Verifikasi**: `git diff --check -- error_solutions.md` via Git Windows bersih dan tiga dokumen audit tidak memiliki trailing spaces; mismatch global WSL tetap dilaporkan apa adanya.
+
+## Log 81: Nama `claude.md` Gagal Dibaca pada Filesystem WSL
+* **Masalah**: `Get-Content` gagal menemukan `claude.md` walau panduan proyek memang ada di root.
+* **Root Cause**: Nama aktual adalah `CLAUDE.md`; filesystem WSL membedakan huruf besar dan kecil.
+* **Solusi**: Enumerasi file root sebelum membaca dan gunakan nama aktual `CLAUDE.md`.
+
+## Log 82: Regex Alternation Pecah saat PowerShell Memanggil `bash -lc`
+* **Masalah**: Pola `rg` berisi banyak karakter `|` berubah menjadi pipeline shell; nama pola lalu dianggap sebagai command.
+* **Root Cause**: Quoting regex tidak bertahan konsisten melalui lapisan PowerShell, `wsl.exe`, dan `bash -lc`.
+* **Solusi**: Jalankan `rg` langsung dari PowerShell pada workspace UNC, atau gunakan beberapa `-e` tanpa shell ganda.
+
+## Log 83: Glob `*.md` Tidak Diterima `rg` pada Path Windows
+* **Masalah**: `rg ... docs *.md` menghasilkan error nama file/path tidak valid.
+* **Root Cause**: Wildcard positional `*.md` tidak diekspansi seperti di Bash pada invocation PowerShell tersebut.
+* **Solusi**: Gunakan filter ripgrep `-g '*.md'` dengan root pencarian eksplisit.
+
+## Log 84: Hasil `foreach` PowerShell Tidak Bisa Langsung Dipipe
+* **Masalah**: Loop metadata GitHub diikuti `| Format-Table` menghasilkan `An empty pipe element is not allowed`.
+* **Root Cause**: Statement `foreach (...) { ... }` tidak diperlakukan sebagai ekspresi pipeline pada bentuk command tersebut.
+* **Solusi**: Simpan hasil loop ke variabel (`$rows = foreach (...) { ... }`), lalu pipe `$rows` ke formatter.
+
+## Log 85: Operator Null-Coalescing Tidak Didukung PowerShell Host
+* **Masalah**: Audit schema memakai operator `??` dan berhenti dengan parser error.
+* **Root Cause**: PowerShell host yang menjalankan command belum mendukung operator null-coalescing tersebut.
+* **Solusi**: Gunakan pemeriksaan kompatibel `$keys.ContainsKey($k)` dan percabangan eksplisit sebagai pengganti `??`.
+* **Verifikasi**: Audit schema berjalan setelah operator diganti tanpa mengubah data yang diperiksa.
+
+## Log 86: Ruff Tidak Tersedia di Virtual Environment
+* **Masalah**: Test Obsidian lulus, tetapi command lanjutan `bima_env/bin/ruff` gagal dengan `No such file or directory`.
+* **Root Cause**: Ruff tercantum di dependency group dev, namun executable belum terpasang di `bima_env` yang aktif.
+* **Solusi**: Jalankan Ruff secara terisolasi melalui `uvx ruff` agar tidak mengubah dependency runtime.
+* **Verifikasi**: Verifikasi lint akhir memakai `uvx ruff check` pada file Python yang tersentuh.
+
+## Log 87: Filter Obsidian Base Menghasilkan Escape YAML Berlebih
+* **Masalah**: Test `.base` menemukan expression folder tersimpan dengan backslash escape sehingga bentuknya tidak mengikuti format Base yang mudah dibaca.
+* **Root Cause**: Expression YAML dibungkus memakai `json.dumps`, sehingga quote di dalam expression ikut di-escape.
+* **Solusi**: Tulis scalar YAML dengan single quote dan escape single quote YAML secara eksplisit.
+* **Verifikasi**: Lima test Obsidian lulus, termasuk view, traversal, overwrite, Canvas ID, dan edge.
+
+## Log 88: DuckDB Grouping Tidak Mengembalikan Kolom Grup
+* **Masalah**: Agregasi `sum` per kategori hanya mengembalikan kolom `value`, bukan `category` dan `value`.
+* **Root Cause**: `DuckDBPyRelation.aggregate()` memakai argumen kedua hanya sebagai group expression; kolom grup tetap harus dicantumkan pada projection agregasi.
+* **Solusi**: Masukkan identifier grup tervalidasi ke expression hasil sekaligus ke `group_expr`.
+* **Verifikasi**: Sembilan test DuckDB lulus untuk CSV, Parquet, lima operasi allowlist, group, output CSV, path, schema, dan limit.
+
+## Log 89: Ruff Gate Terhalang Lint Debt Lama Mekanik
+* **Masalah**: Ruff pada semua file tersentuh melaporkan tujuh error.
+* **Root Cause**: Enam error sudah ada pada `teams/t8_mekanik.py` di HEAD sebelum task; satu error baru adalah import `os` yang tidak terpakai di test Strix.
+* **Solusi**: Hapus hanya import baru milik task dan jangan melakukan drive-by cleanup pada enam error lama.
+* **Verifikasi**: Seluruh file Python baru dan file registrasi selain Mekanik lulus Ruff; scan terhadap versi HEAD Mekanik mereproduksi enam error yang sama.
+
+## Log 90: Nested Quote PowerShell ke Bash Memutus Python `-c`
+* **Masalah**: Dua smoke command berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: String Python berquote melewati JavaScript, PowerShell, `wsl.exe`, lalu `bash -lc`, sehingga delimiter berubah sebelum sampai ke Python.
+* **Solusi**: Hindari shell berlapis untuk smoke test; panggil `wsl.exe ... python` langsung atau gunakan ekspresi tanpa quote bersarang.
+* **Verifikasi**: Compile, import smoke, dan Strix preflight berhasil dijalankan melalui invocation langsung.
+
+## Log 91: Docker CLI Belum Tersedia untuk Strix
+* **Masalah**: Preflight Strix aktual mengembalikan `Docker CLI belum terpasang di WSL`.
+* **Root Cause**: Host WSL belum mempunyai Docker CLI/daemon yang dapat dipakai Strix.
+* **Solusi**: Pertahankan `STRIX_ENABLED=false`; pasang/aktifkan Docker secara terpisah sebelum scan end-to-end pertama.
+* **Verifikasi**: Wrapper berhenti aman sebelum snapshot dikirim atau API dipanggil; tujuh unit test Strix tetap lulus.
+
+## Log 92: `uv pip check` Menemukan Sembilan Konflik Environment Lama
+* **Masalah**: Dependency check melaporkan konflik pyarrow, protobuf, lance-namespace, rich, fsspec, aiofiles, starlette, dan torch/torchvision.
+* **Root Cause**: Paket runtime lama di `bima_env` sudah mempunyai constraint yang saling bertentangan; instalasi DuckDB tidak mengubah paket-paket tersebut.
+* **Solusi**: Jangan mengubah dependency di luar scope Paket A+B. Jadwalkan audit dependency terpisah agar setiap constraint diuji terhadap fitur terkait.
+* **Verifikasi**: `uv lock --check` lulus, DuckDB 1.5.4 terpasang, dan full pytest lulus 320 test sebelum koreksi healthcheck.
+
+## Log 93: Healthcheck Salah Menandai Vault OneDrive WSL
+* **Masalah**: Healthcheck menganggap setiap path `/mnt/c/` sebagai konfigurasi Windows yang salah walau vault OneDrive dapat diakses.
+* **Root Cause**: `_check_vault()` memeriksa prefix mount sebelum memeriksa keberadaan path.
+* **Solusi**: Nilai kesehatan vault dari akses filesystem; path mount WSL yang ada dinyatakan sehat.
+* **Verifikasi**: Regression test baru lulus dan healthcheck melaporkan `Vault accessible` pada vault OneDrive aktif.
+
+## Log 94: `uv lock` Menulis Ulang Marker CUDA yang Tidak Terkait
+* **Masalah**: Penambahan DuckDB ikut mengubah marker platform optional CUDA pada package lain.
+* **Root Cause**: Versi `uv` saat ini menormalisasi ulang marker lama ketika lockfile dibuat ulang.
+* **Solusi**: Kembalikan marker CUDA ke isi sebelumnya dan pertahankan hanya entry DuckDB beserta referensinya.
+* **Verifikasi**: Diff lockfile tidak lagi membawa perubahan marker CUDA dan `uv lock --check` tetap lulus.
+
+## Log 95: DuckDB Melempar Exception pada Agregasi Tipe String
+* **Masalah**: Operasi `sum` terhadap kolom VARCHAR melempar `BinderException` keluar dari tool dan dapat memutus eksekusi agent.
+* **Root Cause**: Error DuckDB tidak termasuk dalam tuple exception yang dikonversi menjadi respons `FAILED`.
+* **Solusi**: Import DuckDB sebagai dependency runtime dan tangkap `duckdb.Error` bersama error input/path.
+* **Verifikasi**: Regression test kolom string gagal sebelum perbaikan lalu lulus; total test DuckDB menjadi 10.
+
+## Log 96: PM2 Tidak Mempunyai Process `anisa-v3`
+* **Masalah**: `pm2 restart anisa-v3 --update-env` gagal dengan `Process or Namespace anisa-v3 not found`.
+* **Root Cause**: Daemon PM2 aktif tetapi process list kosong, sehingga tidak ada process yang dapat di-restart.
+* **Solusi**: Jalankan deklarasi resmi `pm2 start ecosystem.config.js`, bukan membuat command process manual.
+* **Verifikasi**: `anisa-v3`, `bima-tunnel`, `bima-whatsapp`, dan `anisa-status` online tanpa restart loop; endpoint 8000 dan 8001 merespons.
+
+## Log 97: Variabel Bash `$port` Dihabiskan PowerShell
+* **Masalah**: Loop smoke test menampilkan `PORT__NOT_READY` untuk kedua port.
+* **Root Cause**: PowerShell mengembangkan `$port` sebelum string command sampai ke Bash WSL.
+* **Solusi**: Hindari variabel shell berlapis dan panggil dua URL smoke test secara eksplisit.
+* **Verifikasi**: `http://127.0.0.1:8001/health` mengembalikan status ok dan `/api/metrics` port 8000 mengembalikan metrics JSON.
+
+## Log 98: Git Windows Gagal Menulis Multi-Pack-Index WSL
+* **Masalah**: Setelah commit, auto geometric repack melaporkan `could not write multi-pack-index: Permission denied`.
+* **Root Cause**: Commit dijalankan oleh Git Windows pada checkout UNC WSL; file pack dimiliki user Linux dan operasi maintenance lintas filesystem gagal walau penulisan commit berhasil.
+* **Solusi**: Perlakukan sebagai kegagalan maintenance, bukan kegagalan commit. Jalankan maintenance repository melalui Git WSL pada task terpisah bila pack perlu dirapikan.
+* **Verifikasi**: Commit tetap terbentuk dengan 24 file; ownership dan mode `.git/objects/pack` valid untuk user `bima_lucian` di WSL.

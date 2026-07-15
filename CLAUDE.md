@@ -2,6 +2,13 @@
 
 Panduan ini membantu **Claude Code** memahami lingkungan pengembangan, perintah eksekusi, serta standar penulisan kode dalam proyek **BIMA_CORE**.
 
+## Workflow Wajib
+
+- Gunakan alur EXPLORE → PLAN → CODE → VERIFY.
+- Setiap task hanya boleh memiliki satu PLAN Markdown dan satu approval gate.
+- Setelah PLAN disetujui, langsung lanjut CODE dan VERIFY tanpa membuat PLAN baru.
+- Re-plan hanya jika Bima merevisi scope atau secara eksplisit meminta perubahan rencana. Pertanyaan status/detail bukan permintaan re-plan.
+
 ## Perintah Pengembangan (Development Commands)
 
 Gunakan perintah-perintah berikut saat melakukan testing atau menjalankan program:

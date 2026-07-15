@@ -124,10 +124,7 @@ def _check_environment(report: CheckReport) -> None:
 def _check_vault(report: CheckReport) -> None:
     print(f"\n{CYAN}[4] Obsidian Vault Path{NC}")
     value = os.environ.get("OBSIDIAN_PATH", "")
-    if value.startswith(("/mnt/c/", "/mnt/d/")):
-        report.warn(f"OBSIDIAN_PATH masih mengarah ke Windows: {value}")
-        report.warn(f"Ubah ke: OBSIDIAN_PATH={BASE_DIR / 'Bima_Vault'}")
-    elif value and Path(value).exists():
+    if value and Path(value).exists():
         report.ok(f"Vault accessible: {value}")
     elif value:
         report.warn(f"Vault path set tapi tidak ada: {value}")

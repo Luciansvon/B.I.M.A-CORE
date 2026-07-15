@@ -14,6 +14,7 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from config import arsip_llm, OBSIDIAN_PATH
 from core.embedder import get_embedder
+from tools.obsidian_formats import VaultBaseTool, VaultCanvasTool
 
 logger = logging.getLogger('bima_core')
 
@@ -914,6 +915,7 @@ arsip_agent = Agent(
     2. CARI catatan lama pakai VaultSearchTool
     3. RE-INDEX vault pakai VaultIndexTool kalau perlu
     4. HUBUNGKAN & RAPIKAN catatan pakai VaultLinkerTool
+    5. BUAT tampilan database pakai VaultBaseTool atau peta note pakai VaultCanvasTool
 
     ATURAN WAJIB:
     - Kalau task description mengandung blok "DATA DARI TIM SEBELUMNYA" → kamu DILARANG panggil VaultSearchTool. Datanya sudah ada, langsung pakai VaultSaveTool.
@@ -926,7 +928,10 @@ arsip_agent = Agent(
 
     Kamu hafal semua catatan Bima dan selalu siap menyimpan yang baru.""",
     llm=arsip_llm,
-    tools=[VaultSearchTool(), VaultIndexTool(), VaultSaveTool(), VaultLinkerTool()],
+    tools=[
+        VaultSearchTool(), VaultIndexTool(), VaultSaveTool(), VaultLinkerTool(),
+        VaultBaseTool(), VaultCanvasTool(),
+    ],
     allow_delegation=True,
     verbose=True
 )

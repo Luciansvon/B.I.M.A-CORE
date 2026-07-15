@@ -45,6 +45,9 @@ Sherlock OSINT     Vault, Marp    Execution       Explain/      capture (Windows
 - **Document & Media Compile**: OfficeCLI (native `.xlsx` w/ live charts), `python-docx` + `fpdf2` (Word/PDF), `@marp-team/marp-cli` (Slides), `Cytoscape.js` (Codebase network map), Jina Reader Web Fetch API.
 - **Multilingual RAG**: LanceDB + `Qwen3-Embedding-0.6B` (embedding) + `bge-reranker-v2-m3` (reranking) — both multilingual, Indonesian-optimized.
 - **Cache & Storage**: SQLite, DiskCache, Headroom context compressor.
+- **Structured Analytics**: DuckDB 1.5.4 for read-only CSV/Parquet aggregation inside `outputs/`.
+- **Knowledge Workspace**: Obsidian Markdown, Bases, and JSON Canvas on the configured vault path.
+- **Security Pilot**: Opt-in Strix 1.1.0 runner through `uvx` and an isolated Docker sandbox.
 - **Vision OCR**: Gemini Vision (VLM) with `easyocr` offline fallback.
 
 ---
@@ -74,6 +77,7 @@ Sherlock OSINT     Vault, Marp    Execution       Explain/      capture (Windows
 - **Academic mode**: Times New Roman 12pt, 1.5 spacing, 4-4-3-3 cm margins, abstract + keywords page, and automatic Roman → Arabic page-number switching for front matter vs body.
 - **Context-aware style detection**: the agent infers the right register from conversation history and upstream team output; keyword matching is only a fallback hint.
 - Agent persona/instructions are externalized to `teams/t4_admin/prompt_templates/backstory.md` — editable without touching Python.
+- **DuckDB analytics**: Admin can aggregate CSV/Parquet in `outputs/` with `count`, `sum`, `avg`, `min`, or `max`, optionally grouped and exported as a derived CSV. The tool exposes no raw SQL and rejects paths outside `outputs/`.
 
 ### 📊 Marp Slide Generator
 - Compiles custom Marp Markdown + CSS into PDF, PPTX, HTML, or PNG.
@@ -96,6 +100,12 @@ Sherlock OSINT     Vault, Marp    Execution       Explain/      capture (Windows
 - Verifies execution command whitelists (`npx`, `uvx`, `node`, `python3`).
 - Screens arguments for path traversal (`../`) and command injection keyword patterns, halting execution if critical risks are detected.
 
+### 🔐 Isolated Strix Security Pilot
+- `StrixScannerTool` runs only when `STRIX_ENABLED=true` and Bima explicitly requests a Strix scan.
+- The runner copies an allowlisted source snapshot to a temporary directory; `.env`, credentials, Obsidian vaults, logs, indexes, generated outputs, virtual environments, `node_modules`, and symlinks are excluded.
+- Strix is pinned to `strix-agent==1.1.0` and `ghcr.io/usestrix/strix-sandbox:1.0.0`, runs in quick/full-scope non-interactive mode, disables telemetry, and writes reports under `outputs/security/strix_runs/`.
+- Scans are report-only: no auto-fix, commit, push, arbitrary URL target, or direct access to the working tree. Exit code `2` means vulnerabilities were found, not an infrastructure failure.
+
 ### 🧹 Anti-AI Slop (Stop-Slop) & Style Filter
 - **Deslop Tool**: Automatic LLM-based draft editor that removes AI tells, filler phrases, passive voice, and local Indonesian AI clichés (e.g. "di era digital", "solusi terbaik").
 - **Integration**: Active in Threads drafting/revisions, Admin Agent documents, and Manager Agent responses.
@@ -103,6 +113,9 @@ Sherlock OSINT     Vault, Marp    Execution       Explain/      capture (Windows
 ### 📚 Obsidian Vault Semantic Linker
 - **Vault Linker**: Automates internal wiki-linking (`[[WikiLink]]`) of related notes in the Obsidian Vault.
 - **Dynamic Recommendations**: Conducts LanceDB vector similarity queries to suggest and append related notes under a "Catatan Terkait" section.
+- **Base Creator**: Creates validated `.base` table/cards/list views without overwriting existing files.
+- **Canvas Creator**: Creates JSON Canvas maps from existing note names with validated node/edge IDs and a fixed non-overlapping layout.
+- The active WSL/OneDrive vault can be set with `OBSIDIAN_PATH=/mnt/c/Users/<user>/OneDrive/Dokumen/BIMA_VAULT/Penyimpanan`; existing notes are not migrated or rewritten.
 
 ### 🌐 Smart Web Extraction & Social Intelligence
 - **XReach**: Fetches recent Twitter posts via the `agent-reach` CLI with automated fallbacks to two RapidAPI X scrapers.
@@ -135,6 +148,7 @@ BIMA_CORE/
 │   ├── t1_manager.py          # State tracking & token budget tools
 │   ├── t4_admin/              # Document generator package (Excel via OfficeCLI, Word, PDF)
 │   │   ├── document_styles.json       # 4 style presets (data-driven, hot-editable)
+│   │   ├── duckdb_tool.py              # Read-only CSV/Parquet aggregation
 │   │   └── prompt_templates/          # Agent backstory as markdown (no-redeploy edits)
 │   ├── t5_intel.py            # Web scraping, Sherlock, and browser automation agents
 │   ├── t8_mekanik.py          # Code execution and file management tools
@@ -143,6 +157,8 @@ BIMA_CORE/
 ├── tools/                     # CrewAI custom tools
 │   ├── slide_generator.py     # Marp compile wrapper
 │   ├── code_visualizer.py     # AST dependency analysis to Cytoscape.js
+│   ├── obsidian_formats.py    # Safe Base and JSON Canvas creators
+│   ├── strix_scanner.py       # Isolated, opt-in Strix runner
 │   └── repo_rag_tools.py      # Semantic + AST-chunked repo RAG tools (used by Kodok)
 │
 ├── whatsapp/                  # Node.js WhatsApp Web API bridge
@@ -161,6 +177,7 @@ BIMA_CORE/
   ```bash
   curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
   ```
+- Optional Strix pilot: `uvx` plus a running Docker daemon accessible from WSL. Strix is not installed into `bima_env` because its OpenAI SDK range conflicts with the main runtime.
 
 ### 1. Clone & Setup Environment
 ```bash
@@ -211,6 +228,16 @@ BIMA_DISCORD_USER_ID=your-discord-id
 # Optional: Discord channel ID used to host Threads images (Discord CDN fallback).
 # If unset, image hosting falls back to DMing the image to the owner.
 THREADS_MEDIA_CHANNEL_ID=your-channel-id
+
+# Obsidian vault (WSL path; OneDrive is supported)
+OBSIDIAN_PATH=/mnt/c/Users/<user>/OneDrive/Dokumen/BIMA_VAULT/Penyimpanan
+
+# Strix security pilot — disabled by default
+STRIX_ENABLED=false
+STRIX_LLM=openrouter/openai/gpt-5.4
+STRIX_IMAGE=ghcr.io/usestrix/strix-sandbox:1.0.0
+STRIX_MAX_BUDGET_USD=0.5
+STRIX_TIMEOUT_SECONDS=3600
 ```
 
 ### 4. Run Application

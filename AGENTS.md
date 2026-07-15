@@ -2,20 +2,20 @@
 
 This file is the single source of truth for any AI coding agent (Claude Code, Cursor, Aider, Codex, Windsurf, Copilot, Continue, etc.) working on this repository. Read this first.
 
-setiap mau plan buatin pake file md biar bisa di audit sama bima.
+Setiap task hanya boleh memiliki satu PLAN dalam file Markdown agar bisa diaudit Bima. Setelah PLAN disetujui, langsung lanjut CODE dan VERIFY tanpa membuat PLAN atau approval gate baru. Re-plan hanya jika Bima merevisi scope atau meminta perubahan rencana.
 
 ## TL;DR
 
 - **What**: Python multi-agent AI bot named **Anisa**. Discord + WhatsApp + REST. LangGraph state machine orchestrates 10 specialist agents.
 - **Owner**: Bima — solo dev. Reply casual Bahasa Indonesia.
 - **Run env**: WSL Ubuntu di Windows host. Python venv at `bima_env/`. Production via PM2.
-- **Workflow**: EXPLORE → PLAN → CODE → VERIFY with explicit approval gates. See [`claude.md`](claude.md) for the full rules — they are mandatory.
+- **Workflow**: EXPLORE → satu PLAN → CODE → VERIFY. Approval PLAN hanya sekali; re-plan hanya saat Bima merevisi scope atau memintanya. See [`CLAUDE.md`](CLAUDE.md) for the full rules — they are mandatory.
 
 ## Operating Rules
 
 Full rules live in [`claude.md`](claude.md) (same content as `Rules for agent.md`). Memorize all 8 rules. The non-negotiable ones:
 
-1. **Never skip phases.** Always EXPLORE first (read/grep code), then PLAN (numbered list, wait for approval), then CODE (one step at a time, show diff), then VERIFY (run tests/lint, do not auto-patch failures).
+1. **Never skip phases.** Always EXPLORE first (read/grep code), then write exactly one PLAN (numbered list, wait for one approval), then continue through CODE and VERIFY without another plan gate. Re-plan only when Bima revises scope or explicitly asks.
 2. **Context before assumption.** Read or grep before claiming a symbol/file/API exists. When uncertain, say "I don't know" and ask.
 3. **Minimal diff.** Touch only files directly required. No drive-by cleanup, no unrequested refactors.
 4. **Ask before destructive ops.** Installing/removing deps, modifying `.env`/settings/CI, `git reset --hard`, `rm -rf`, migrations — all require explicit approval.
@@ -25,6 +25,7 @@ Full rules live in [`claude.md`](claude.md) (same content as `Rules for agent.md
 ## Bima's Preferences (durable)
 
 - **Don't over-ask on trivial ops.** Once a plan is approved, stop asking permission for obvious follow-ups (pre-warming a model, restarting a service, running smoke tests). Just do them. Reserve asking for: scope change, new dependency, destructive ops, ambiguous business logic.
+- **One-plan rule.** Satu task hanya satu PLAN dan satu approval gate. Pertanyaan status atau detail dari Bima bukan alasan membuat PLAN baru; revisi PLAN hanya jika Bima mengubah scope atau memintanya.
 - **Bahasa Indonesia casual** for replies. Code/identifiers stay English.
 - **Strict EXPLORE→PLAN→CODE→VERIFY discipline.** Bima wrote these rules himself across `claude.md` + `Rules for agent.md`.
 

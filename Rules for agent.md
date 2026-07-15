@@ -3,9 +3,11 @@
 ## 1. EXPLORE → PLAN → CODE → VERIFY
 Never skip phases. For every task:
 - EXPLORE: Read related files first. State which files you read and why.
-- PLAN: Write the plan as a numbered list. Wait for my approval before coding.
+- PLAN: Write exactly one plan as a numbered list in a Markdown file. Wait for one approval before coding.
 - CODE: Execute one step at a time. After each step, show the diff.
 - VERIFY: Run tests/linter. If it fails, stop and report — do not auto-patch.
+- After PLAN approval, continue directly through CODE and VERIFY without another plan or approval gate.
+- Re-plan only if I revise the scope or explicitly ask you to change the plan. A status/detail question is not a re-plan request.
 
 ## 2. CONTEXT BEFORE ASSUMPTION
 - Never guess file contents, function signatures, or API behavior — read or grep first.

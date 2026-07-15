@@ -16,6 +16,7 @@ python-pptx
 pdfplumber
 openpyxl
 pandas
+duckdb==1.5.4
 pandas-ta
 yfinance
 apscheduler
