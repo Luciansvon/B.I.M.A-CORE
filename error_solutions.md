@@ -119,7 +119,8 @@
 ## Log 34: Nama File Aturan Bersifat Case-sensitive di WSL
 * **Masalah**: Pembacaan `claude.md` gagal walau file aturan terlihat ada.
 * **Root Cause**: File aktual bernama `CLAUDE.md`; filesystem Linux membedakan huruf besar dan kecil.
-* **Solusi**: Gunakan nama persis `CLAUDE.md` atau cari dulu dengan `rg --files | rg -i '^claude\.md$'`.
+* **Solusi**: Jadikan `CLAUDE.md` satu-satunya sumber aturan rinci, seragamkan semua referensi ke nama persis tersebut, dan cari masalah terkait di file ini sebelum mengulang command gagal.
+* **Verifikasi**: Guard canonical lulus; `Rules for agent.md` sudah tidak ada dan `AGENTS.md`/`.gitignore` tidak lagi memuat referensi lowercase.
 
 ## Log 35: Command Healthcheck di AGENTS.md Sudah Basi
 * **Masalah**: `python healthcheck.py` gagal karena file tidak ada di root.
@@ -357,11 +358,6 @@
 * **Solusi**: Jangan normalisasi massal dalam task maintenance. Gunakan Git Windows untuk gate worktree ini atau buat task terpisah untuk `.gitattributes` dan migrasi line-ending terkontrol.
 * **Verifikasi**: `git diff --check -- error_solutions.md` via Git Windows bersih dan tiga dokumen audit tidak memiliki trailing spaces; mismatch global WSL tetap dilaporkan apa adanya.
 
-## Log 81: Nama `claude.md` Gagal Dibaca pada Filesystem WSL
-* **Masalah**: `Get-Content` gagal menemukan `claude.md` walau panduan proyek memang ada di root.
-* **Root Cause**: Nama aktual adalah `CLAUDE.md`; filesystem WSL membedakan huruf besar dan kecil.
-* **Solusi**: Enumerasi file root sebelum membaca dan gunakan nama aktual `CLAUDE.md`.
-
 ## Log 82: Regex Alternation Pecah saat PowerShell Memanggil `bash -lc`
 * **Masalah**: Pola `rg` berisi banyak karakter `|` berubah menjadi pipeline shell; nama pola lalu dianggap sebagai command.
 * **Root Cause**: Quoting regex tidak bertahan konsisten melalui lapisan PowerShell, `wsl.exe`, dan `bash -lc`.
@@ -466,3 +462,21 @@
 * **Root Cause**: Pipeline PowerShell/WSL meneruskan BOM di awal stream JSON, sedangkan `json.load(sys.stdin)` memakai decoder UTF-8 biasa.
 * **Solusi**: Untuk status singkat gunakan `pm2 status`, atau decode byte stream dengan `utf-8-sig` sebelum `json.loads`.
 * **Verifikasi**: Status PM2 sebelumnya menunjukkan empat process online; smoke endpoint port 8000 dan 8001 tetap sukses pada pemeriksaan yang sama.
+
+## Log 100: WhatsApp Bridge Mengirim `❌ Error: r` Berulang
+* **Masalah**: Satu kegagalan WhatsApp Web memicu ratusan balasan `❌ Error: r` melalui event `message_create`.
+* **Root Cause**: Handler memanggil `msg.getChat()` sebelum menyaring event balasan bot. Saat `getChat()` melempar `r`, blok `catch` membalas error; balasan itu memicu `message_create` baru dan mengulang siklus.
+* **Solusi**: Saring prefix atau armed voice sebelum operasi async WhatsApp, pertahankan detail error hanya di log, dan kirim pesan generik ke user.
+* **Verifikasi**: Unit test filter, syntax check Node, restart PM2, health endpoint, dan log startup WA tanpa kemunculan baru `❌ [WA] r`.
+
+## Log 101: Loop Polling Health Rusak di Shell Berlapis
+* **Masalah**: Polling endpoint berhenti dengan `syntax error near unexpected token '2'` sebelum sempat menjalankan `curl`.
+* **Root Cause**: `$(seq ...)` dan variabel loop Bash berubah saat command melewati PowerShell, `wsl.exe`, lalu `bash -lc`.
+* **Solusi**: Gunakan polling tanpa variabel lintas shell: `timeout 60 bash -c 'until curl -fsS URL; do sleep 2; done'`.
+* **Verifikasi**: Polling pengganti mengembalikan `{"status":"ok","busy":false}` dari port 8001.
+
+## Log 102: Pemeriksaan Checklist PLAN Memberi False Positive
+* **Masalah**: Verifikasi akhir menganggap PLAN masih memiliki step kosong walau semua task sudah dicentang.
+* **Root Cause**: Pencarian substring `- [ ]` juga cocok dengan contoh sintaks checkbox di header PLAN.
+* **Solusi**: Cari hanya checkbox pada awal baris memakai regex `^- \[ \]`.
+* **Verifikasi**: Pemeriksaan berbasis baris tidak menemukan task yang belum dicentang.

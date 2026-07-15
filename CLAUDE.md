@@ -1,13 +1,54 @@
-# CLAUDE.md
+# CLAUDE.md — OPERATING RULES
 
-Panduan ini membantu **Claude Code** memahami lingkungan pengembangan, perintah eksekusi, serta standar penulisan kode dalam proyek **BIMA_CORE**.
+## 1. EXPLORE → PLAN → CODE → VERIFY
 
-## Workflow Wajib
+- EXPLORE: baca file terkait sebelum membuat klaim.
+- PLAN: buat tepat satu PLAN Markdown dan tunggu satu persetujuan.
+- CODE: setelah PLAN disetujui, langsung kerjakan tanpa PLAN atau approval gate baru.
+- VERIFY: jalankan test/linter yang relevan dan laporkan hasil sebenarnya.
+- Re-plan hanya jika Bima merevisi scope atau secara eksplisit meminta perubahan rencana.
 
-- Gunakan alur EXPLORE → PLAN → CODE → VERIFY.
-- Setiap task hanya boleh memiliki satu PLAN Markdown dan satu approval gate.
-- Setelah PLAN disetujui, langsung lanjut CODE dan VERIFY tanpa membuat PLAN baru.
-- Re-plan hanya jika Bima merevisi scope atau secara eksplisit meminta perubahan rencana. Pertanyaan status/detail bukan permintaan re-plan.
+## 2. CONTEXT BEFORE ASSUMPTION
+
+- Jangan menebak isi file, signature fungsi, atau perilaku API; baca atau cari lebih dulu.
+- Cari simbol yang belum dikenal sebelum mengasumsikan keberadaannya.
+- Saat tidak yakin, katakan tidak tahu dan minta konteks.
+- Sebelum mengulang command yang pernah gagal, cari masalah terkait di `error_solutions.md`.
+
+## 3. MINIMAL DIFF
+
+- Sentuh hanya file yang langsung dibutuhkan task.
+- Jangan refactor, cleanup, atau formatting di luar scope.
+- Ikuti style dan pola yang sudah ada.
+
+## 4. DESTRUCTIVE ACTIONS REQUIRE APPROVAL
+
+Minta persetujuan sebelum menghapus file/data, memasang atau mencopot dependency,
+mengubah `.env`/settings/CI, menjalankan migration, `git reset --hard`, `rm -rf`,
+atau operasi destruktif lain.
+
+## 5. NEVER BYPASS SAFETY
+
+- Jangan gunakan `--no-verify`, `--force`, atau melewati safety check.
+- Jangan hapus test yang gagal untuk membuat verifikasi hijau.
+- Jangan menyembunyikan error dengan `try/except: pass`.
+
+## 6. HONEST REPORTING
+
+- Laporkan apa yang berhasil, gagal, atau belum selesai secara faktual.
+- Jangan membuat hasil test, commit, atau isi file palsu.
+- Jika terblokir, hentikan dan laporkan buktinya.
+
+## 7. THINK IN PRESENT TENSE
+
+Sebelum mengubah kode, pastikan masalah nyata, perubahan terkecil, risiko, dan cara
+verifikasinya sudah jelas.
+
+## 8. OUTPUT DISCIPLINE
+
+- Ringkasan akhir maksimal 5 baris.
+- Tanpa pembuka, perayaan, atau teori panjang.
+- Tulis output panjang ke file.
 
 ## Perintah Pengembangan (Development Commands)
 

@@ -125,37 +125,45 @@ async def private_cmd(interaction: discord.Interaction, action: app_commands.Cho
 
 def _build_startup_embed() -> discord.Embed:
     embed = discord.Embed(
-        title='✨ Anisa B.I.M.A Core — Online',
+        title='🟢 ANISA ONLINE • B.I.M.A CORE',
         description=(
-            'Halo Bima, Anisa sudah aktif dan siap membantu! 🚀\n'
-            'Mention aku atau DM langsung untuk mulai.'
+            '**Semua sistem aktif — 8 tim siap dipakai.**\n'
+            '> Mention **@Anisa** atau kirim **DM**, lalu langsung tulis tugasmu.\n'
+            '`@Anisa buat ...` • Lampirkan file bila diperlukan.'
         ),
-        color=0x6366F1,
+        color=0x22C55E,
         timestamp=datetime.now()
     )
-    teams = [
-        ('🧠 T1 — Manager',
-         'Orkestrasi tugas, memori jangka panjang, simpan fakta tentang Bima'),
-        ('📂 T2 — Visual',
-         'Baca PDF / Excel / Word / CSV / gambar, analisis visual, Image-to-Code (UI mockup → HTML)'),
-        ('📚 T3 — Arsip',
-         'Semantic search vault Obsidian (LanceDB + sentence-transformers), simpan catatan otomatis'),
-        ('📝 T4 — Admin',
-         'Generate Excel/Word/PDF dengan 5 style preset, **auto-render chart** (bar/line/pie), '
-         '**image search** Wikimedia + Serper untuk gambar jurnal/laporan, data analysis CSV→chart'),
-        ('🔍 T5 — Intel',
-         'Riset web (Scrapling stealth Camoufox), Serper Google Search, scrape Reddit/GitHub/X, '
-         'OSINT domain (WHOIS/DNS/Geo), smart search dengan caching'),
-        ('🌤️ T6 — Lifestyle',
-         'YouTube search, cuaca real-time, schedule manager, maps distance (OSRM)'),
-        ('🎨 T7 — Seniman',
-         'Dashboard HTML interaktif (Chart.js), SVG generator, cutting list kayu, Mermaid diagram'),
-        ('🔧 T8 — Mekanik',
-         'Eksekusi Python sandbox aman, auto-debug retry hingga 5x, Git automation, security scanner'),
+    sections = [
+        ('🧠 RISET & MEMORI',
+         '**T1 Manager** — orkestrasi & memori\n'
+         '**T3 Arsip** — vault & semantic search\n'
+         '**T5 Intel** — riset web & OSINT\n'
+         '**T6 Lifestyle** — cuaca, jadwal & maps', True),
+        ('🎨 VISUAL & PRODUKSI',
+         '**T2 Visual** — baca file & analisis gambar\n'
+         '**T4 Admin** — Word, Excel, PDF & chart\n'
+         '**T7 Seniman** — HTML, SVG & Mermaid\n'
+         '**T8 Mekanik** — coding, Git & security', True),
+        ('⚡ TOOLS & FILE',
+         '`!status` — cek kesehatan VPS\n'
+         '`!ocr` + gambar — ambil teks dari gambar\n'
+         '`!qc` + drawing — QC gambar furnitur\n'
+         '`!cutlist` — optimasi potongan panel\n'
+         '`!arsip help` — menu vault & catatan', True),
+        ('📈 CONTENT & MARKET',
+         '`!saham help` — analisis, chart & portfolio\n'
+         '`!threads <topik>` — buat draft Threads\n'
+         '`/private start|stop` — buka/tutup thread privat', True),
+        ('🎵 MUSIC CONTROL',
+         '`!play <judul>` — putar lagu  •  `!queue` — lihat antrean\n'
+         '`!skip` — lewati  •  `!pause` / `!resume` — jeda/lanjut\n'
+         '`!stop` / `!leave` — hentikan  •  `!np` / `!loop` — status/ulang\n'
+         '`!music` — tampilkan menu musik lengkap', False),
     ]
-    for name, desc in teams:
-        embed.add_field(name=name, value=desc, inline=False)
-    embed.set_footer(text='B.I.M.A Core — Powered by CrewAI + LangGraph')
+    for name, description, inline in sections:
+        embed.add_field(name=name, value=description, inline=inline)
+    embed.set_footer(text='B.I.M.A Core • CrewAI × LangGraph • Ready when you are')
     return embed
 
 

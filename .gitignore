@@ -72,7 +72,6 @@ archive/
 
 # User profile leak (sensitive)
 user_profile.md
-claude.md
 skills-lock.json
 
 # fpdf2 build artifacts

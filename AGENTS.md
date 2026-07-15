@@ -13,7 +13,7 @@ Setiap task hanya boleh memiliki satu PLAN dalam file Markdown agar bisa diaudit
 
 ## Operating Rules
 
-Full rules live in [`claude.md`](claude.md) (same content as `Rules for agent.md`). Memorize all 8 rules. The non-negotiable ones:
+Full rules live in [`CLAUDE.md`](CLAUDE.md). Memorize all 8 rules. The non-negotiable ones:
 
 1. **Never skip phases.** Always EXPLORE first (read/grep code), then write exactly one PLAN (numbered list, wait for one approval), then continue through CODE and VERIFY without another plan gate. Re-plan only when Bima revises scope or explicitly asks.
 2. **Context before assumption.** Read or grep before claiming a symbol/file/API exists. When uncertain, say "I don't know" and ask.
@@ -27,7 +27,7 @@ Full rules live in [`claude.md`](claude.md) (same content as `Rules for agent.md
 - **Don't over-ask on trivial ops.** Once a plan is approved, stop asking permission for obvious follow-ups (pre-warming a model, restarting a service, running smoke tests). Just do them. Reserve asking for: scope change, new dependency, destructive ops, ambiguous business logic.
 - **One-plan rule.** Satu task hanya satu PLAN dan satu approval gate. Pertanyaan status atau detail dari Bima bukan alasan membuat PLAN baru; revisi PLAN hanya jika Bima mengubah scope atau memintanya.
 - **Bahasa Indonesia casual** for replies. Code/identifiers stay English.
-- **Strict EXPLORE→PLAN→CODE→VERIFY discipline.** Bima wrote these rules himself across `claude.md` + `Rules for agent.md`.
+- **Strict EXPLORE→PLAN→CODE→VERIFY discipline.** Bima wrote these rules in `CLAUDE.md`.
 
 ## Stack
 
@@ -274,8 +274,7 @@ For external API call sites, use `core/api_retry.py:call_with_retry()` to wrap w
 ## Quick links
 
 - [README.md](README.md) — public-facing project overview, install, deployment
-- [claude.md](claude.md) — full operating rules (mandatory)
-- [Rules for agent.md](Rules%20for%20agent.md) — same rules (kept in sync)
+- [CLAUDE.md](CLAUDE.md) — full operating rules (mandatory)
 - [config_mcp.json](config_mcp.json) — MCP server map
 - [ecosystem.config.js](ecosystem.config.js) — PM2 process definitions
 - [requirements.txt](requirements.txt) — Python deps

@@ -21,6 +21,7 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
+const { shouldHandleMessage } = require('./message_filter');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 // ============================================================
@@ -532,15 +533,18 @@ client.on('disconnected', (reason) => {
 // ============================================================
 async function handleMessage(msg) {
     try {
+        const text = msg.body?.trim() || '';
+        const lower = text.toLowerCase();
+        const prefix = CONFIG.triggerPrefix;
+        const isVoiceNote = msg.type === 'ptt';
+        const sttActive = isVoiceNote && isSttArmed(msg.from);
+
+        // Filter event message_create sebelum operasi WA apa pun agar balasan bot
+        // tidak bisa masuk ke catch lalu memicu recursive error reply.
+        if (!shouldHandleMessage(msg, prefix, sttActive)) return;
+
         const chat = await msg.getChat();
         if (chat.isGroup) return;
-        // Allow fromMe (user sendiri kirim) HANYA kalau pesan diawalin prefix — biar lu bisa pake bot dari HP utama tanpa loop ke balasan bot.
-        // Pengecualian: voice note (ptt) bypass prefix HANYA kalau STT armed (user udah text "/bot stt" 60s terakhir).
-        if (msg.fromMe) {
-            const t = (msg.body || '').trim().toLowerCase();
-            const isPtt = msg.type === 'ptt';
-            if (!t.startsWith(CONFIG.triggerPrefix) && !(isPtt && isSttArmed(msg.from))) return;
-        }
 
         // Resolve sender ke nomor telepon (handle @lid hash WhatsApp)
         let senderPhone = '';
@@ -556,18 +560,9 @@ async function handleMessage(msg) {
             !effOwners.includes(senderPhone) &&
             !effOwners.includes(rawId)) return;
 
-        const text = msg.body?.trim() || '';
-        const lower = text.toLowerCase();
-        const prefix = CONFIG.triggerPrefix;
-
         // Voice note (ptt) bypass prefix HANYA kalau STT armed (user text "/bot stt" 60s terakhir).
         // Default: voice note tanpa armed = silent ignore (gak spam transcribe semua voice).
         // Arming key pakai msg.from (chat ID) — konsisten antara fromMe & received.
-        const isVoiceNote = msg.type === 'ptt';
-        const sttActive = isVoiceNote && isSttArmed(msg.from);
-
-        // Cuma proses kalau pesan diawalin prefix — KECUALI armed voice note
-        if (!sttActive && !lower.startsWith(prefix)) return;
 
         // Disarm STT setelah voice note dipakai (1 voice per arm)
         if (sttActive) sttArmed.delete(msg.from);
@@ -734,7 +729,7 @@ async function handleMessage(msg) {
         log('INFO', `✓ ${chunks.length} chunk, ${result.output_files?.length || 0} files${voiceFile ? ` + voice(${voiceMode})` : ''}`);
     } catch (error) {
         log('ERROR', `${error.message}`);
-        try { await msg.reply(`❌ Error: ${error.message}`); } catch {}
+        try { await msg.reply('❌ WhatsApp gagal memproses pesan. Coba sekali lagi.'); } catch {}
     }
 }
 
