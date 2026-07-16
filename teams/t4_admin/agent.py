@@ -6,6 +6,7 @@ from teams.t4_admin.excel_tool import ExcelGeneratorTool
 from teams.t4_admin.word_tool import WordGeneratorTool
 from teams.t4_admin.pdf_tool import PDFGeneratorTool
 from teams.t4_admin.data_analysis_tool import DataAnalysisTool
+from teams.t4_admin.duckdb_tool import DuckDBAnalysisTool
 
 _BACKSTORY_PATH = Path(__file__).parent / "prompt_templates" / "backstory.md"
 _backstory = _BACKSTORY_PATH.read_text(encoding="utf-8")
@@ -15,7 +16,10 @@ admin_agent = Agent(
     goal='Membuat dokumen Excel/Word/PDF dengan gaya tulisan dan layout yang menyesuaikan permintaan Bima — bukan hanya laporan formal.',
     backstory=_backstory,
     llm=admin_llm,
-    tools=[ExcelGeneratorTool(), WordGeneratorTool(), PDFGeneratorTool(), DataAnalysisTool(), ImageSearchTool()],
+    tools=[
+        ExcelGeneratorTool(), WordGeneratorTool(), PDFGeneratorTool(),
+        DataAnalysisTool(), DuckDBAnalysisTool(), ImageSearchTool(),
+    ],
     allow_delegation=True,
     verbose=True,
 )

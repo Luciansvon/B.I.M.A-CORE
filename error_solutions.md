@@ -119,7 +119,8 @@
 ## Log 34: Nama File Aturan Bersifat Case-sensitive di WSL
 * **Masalah**: Pembacaan `claude.md` gagal walau file aturan terlihat ada.
 * **Root Cause**: File aktual bernama `CLAUDE.md`; filesystem Linux membedakan huruf besar dan kecil.
-* **Solusi**: Gunakan nama persis `CLAUDE.md` atau cari dulu dengan `rg --files | rg -i '^claude\.md$'`.
+* **Solusi**: Jadikan `CLAUDE.md` satu-satunya sumber aturan rinci, seragamkan semua referensi ke nama persis tersebut, dan cari masalah terkait di file ini sebelum mengulang command gagal.
+* **Verifikasi**: Guard canonical lulus; `Rules for agent.md` sudah tidak ada dan `AGENTS.md`/`.gitignore` tidak lagi memuat referensi lowercase.
 
 ## Log 35: Command Healthcheck di AGENTS.md Sudah Basi
 * **Masalah**: `python healthcheck.py` gagal karena file tidak ada di root.
@@ -275,6 +276,7 @@
 * **Masalah**: `npm audit --audit-level=high` menemukan 15 vulnerability: 10 moderate, 4 high, dan 1 critical.
 * **Root Cause**: `@agentmemory/agentmemory@0.9.27` membawa rantai `iii-sdk`, OpenTelemetry lama, serta `@xenova/transformers`/`onnxruntime-web` dengan `protobufjs` rentan.
 * **Solusi**: Jangan start AgentMemory di PM2. Tahan service sampai versi upstream aman atau dependency override tervalidasi; backend utama tetap dapat berjalan dengan status degraded.
+* **Verifikasi 2026-07-15**: 0.9.27 masih versi terbaru, `AGENTMEMORY_ENABLED` tidak disetel, dan `npm audit fix --dry-run --json` tetap menyisakan 15 vulnerability. Package AgentMemory membawa override `protobufjs`, tetapi npm hanya menerapkan `overrides` dari root project; uji root override atau versi upstream baru di environment terpisah sebelum service diaktifkan.
 
 ## Log 66: Path Healthcheck di Dokumentasi Tidak Sesuai Repo
 * **Masalah**: Command `python healthcheck.py` gagal karena file tidak ada di root.
@@ -311,239 +313,423 @@
 * **Root Cause**: Import top-level `lancedb` di Arsip dan Repo RAG sudah menginisialisasi runtime native sebelum koneksi/database dipakai.
 * **Solusi**: Lazy-import `lancedb` di `_get_db()` dan `_connect_db()`, selain menunda thread index. Startup berikutnya bersih dan index Arsip tetap menghasilkan 897 dokumen BM25 setelah MCP siap.
 
-## Log 73: LangGraph Manager Bukan Orchestrator Penuh
-* **Masalah**: Nama dan prompt `manager_node` menyiratkan otak orkestrator, tetapi runtime hanya memilih `active_teams` atau membalas chat santai. Node ini tidak membuat `current_plan`, tidak memantau hasil spesialis, tidak melakukan reroute, dan tidak menyintesis output akhir.
-* **Root Cause**: Urutan spesialis sudah ditentukan statis di `langgraph_engine.py`; seluruh node spesialis langsung menuju node berikutnya atau `memory_finalizer_node` tanpa kembali ke manager.
-* **Solusi**: Perlakukan komponen ini sebagai router/chat fallback. Jangan menghidupkan CrewAI hierarchical manager; pisahkan menjadi router terstruktur dan chat node hanya jika refactor disetujui.
+## Log 73: Alert Security Repo Publik Tidak Bisa Dibaca
+* **Masalah**: Audit `modiqo/waggle` mendapat HTTP 403 saat meminta Code Scanning dan Dependabot alerts.
+* **Root Cause**: Endpoint alert GitHub hanya dapat dibaca dengan izin admin repository; autentikasi lokal bukan pemilik repo tersebut.
+* **Solusi**: Jangan menyimpulkan repo bebas vulnerability. Nilai source, workflow, dan release publik; minta maintainer mengekspor alert atau lakukan scanner lokal pada source yang dipin bila audit lebih lanjut disetujui.
 
-## Log 74: Fast-path Hanya Menangani Sekitar 12-14 Persen Request
-* **Masalah**: Audit `logs/error.log` menemukan 28 fast-path versus 206 fallback, sehingga sekitar 88% request tetap memanggil LLM manager. Uji classifier saat ini terhadap 500 prompt nyata di `memory.db` juga hanya memberi 14% fast-path.
-* **Root Cause**: Regex sengaja konservatif dan tidak menangani chat santai, perintah dokumen umum, HTML/dashboard umum, riset Intel umum, serta semua multi-step.
-* **Solusi**: Pertahankan fallback LLM untuk request ambigu, tetapi tambah fast-path hanya untuk perintah eksplisit yang aman. Chat santai tetap membutuhkan chat node; jangan paksa semua bahasa natural menjadi regex.
+## Log 74: `jq` Tidak Tersedia di WSL
+* **Masalah**: Parsing hasil benchmark Waggle gagal dengan `jq: command not found`.
+* **Root Cause**: Environment WSL tidak memasang executable `jq`, meskipun `gh --jq` memiliki evaluator internal.
+* **Solusi**: Gunakan `gh api ... --jq '<expression>'` langsung agar tidak membutuhkan dependency tambahan.
 
-## Log 75: Manager Menghasilkan Narasi Tersembunyi Sebelum Delegasi
-* **Masalah**: Manager selalu membuat jawaban natural lengkap lalu memasukkannya ke `messages`, walau request akan diteruskan ke spesialis dan output final memakai pesan spesialis. Pesan tersembunyi ini ikut masuk context summarizer dan kadang dijadikan `upstream_block` oleh Admin/Seniman.
-* **Root Cause**: Satu prompt mencampur dua tugas berbeda: klasifikasi rute dan pembuatan balasan chat.
-* **Solusi**: Untuk rute spesialis, hasilkan schema route-only dan simpan pada state khusus. Panggil generator balasan hanya pada cabang santai; kirim data antarnode lewat `temp_data`, bukan pesan manager tersembunyi.
+## Log 75: `gh` Hilang dari PATH WSL Non-login
+* **Masalah**: `wsl.exe -d Ubuntu -- gh api ...` gagal dengan `gh: command not found`, padahal command yang sama tersedia melalui shell login.
+* **Root Cause**: Invocation WSL non-login tidak memuat konfigurasi PATH tempat GitHub CLI terpasang.
+* **Solusi**: Jalankan `gh` melalui `wsl.exe -d Ubuntu -- bash -lc "gh api ..."` pada environment ini.
 
-## Log 76: MCP Manager Terpasang ke Agent yang Tidak Dieksekusi
-* **Masalah**: MCP `sequential_thinking`, Memory, dan Time untuk target `manager` di-start lalu di-inject ke `teams.t1_manager:manager_agent`, sedangkan agent tersebut tidak pernah masuk `Crew.kickoff()`. `manager_node` LangGraph yang aktif tidak menerima tool itu.
-* **Root Cause**: Nama `manager` di registry menunjuk CrewAI manager lama, sementara orkestrasi produksi sudah berpindah ke LangGraph manager.
-* **Solusi**: Hapus target `manager` dari MCP yang tidak punya consumer aktif dan nonaktifkan `sequential_thinking` bila tidak dipakai agent lain. Pindahkan `simpan_sesi()` ke `memory_engine.py` sebelum menghapus agent lama.
+## Log 76: Reader PM2 Observability Selalu Mengembalikan Kosong
+* **Masalah**: `core/observability_scheduler._get_pm2_status()` mengembalikan `[]`, sehingga scheduler tidak dapat mendeteksi proses PM2 yang offline.
+* **Root Cause**: `subprocess.run(["pm2", "jlist"], shell=True)` memakai list argumen bersama shell pada POSIX. `pm2` dijalankan tanpa subcommand `jlist`, output bukan JSON, lalu exception disembunyikan oleh safe-fail.
+* **Solusi**: Hapus `shell=True`, pertahankan argv `['pm2', 'jlist']`, log warning saat command/JSON gagal, dan tambah regression test yang memastikan empat proses dapat diparse.
+* **Verifikasi**: Reader observability menghasilkan `[]`; reader maintenance dengan command tanpa shell menghasilkan empat proses `stopped` pada PM2 yang sama.
 
-## Log 77: Kontrak Route Manager Tidak Punya Regression Test
-* **Masalah**: Parser manual untuk 22 tag route tidak memiliki test langsung; prompt masih menulis "20 pilihan", dan output/tag invalid diam-diam jatuh ke `santai` sehingga pekerjaan spesialis bisa terlewat.
-* **Root Cause**: Test yang ada hanya mencakup beberapa regex Arsip dan registry MCP, bukan kontrak prompt-parser-router manager.
-* **Solusi**: Gunakan structured output dengan enum route tervalidasi dan tambahkan test parametrik untuk seluruh route, urutan multi-team, serta invalid-output fallback yang eksplisit.
+## Log 77: Environment Python Aktif Memiliki 9 Konflik Dependency
+* **Masalah**: `uv pip check --python bima_env/bin/python` menemukan 9 incompatibility pada pyarrow, protobuf, lance-namespace, rich, fsspec, aiofiles, starlette, dan pasangan torch/torchvision.
+* **Root Cause**: `bima_env` memuat dependency fitur voice/browser/data yang dipasang di luar metadata `pyproject.toml`. Dibanding lock aktif, dry-run akan menghapus 163 package dan memasang 31 package.
+* **Solusi**: Jangan jalankan `uv sync` langsung pada production. Inventaris dependency runtime yang benar, masukkan ke group project yang sesuai, bangun environment baru dari lock, lalu gate dengan 299 pytest serta smoke voice/browser sebelum switch.
+* **Verifikasi**: `uv lock --check` lulus, tetapi `uv sync --active --frozen --dry-run` membuktikan environment aktif tidak identik dengan lock.
 
-## Log 78: Full Suite Memiliki Enam Failure Marp Baseline
-* **Masalah**: Full pytest sebelum dan sesudah hardening manager gagal pada enam test `tests/test_slide_generator.py`.
-* **Root Cause**: Marp CLI/Chromium menghasilkan `ERR_UNHANDLED_REJECTION` pada Node.js 22.22.2; failure sudah ada sebelum perubahan manager.
-* **Solusi**: Bima menyetujui failure ini sebagai baseline di luar scope. Hasil akhir manager: 332 test lulus dan hanya enam failure Marp yang sama; slide generator tidak diubah.
+## Log 78: Audit Python Menemukan Tiga Package Rentan
+* **Masalah**: `uv audit --frozen` menemukan 5 record advisory yang mewakili 3 package: `chromadb==1.1.1`, `diskcache==5.6.3`, dan `json-repair==0.25.2`.
+* **Root Cause**: ChromaDB masuk transitif dari CrewAI dan belum punya patched release; DiskCache memakai pickle untuk cache lokal; json-repair versi lama rentan CPU DoS melalui circular schema `$ref`.
+* **Solusi**: Jangan expose Chroma server dan tunggu/validasi upstream fix; batasi write access cache DiskCache serta rencanakan serializer aman; constraint json-repair ke `>=0.60.1` hanya setelah compatibility test CrewAI dan Furniture QC.
+* **Verifikasi**: Dependency tree menunjukkan ChromaDB/json-repair dari `crewai==1.6.1`, sedangkan DiskCache adalah dependency langsung. Pemakaian json-repair di Furniture QC tidak memberi argumen schema, jadi jalur DoS spesifik tidak langsung terbuka di call site itu.
 
-## Log 79: Test MCP Masih Mewajibkan Akses Manager Mati
-* **Masalah**: Full suite pertama setelah penghapusan CrewAI manager gagal di `test_manager_memory_tools_are_read_only` karena key `manager` sudah tidak ada.
-* **Root Cause**: Regression test lama masih mengunci kontrak MCP milik `teams/t1_manager.py`, padahal agent dan seluruh target MCP-nya sengaja dihapus.
-* **Solusi**: Ganti kontrak test menjadi `test_legacy_manager_has_no_mcp_access`; Memory MCP hanya untuk Arsip dan Sequential Thinking tetap disabled. Targeted MCP/registry lulus 6 test.
+## Log 79: Bandit Menemukan Security Debt pada Source
+* **Masalah**: Bandit memindai 20.639 baris dan melaporkan 99 low, 13 medium, serta 7 high.
+* **Root Cause**: Lima high MD5 dipakai hanya untuk slug filename dan merupakan false positive kriptografi. Risiko nyata mencakup `shell=True` di observability/cloud backup, pickle load indeks BM25, dan download model Hugging Face tanpa revision pin.
+* **Solusi**: Perbaiki observability sesuai Log 76; ubah helper Git backup menjadi argv tanpa shell; pin commit model melalui `TTS_HF_REVISION`; dan rebuild/validasi indeks BM25 dari corpus tepercaya sebelum load. Jangan mass-suppress dengan `# nosec`.
+* **Verifikasi**: Full pytest tetap lulus 299 test dan MCP audit secure; audit ini report-only sehingga source belum diubah.
 
-## Log 80: Hardening LangGraph Manager Terverifikasi
-* **Masalah**: Manager sebelumnya menerima route invalid secara diam-diam, menyimpan narasi tersembunyi, memblokir event loop saat baca SQLite, dan membocorkan token route ke stream.
-* **Root Cause**: Routing memakai rantai substring manual dan manager mencampur klasifikasi dengan balasan spesialis.
-* **Solusi**: Tambahkan mapping canonical 22 route dan parser fail-closed, output route-only untuk spesialis, `asyncio.to_thread()` untuk SQLite, filter stream manager, serta current-turn upstream guard. Focused regression lulus 64 test; compile/import engine lulus; PM2 online; healthcheck lulus 50 check dengan 2 warning; startup membuktikan Sequential Thinking disabled dan tidak ada injeksi MCP ke manager.
-## Log 82: Preview Kerja Hilang Setelah Stream Manager Diblokir
-* **Masalah**: Discord/WhatsApp tidak lagi memberi preview yang cukup jelas saat Anisa memproses request setelah hardening Manager.
-* **Root Cause**: Stream `manager_node` sengaja diblokir agar tag `[ROUTE: ...]` dan narasi internal tidak bocor; WhatsApp hanya mempertahankan indikator typing tanpa pesan status.
-* **Solusi**: Pertahankan filter stream Manager dan status node Discord. Di WhatsApp, kirim satu pesan status umum lalu edit pesan yang sama menjadi jawaban, status voice, atau error tanpa menambah protokol streaming.
-* **Verifikasi**: Helper progress lulus 3 test, `node --check whatsapp/index.js` lulus, regression filter Manager tetap lulus, dan `bima-whatsapp` online setelah restart.
+## Log 80: Git WSL Membaca 63 File Berubah karena Mismatch CRLF
+* **Masalah**: `git diff --check` melalui Git WSL melaporkan trailing whitespace pada ribuan baris dan `git status` melihat 63 file berubah, sementara Git Windows hanya melihat 5 entry workspace.
+* **Root Cause**: Git Windows memakai system config `core.autocrlf=true`; Git WSL tidak mempunyai nilai `core.autocrlf`. Perbedaan normalisasi line-ending membuat file CRLF lama terlihat berubah penuh dari WSL.
+* **Solusi**: Jangan normalisasi massal dalam task maintenance. Gunakan Git Windows untuk gate worktree ini atau buat task terpisah untuk `.gitattributes` dan migrasi line-ending terkontrol.
+* **Verifikasi**: `git diff --check -- error_solutions.md` via Git Windows bersih dan tiga dokumen audit tidak memiliki trailing spaces; mismatch global WSL tetap dilaporkan apa adanya.
 
-## Log 83: Patch Plan Ditolak karena Prefix Baris Hilang
-* **Masalah**: Percobaan pertama membuat plan gagal dengan `invalid hunk` dan file plan tidak terbentuk.
-* **Root Cause**: Satu baris command di blok Markdown tidak diawali prefix `+` yang diwajibkan format `Add File` pada `apply_patch`.
-* **Solusi**: Pastikan setiap baris file baru memiliki prefix patch, lalu ulangi patch. Percobaan kedua berhasil tanpa perubahan parsial dari percobaan pertama.
+## Log 82: Regex Alternation Pecah saat PowerShell Memanggil `bash -lc`
+* **Masalah**: Pola `rg` berisi banyak karakter `|` berubah menjadi pipeline shell; nama pola lalu dianggap sebagai command.
+* **Root Cause**: Quoting regex tidak bertahan konsisten melalui lapisan PowerShell, `wsl.exe`, dan `bash -lc`.
+* **Solusi**: Jalankan `rg` langsung dari PowerShell pada workspace UNC, atau gunakan beberapa `-e` tanpa shell ganda.
 
-## Log 84: Diff Check Terhalang Mixed CRLF/LF Lama
-* **Masalah**: `git diff --check` menandai hampir seluruh `whatsapp/index.js` dan `error_solutions.md` sebagai trailing whitespace walau perubahan fitur hanya beberapa hunk.
-* **Root Cause**: Kedua file sudah memakai campuran line ending CRLF/LF sebelum task, sehingga karakter CR dibaca sebagai whitespace pada diff besar terhadap HEAD.
-* **Solusi**: Atas persetujuan Bima, jangan normalisasi seluruh file karena akan memperbesar diff dan menyentuh perubahan lokal lain. Verifikasi task memakai diff semantik `git diff -w`, syntax check, focused test, dan smoke runtime.
+## Log 83: Glob `*.md` Tidak Diterima `rg` pada Path Windows
+* **Masalah**: `rg ... docs *.md` menghasilkan error nama file/path tidak valid.
+* **Root Cause**: Wildcard positional `*.md` tidak diekspansi seperti di Bash pada invocation PowerShell tersebut.
+* **Solusi**: Gunakan filter ripgrep `-g '*.md'` dengan root pencarian eksplisit.
 
-## Log 85: OpenRouter Menolak Manager karena Batas Token Melebihi Kredit
-* **Masalah**: Smoke `/bot tes preview` memicu dua respons HTTP 402 dari OpenRouter; request meminta hingga 65.536 token sedangkan saldo hanya mencukupi sekitar 34.578 token.
-* **Root Cause**: `default_llm = get_langchain_llm()` tidak memberi `max_tokens`, sehingga request memakai batas maksimum model yang terlalu mahal untuk saldo aktif.
-* **Solusi**: Tangani sebagai task config terpisah: beri batas `max_tokens` eksplisit yang wajar pada LLM routing atau tambah kredit OpenRouter. Config tidak diubah dalam task preview; fallback graph tetap menyelesaikan request dan WA mengirim satu chunk.
+## Log 84: Hasil `foreach` PowerShell Tidak Bisa Langsung Dipipe
+* **Masalah**: Loop metadata GitHub diikuti `| Format-Table` menghasilkan `An empty pipe element is not allowed`.
+* **Root Cause**: Statement `foreach (...) { ... }` tidak diperlakukan sebagai ekspresi pipeline pada bentuk command tersebut.
+* **Solusi**: Simpan hasil loop ke variabel (`$rows = foreach (...) { ... }`), lalu pipe `$rows` ke formatter.
 
-## Log 86: GitHub CLI Tidak Terpasang dan Sudo Memerlukan Password
-* **Masalah**: Publish awal gagal karena `gh` tidak ditemukan; instalasi paket sistem juga tidak bisa berjalan noninteraktif karena `sudo` meminta password.
-* **Root Cause**: GitHub CLI belum tersedia di PATH WSL dan user tidak memiliki passwordless sudo.
-* **Solusi**: Instal binary resmi GitHub CLI v2.96.0 ke `~/.local/bin/gh` tanpa sudo setelah SHA-256 tarball cocok dengan checksum rilis resmi. `gh auth status` kemudian mengonfirmasi akun `Luciansvon` sudah aktif.
+## Log 85: Operator Null-Coalescing Tidak Didukung PowerShell Host
+* **Masalah**: Audit schema memakai operator `??` dan berhenti dengan parser error.
+* **Root Cause**: PowerShell host yang menjalankan command belum mendukung operator null-coalescing tersebut.
+* **Solusi**: Gunakan pemeriksaan kompatibel `$keys.ContainsKey($k)` dan percabangan eksplisit sebagai pengganti `??`.
+* **Verifikasi**: Audit schema berjalan setelah operator diganti tanpa mengubah data yang diperiksa.
 
-## Log 87: Patch Semantik Gagal Masuk ke Git Index
-* **Masalah**: `git diff -w | git apply --cached --check` gagal pada `whatsapp/index.js:21` walau hunk fitur benar.
-* **Root Cause**: Patch semantik masih membawa karakter CR dari working tree mixed CRLF/LF, sedangkan versi file di Git index memakai LF.
-* **Solusi**: Hapus karakter CR hanya dari aliran patch sebelum `git apply --cached`; jangan normalisasi working tree. Verifikasi staged diff tetap hanya memuat hunk fitur.
+## Log 86: Ruff Tidak Tersedia di Virtual Environment
+* **Masalah**: Test Obsidian lulus, tetapi command lanjutan `bima_env/bin/ruff` gagal dengan `No such file or directory`.
+* **Root Cause**: Ruff tercantum di dependency group dev, namun executable belum terpasang di `bima_env` yang aktif.
+* **Solusi**: Jalankan Ruff secara terisolasi melalui `uvx ruff` agar tidak mengubah dependency runtime.
+* **Verifikasi**: Verifikasi lint akhir memakai `uvx ruff check` pada file Python yang tersentuh.
 
-## Log 88: Command Staging Gabungan Gagal di Quote Lintas Shell
-* **Masalah**: Command gabungan untuk patch index dan pembuatan blob berhenti dengan `unexpected EOF while looking for matching quote`.
-* **Root Cause**: Quote variabel Bash bertabrakan dengan lapisan quote PowerShell saat seluruh proses digabung dalam satu command.
-* **Solusi**: Pecah staging menjadi command pendek: patch WhatsApp, buat hash blob log, update index, lalu stage file baru secara terpisah.
+## Log 87: Filter Obsidian Base Menghasilkan Escape YAML Berlebih
+* **Masalah**: Test `.base` menemukan expression folder tersimpan dengan backslash escape sehingga bentuknya tidak mengikuti format Base yang mudah dibaca.
+* **Root Cause**: Expression YAML dibungkus memakai `json.dumps`, sehingga quote di dalam expression ikut di-escape.
+* **Solusi**: Tulis scalar YAML dengan single quote dan escape single quote YAML secara eksplisit.
+* **Verifikasi**: Lima test Obsidian lulus, termasuk view, traversal, overwrite, Canvas ID, dan edge.
 
-## Log 89: Command Verifikasi PR Gagal di Quote Lintas Shell
-* **Masalah**: Command gabungan untuk membaca JSON PR, membandingkan hash, dan mencetak status berhenti dengan `unexpected EOF while looking for matching quote`.
-* **Root Cause**: Substitusi command dan format string kembali melewati quote PowerShell serta Bash dalam satu baris panjang.
-* **Solusi**: Jalankan pemeriksaan PR, hash branch, dan file sementara sebagai command terpisah tanpa interpolasi bertingkat.
+## Log 88: DuckDB Grouping Tidak Mengembalikan Kolom Grup
+* **Masalah**: Agregasi `sum` per kategori hanya mengembalikan kolom `value`, bukan `category` dan `value`.
+* **Root Cause**: `DuckDBPyRelation.aggregate()` memakai argumen kedua hanya sebagai group expression; kolom grup tetap harus dicantumkan pada projection agregasi.
+* **Solusi**: Masukkan identifier grup tervalidasi ke expression hasil sekaligus ke `group_expr`.
+* **Verifikasi**: Sembilan test DuckDB lulus untuk CSV, Parquet, lima operasi allowlist, group, output CSV, path, schema, dan limit.
 
-## Log 90: Separator Log Hilang pada Blob Staging Selektif
-* **Masalah**: Diff staged pertama menempelkan header Log 89 langsung setelah Log 88 tanpa baris kosong.
-* **Root Cause**: `sed` dimulai tepat dari header Log 89, sehingga separator kosong sebelum header tidak ikut ke blob Git.
-* **Solusi**: Sisipkan satu newline eksplisit antara isi HEAD dan blok log baru, lalu cek ulang staged diff sebelum commit.
-## Log 91: Path Dokumentasi Salah Case
+## Log 89: Ruff Gate Terhalang Lint Debt Lama Mekanik
+* **Masalah**: Ruff pada semua file tersentuh melaporkan tujuh error.
+* **Root Cause**: Enam error sudah ada pada `teams/t8_mekanik.py` di HEAD sebelum task; satu error baru adalah import `os` yang tidak terpakai di test Strix.
+* **Solusi**: Hapus hanya import baru milik task dan jangan melakukan drive-by cleanup pada enam error lama.
+* **Verifikasi**: Seluruh file Python baru dan file registrasi selain Mekanik lulus Ruff; scan terhadap versi HEAD Mekanik mereproduksi enam error yang sama.
+
+## Log 90: Nested Quote PowerShell ke Bash Memutus Python `-c`
+* **Masalah**: Dua smoke command berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: String Python berquote melewati JavaScript, PowerShell, `wsl.exe`, lalu `bash -lc`, sehingga delimiter berubah sebelum sampai ke Python.
+* **Solusi**: Hindari shell berlapis untuk smoke test; panggil `wsl.exe ... python` langsung atau gunakan ekspresi tanpa quote bersarang.
+* **Verifikasi**: Compile, import smoke, dan Strix preflight berhasil dijalankan melalui invocation langsung.
+
+## Log 91: Docker CLI Belum Tersedia untuk Strix
+* **Masalah**: Preflight Strix aktual mengembalikan `Docker CLI belum terpasang di WSL`.
+* **Root Cause**: Host WSL belum mempunyai Docker CLI/daemon yang dapat dipakai Strix.
+* **Solusi**: Pertahankan `STRIX_ENABLED=false`; pasang/aktifkan Docker secara terpisah sebelum scan end-to-end pertama.
+* **Verifikasi**: Wrapper berhenti aman sebelum snapshot dikirim atau API dipanggil; tujuh unit test Strix tetap lulus.
+
+## Log 92: `uv pip check` Menemukan Sembilan Konflik Environment Lama
+* **Masalah**: Dependency check melaporkan konflik pyarrow, protobuf, lance-namespace, rich, fsspec, aiofiles, starlette, dan torch/torchvision.
+* **Root Cause**: Paket runtime lama di `bima_env` sudah mempunyai constraint yang saling bertentangan; instalasi DuckDB tidak mengubah paket-paket tersebut.
+* **Solusi**: Jangan mengubah dependency di luar scope Paket A+B. Jadwalkan audit dependency terpisah agar setiap constraint diuji terhadap fitur terkait.
+* **Verifikasi**: `uv lock --check` lulus, DuckDB 1.5.4 terpasang, dan full pytest lulus 320 test sebelum koreksi healthcheck.
+
+## Log 93: Healthcheck Salah Menandai Vault OneDrive WSL
+* **Masalah**: Healthcheck menganggap setiap path `/mnt/c/` sebagai konfigurasi Windows yang salah walau vault OneDrive dapat diakses.
+* **Root Cause**: `_check_vault()` memeriksa prefix mount sebelum memeriksa keberadaan path.
+* **Solusi**: Nilai kesehatan vault dari akses filesystem; path mount WSL yang ada dinyatakan sehat.
+* **Verifikasi**: Regression test baru lulus dan healthcheck melaporkan `Vault accessible` pada vault OneDrive aktif.
+
+## Log 94: `uv lock` Menulis Ulang Marker CUDA yang Tidak Terkait
+* **Masalah**: Penambahan DuckDB ikut mengubah marker platform optional CUDA pada package lain.
+* **Root Cause**: Versi `uv` saat ini menormalisasi ulang marker lama ketika lockfile dibuat ulang.
+* **Solusi**: Kembalikan marker CUDA ke isi sebelumnya dan pertahankan hanya entry DuckDB beserta referensinya.
+* **Verifikasi**: Diff lockfile tidak lagi membawa perubahan marker CUDA dan `uv lock --check` tetap lulus.
+
+## Log 95: DuckDB Melempar Exception pada Agregasi Tipe String
+* **Masalah**: Operasi `sum` terhadap kolom VARCHAR melempar `BinderException` keluar dari tool dan dapat memutus eksekusi agent.
+* **Root Cause**: Error DuckDB tidak termasuk dalam tuple exception yang dikonversi menjadi respons `FAILED`.
+* **Solusi**: Import DuckDB sebagai dependency runtime dan tangkap `duckdb.Error` bersama error input/path.
+* **Verifikasi**: Regression test kolom string gagal sebelum perbaikan lalu lulus; total test DuckDB menjadi 10.
+
+## Log 96: PM2 Tidak Mempunyai Process `anisa-v3`
+* **Masalah**: `pm2 restart anisa-v3 --update-env` gagal dengan `Process or Namespace anisa-v3 not found`.
+* **Root Cause**: Daemon PM2 aktif tetapi process list kosong, sehingga tidak ada process yang dapat di-restart.
+* **Solusi**: Jalankan deklarasi resmi `pm2 start ecosystem.config.js`, bukan membuat command process manual.
+* **Verifikasi**: `anisa-v3`, `bima-tunnel`, `bima-whatsapp`, dan `anisa-status` online tanpa restart loop; endpoint 8000 dan 8001 merespons.
+
+## Log 97: Variabel Bash `$port` Dihabiskan PowerShell
+* **Masalah**: Loop smoke test menampilkan `PORT__NOT_READY` untuk kedua port.
+* **Root Cause**: PowerShell mengembangkan `$port` sebelum string command sampai ke Bash WSL.
+* **Solusi**: Hindari variabel shell berlapis dan panggil dua URL smoke test secara eksplisit.
+* **Verifikasi**: `http://127.0.0.1:8001/health` mengembalikan status ok dan `/api/metrics` port 8000 mengembalikan metrics JSON.
+
+## Log 98: Git Windows Gagal Menulis Multi-Pack-Index WSL
+* **Masalah**: Setelah commit, auto geometric repack melaporkan `could not write multi-pack-index: Permission denied`.
+* **Root Cause**: Commit dijalankan oleh Git Windows pada checkout UNC WSL; file pack dimiliki user Linux dan operasi maintenance lintas filesystem gagal walau penulisan commit berhasil.
+* **Solusi**: Perlakukan sebagai kegagalan maintenance, bukan kegagalan commit. Jalankan maintenance repository melalui Git WSL pada task terpisah bila pack perlu dirapikan.
+* **Verifikasi**: Commit tetap terbentuk dengan 24 file; ownership dan mode `.git/objects/pack` valid untuk user `bima_lucian` di WSL.
+
+## Log 99: JSON PM2 Mengandung UTF-8 BOM
+* **Masalah**: Parser Python gagal membaca output `pm2 jlist` dengan `JSONDecodeError: Unexpected UTF-8 BOM`.
+* **Root Cause**: Pipeline PowerShell/WSL meneruskan BOM di awal stream JSON, sedangkan `json.load(sys.stdin)` memakai decoder UTF-8 biasa.
+* **Solusi**: Untuk status singkat gunakan `pm2 status`, atau decode byte stream dengan `utf-8-sig` sebelum `json.loads`.
+* **Verifikasi**: Status PM2 sebelumnya menunjukkan empat process online; smoke endpoint port 8000 dan 8001 tetap sukses pada pemeriksaan yang sama.
+
+## Log 100: WhatsApp Bridge Mengirim `❌ Error: r` Berulang
+* **Masalah**: Satu kegagalan WhatsApp Web memicu ratusan balasan `❌ Error: r` melalui event `message_create`.
+* **Root Cause**: Handler memanggil `msg.getChat()` sebelum menyaring event balasan bot. Saat `getChat()` melempar `r`, blok `catch` membalas error; balasan itu memicu `message_create` baru dan mengulang siklus.
+* **Solusi**: Saring prefix atau armed voice sebelum operasi async WhatsApp, pertahankan detail error hanya di log, dan kirim pesan generik ke user.
+* **Verifikasi**: Unit test filter, syntax check Node, restart PM2, health endpoint, dan log startup WA tanpa kemunculan baru `❌ [WA] r`.
+
+## Log 101: Loop Polling Health Rusak di Shell Berlapis
+* **Masalah**: Polling endpoint berhenti dengan `syntax error near unexpected token '2'` sebelum sempat menjalankan `curl`.
+* **Root Cause**: `$(seq ...)` dan variabel loop Bash berubah saat command melewati PowerShell, `wsl.exe`, lalu `bash -lc`.
+* **Solusi**: Gunakan polling tanpa variabel lintas shell: `timeout 60 bash -c 'until curl -fsS URL; do sleep 2; done'`.
+* **Verifikasi**: Polling pengganti mengembalikan `{"status":"ok","busy":false}` dari port 8001.
+
+## Log 102: Pemeriksaan Checklist PLAN Memberi False Positive
+* **Masalah**: Verifikasi akhir menganggap PLAN masih memiliki step kosong walau semua task sudah dicentang.
+* **Root Cause**: Pencarian substring `- [ ]` juga cocok dengan contoh sintaks checkbox di header PLAN.
+* **Solusi**: Cari hanya checkbox pada awal baris memakai regex `^- \[ \]`.
+* **Verifikasi**: Pemeriksaan berbasis baris tidak menemukan task yang belum dicentang.
+## Log 103: Path Dokumentasi Salah Case
 * **Masalah**: Pembacaan `/home/bima_lucian/BIMA_CORE/claude.md` gagal walaupun panduan proyek tersedia.
 * **Root Cause**: Filesystem Linux case-sensitive dan nama file aktual adalah `CLAUDE.md`.
 * **Solusi**: Cari nama aktual dengan `rg --files -g 'CLAUDE.md' -g 'claude.md'`, lalu baca `CLAUDE.md` dengan case yang tepat.
 
-## Log 92: Audit Threads Mengasumsikan Modul Client Terpisah
+## Log 104: Audit Threads Mengasumsikan Modul Client Terpisah
 * **Masalah**: Pencarian awal menyertakan `core/threads_client.py` dan menghasilkan file-not-found.
 * **Root Cause**: Implementasi Threads Graph API berada langsung di `core/threads_commands.py`; tidak ada modul `threads_client.py`.
 * **Solusi**: Temukan simbol dengan `rg` sebelum menyebut path. Gunakan `publish_post_to_threads()`, `fetch_user_posts()`, dan `fetch_post_replies()` dari `core/threads_commands.py` sebagai sumber aktual.
 
-## Log 93: Regex Alternation Verifikasi Plan Pecah di Lintas Shell
+## Log 105: Regex Alternation Verifikasi Plan Pecah di Lintas Shell
 * **Masalah**: Verifikasi placeholder gagal dan Bash mencoba menjalankan kata `TODO`, `implement`, `Similar`, serta `Add` sebagai command.
 * **Root Cause**: Karakter alternation `|` pada regex tidak bertahan sebagai bagian argumen saat command melewati PowerShell ke WSL Bash.
 * **Solusi**: Hindari alternation pada command lintas-shell. Gunakan beberapa argumen `rg -e` atau jalankan skrip langsung dari shell WSL tanpa lapisan quoting tambahan.
 
-## Log 94: String Tuple Checkpoint Merusak Wrapper Bash
+## Log 106: String Tuple Checkpoint Merusak Wrapper Bash
 * **Masalah**: Verifikasi kedua berhenti dengan `syntax error near unexpected token '('`.
 * **Root Cause**: Kutip ganda pada string literal tuple checkpoint menutup argumen `bash -lc` lebih awal saat dilewatkan dari PowerShell.
 * **Solusi**: Jangan memverifikasi literal kompleks melalui nested shell. Jalankan pemeriksaan konten dengan PowerShell native dan gunakan WSL hanya untuk command Git sederhana.
 
-## Log 95: PDFGeneratorTool Crash pada key_values Multi-Field
+## Log 107: PDFGeneratorTool Crash pada key_values Multi-Field
 * **Masalah**: Generate PDF dengan section `key_values` berisi 2+ field (kasus wajib untuk surat izin/biodata) crash dengan `FPDFException: Not enough horizontal space to render a single character`.
 * **Root Cause**: Loop di `teams/t4_admin/pdf_tool.py` memanggil `cell()` lalu `multi_cell(0, ...)` tanpa reset posisi X ke margin kiri. Default fpdf2 untuk `multi_cell` adalah `new_x=RIGHT`, jadi cursor X numpuk ke kanan tiap iterasi sampai lebar tersisa jadi negatif pada field kedua/ketiga.
 * **Solusi**: Tambahkan `new_x="LMARGIN", new_y="NEXT"` pada `multi_cell` di dalam loop key_values, mengikuti pola yang sudah dipakai di bagian lain file yang sama. Diverifikasi dengan generate surat izin 4 field — render sukses dan sejajar rapi.
 
-## Log 96: TOC Level-1 Tampil Terdorong ke Tepi Kanan
+## Log 108: TOC Level-1 Tampil Terdorong ke Tepi Kanan
 * **Masalah**: Entry Daftar Isi (TOC) level 1 (indent 0) di PDF render menempel/terpotong di tepi kanan halaman alih-alih rata kiri.
 * **Root Cause**: `pdf.cell(indent, 7, "")` dipakai sebagai spacer indent; saat `indent == 0` (level 1, kasus paling umum), fpdf2 menafsirkan lebar cell `0` sebagai "auto-extend ke margin kanan" (bukan cell kosong lebar nol), jadi cursor X ikut lompat ke margin kanan sebelum teks heading dirender.
 * **Solusi**: Ganti spacer dengan `pdf.set_x(pdf.get_x() + indent)` yang hanya dipanggil kalau `indent > 0`, sehingga cell lebar-0 dari fpdf2 tidak pernah dipanggil untuk kasus tanpa indent. Diverifikasi: TOC 4 entry level-1 pada dokumen cover+multipage render rata kiri normal.
 
-## Log 97: Judul Dobel di Halaman Konten Pertama PDF Saat cover=false
+## Log 109: Judul Dobel di Halaman Konten Pertama PDF Saat cover=false
 * **Masalah**: Untuk dokumen non-cover (surat/invoice/notulen), judul muncul dobel di halaman 1: running-header kecil di pojok kiri + judul besar di tengah, teks identik.
 * **Root Cause**: `header()` di `teams/t4_admin/pdf_tool.py` hanya skip halaman 1 kalau `cover=true`. Begitu `cover=false`, running-header ikut tampil di halaman yang sudah render judul besar.
 * **Solusi**: Simpan nomor halaman konten pertama di list mutable `_first_content_page` dan skip `header()` khusus di halaman itu. Diverifikasi 3 skenario (no-cover, cover+TOC, halaman isi pasca-TOC) — running-header tetap muncul di halaman lanjutan, tidak dobel di halaman judul.
 
-## Log 98: Word key_values Kolom Nilai Melebar (Titik Dua Kejauhan)
+## Log 110: Word key_values Kolom Nilai Melebar (Titik Dua Kejauhan)
 * **Masalah**: Tabel `key_values` di Word (data diri surat izin/biodata) menampilkan jarak kosong besar antara titik dua dan nilai; kolom nilai melebar tak proporsional.
 * **Root Cause**: Table default `autofit=True` bikin Word mengabaikan `cell.width`; selain itu lebar hanya di-set per-cell (`tcW`) tanpa mengubah `tblGrid`, padahal layout fixed-width Word mengacu ke `tblGrid`.
 * **Solusi**: Set `kv_table.autofit = False`, lalu set lebar via `table.columns[i].width` (mengubah `tblGrid`/`gridCol`) DAN tetap set `cell.width` per baris agar `tcW` konsisten. Diverifikasi via konversi LibreOffice→PDF: titik dua rapat, nilai langsung menyusul.
 
-## Log 99: OfficeCLI Excel — Cell Ter-offset ke Kanan (add sheet+remove & add column)
+## Log 111: OfficeCLI Excel — Cell Ter-offset ke Kanan (add sheet+remove & add column)
 * **Masalah**: Semua penulisan cell di Excel meleset ke kanan meski OfficeCLI melaporkan sukses di alamat yang benar; sheet Ringkasan mulai kolom C, sheet data berikutnya makin geser (mulai kolom G).
 * **Root Cause**: Dua pola di `teams/t4_admin/excel_tool.py` memicu insert-shift OfficeCLI: (1) `add sheet baru` lalu `remove /Sheet1`, dan yang utama (2) `add --type column --prop name=X` — schema OfficeCLI menegaskan insert kolom di slot terisi menggeser semua kolom di kanannya. Besar offset = jumlah `add column` per sheet (Ringkasan 2 kolom → offset 2; sheet data 6 kolom → offset 6).
 * **Solusi**: (1) Rename Sheet1 default via `set /Sheet1 name=...` alih-alih add+remove; (2) atur lebar kolom via `set /Sheet/col[X] --prop width=...` (auto-vivify, tidak menggeser) alih-alih `add --type column`. Diverifikasi: Ringkasan A1:D6, sheet data A1:F6, formula & lebar kolom tetap benar. Catatan authoring: kalau sheet punya field `title`, header pindah ke baris 2 dan data mulai baris 3 — range formula (`=SUM(...)`) harus ikut memperhitungkan geseran ini.
 
-## Log 100: Agen Arsip Tidak Menjamin Struktur Vault Rapi
+## Log 112: Agen Arsip Tidak Menjamin Struktur Vault Rapi
 * **Masalah**: Audit menemukan 27 catatan Auto-Save seluruhnya disimpan di folder akar, metadata sumber selalu `ANISA Auto-Save`, deduplikasi hanya membandingkan 200 karakter awal pada nama file yang sama, dan permintaan pencarian yang lewat Manager berpotensi dipaksa menjadi aksi simpan. `VaultLinkerTool` juga hanya berjalan saat diminta dan menghapus seluruh bagian setelah heading `Catatan Terkait` sebelum membangunnya ulang.
 * **Root Cause**: `VaultSaveTool` tidak memiliki schema kategori/tags/sumber atau allowlist folder; keputusan judul sepenuhnya diserahkan ke LLM. `arsip_node()` menganggap setiap pesan terakhir sebagai data upstream tanpa membedakan keluaran Manager dan spesialis. Routing regex hanya menangkap frasa eksplisit tertentu. Belum ada test khusus save, organizer, linker, atau routing node Arsip.
 * **Dampak**: Vault bertambah sebagai tumpukan file akar, topik yang sama dapat menghasilkan versi duplikat, provenance hilang, pencarian natural tertentu dapat salah aksi, dan konten manual di bawah `Catatan Terkait` berisiko terhapus ketika linker dijalankan.
 * **Solusi / Pencegahan**: Terapkan schema simpan tervalidasi dengan kategori allowlist dan fallback `_Inbox`, YAML frontmatter, content hash/upsert, serta sumber asli. Bedakan `upstream specialist output` dari pesan Manager melalui state eksplisit. Batasi linker pada blok bertanda khusus, bukan regex sampai EOF. Tambahkan unit test sebelum perubahan dan jangan migrasikan 54 file existing tanpa backup serta persetujuan terpisah.
 
-## Log 101: PDF Bullet List Crash (Pola multi_cell Sama seperti key_values)
+## Log 113: PDF Bullet List Crash (Pola multi_cell Sama seperti key_values)
 * **Masalah**: Generate PDF dengan section berisi field `list` (bullet) crash `FPDFException: Not enough horizontal space` di style yang punya bullet (informal, semi_formal). Loop referensi juga salah indent URL.
 * **Root Cause**: Sama seperti Log 77 — loop `list` di `teams/t4_admin/pdf_tool.py` memanggil `cell()` lalu `multi_cell(0, ...)` tanpa `new_x="LMARGIN"`, jadi cursor X numpuk ke kanan tiap item sampai lebar negatif. Loop `references` juga tidak reset X sebelum `cell()` indent URL.
 * **Solusi**: Tambah `new_x="LMARGIN", new_y="NEXT"` pada `multi_cell` di loop `list` dan pada `multi_cell` teks referensi. Diverifikasi: blog informal (3 bullet) dan tutorial semi_formal render normal, URL referensi ter-indent rapi.
 
-## Log 102: PDF Akademik — Penomoran Romawi Front Matter Tak Muncul
+## Log 114: PDF Akademik — Penomoran Romawi Front Matter Tak Muncul
 * **Masalah**: Halaman depan skripsi (abstrak, daftar isi) menampilkan angka Arab ("halaman 2") alih-alih Romawi ("ii"); body sudah benar Arab.
 * **Root Cause**: `_body_start_page` di-set saat body mulai render, padahal footer fpdf digambar lazy saat page-break — footer front matter telanjur tergambar sebelum nilai itu ada, jatuh ke cabang Arab.
 * **Solusi**: Pra-hitung `_body_start_page` sebelum cover di-add, dari kombinasi cover+abstrak+toc. Diverifikasi footer akademik PDF: `[cover kosong, ii, iii, 1, 2]`.
 
-## Log 103: Word Akademik — Format Romawi/Arab Tertukar + Footer Front Matter Kosong
+## Log 115: Word Akademik — Format Romawi/Arab Tertukar + Footer Front Matter Kosong
 * **Masalah**: Body skripsi Word menampilkan Romawi ("halaman i"), sedangkan front matter tak bernomor sama sekali.
 * **Root Cause**: (1) Di OOXML, `sectPr` yang di-embed di paragraf section-break mengatur section SEBELUMNYA (front matter), sedang `sectPr` level-body mengatur section TERAKHIR (body). Kode `word_tool.py` memasang `lowerRoman` di body-level dan `decimal` di break-para — tertukar. (2) Footer hanya diisi pada section body; section front matter footernya kosong & masih `linkedToPrevious`.
 * **Solusi**: Tukar format (body=`decimal`, front matter=`lowerRoman`) dan, setelah section-break dibuat, putus link footer front matter lalu isi ulang lewat helper `_populate_footer`. Diverifikasi footer akademik Word: `[i, ii, iii, 1, 2]`.
 
-## Log 104: Word — Chart/Gambar Ter-clip Jadi Sliver oleh Exact Line Spacing
+## Log 116: Word — Chart/Gambar Ter-clip Jadi Sliver oleh Exact Line Spacing
 * **Masalah**: Chart & gambar di dokumen Word muncul sebagai garis tipis (tinggi ~1 baris) alih-alih ukuran penuh, walau `<wp:extent>` di XML sudah benar (mis. 6"×3.34").
 * **Root Cause**: Style `Normal` memakai `line_spacing` EKSAK dalam Pt (mis. `Pt(11.5)`). Paragraf hasil `doc.add_picture()` mewarisi style Normal, dan Word/LibreOffice meng-clip gambar inline ke tinggi baris eksak. XML gambar sendiri valid — masalahnya di line spacing paragraf induk.
 * **Solusi**: Setelah tiap `doc.add_picture()` (chart maupun `image_path`), set `doc.paragraphs[-1].paragraph_format.line_spacing = 1.0`. Diverifikasi: pie chart formal Word render penuh (bbox 432×241pt), bukan sliver.
 
-## Log 105: bima-whatsapp Crash-Loop — Puppeteer Chrome Tidak Ditemukan
+## Log 117: bima-whatsapp Crash-Loop — Puppeteer Chrome Tidak Ditemukan
 * **Masalah**: pm2 `bima-whatsapp` stuck restart terus-menerus (964+ restart, status "waiting", 0b memory). `wa-error.log` menunjukkan `Error: Could not find Chrome (ver. 146.0.7680.31)` dari `whatsapp-web.js`/Puppeteer.
 * **Root Cause**: Folder cache `~/.cache/puppeteer` tidak ada sama sekali di sistem — Chrome binary yang dipakai Puppeteer belum pernah/gak lagi ter-install, bukan karena env var atau config yang sengaja disable download.
 * **Solusi**: Jalankan `npx puppeteer browsers install chrome` di `whatsapp/` (menambah ~371MB ke disk WSL), lalu `pm2 restart bima-whatsapp`. Diverifikasi: log menunjukkan `🔐 Auth OK` dan `🚀 Anisa WA Bridge ONLINE` setelah restart, tidak crash lagi.
 
-## Log 106: P0 Audit — Path Escape, Thread Bocor, dan XSS Activity Log
+## Log 118: P0 Audit — Path Escape, Thread Bocor, dan XSS Activity Log
 * **Masalah**: Nama/path dari LLM dapat keluar dari root tujuan, reference image dapat dibaca lalu dikirim ke API eksternal, seluruh user WhatsApp berbagi checkpoint `anon_whatsapp`, callback Discord berbagi key per user, dan activity log merender string backend sebagai HTML.
 * **Root Cause**: Join/resolve path tidak diikuti containment check; bridge WhatsApp tidak meneruskan sender ID; thread ID memakai jenis channel literal alih-alih ID percakapan nyata; `dangerouslySetInnerHTML` menerima `l.text` tanpa escape.
 * **Dampak**: File arbitrary dapat dibaca/ditimpa atau tereksfiltrasi, konteks percakapan/progress dapat tertukar antar-user/channel, dan payload backend dapat menjalankan JavaScript di dashboard.
 * **Solusi / Pencegahan**: Tambahkan helper path berbasis `resolve()` + containment/symlink check, sanitasi nama output, dan batasi reference image ke `outputs/`. Bentuk checkpoint/callback key dari `source_channel:user_id:conversation_id`, teruskan sender WA serta channel Discord, dan render activity log sebagai React text node. Regression P0 lulus 31 test terarah; full suite tetap hanya memiliki 6 failure Marp baseline.
 * **Penyesuaian teknis**: Test RED image reference sempat memakai key palsu tanpa mock client sehingga OpenRouter menolak request 401. Test diperketat dengan mock boundary dan assertion bahwa client tidak pernah dibuat. Browser smoke menemukan simulated log dari `guild-data.jsx` masih berisi markup; template itu diubah ke plain text dan diverifikasi langsung di `/dashboard/v3/`. Command deteksi Git dengan `$()` sempat diparse PowerShell; pemeriksaan berikutnya dipecah menjadi command `wsl.exe git` tanpa nested interpolation. Runtime smoke awal juga memakai path dokumentasi stale `healthcheck.py`; path aktual adalah `scripts/healthcheck.py`.
 
-## Log 107: Discord Mengabaikan Gambar Tanpa Caption
+## Log 119: Discord Mengabaikan Gambar Tanpa Caption
 * **Masalah**: Gambar yang dikirim sendirian di Discord tidak mendapat respons dan tidak dianalisis oleh Vision.
 * **Root Cause**: Early-return di `core/discord_bot.py` hanya mengecualikan attachment audio dari aturan pesan kosong. Attachment gambar berhenti sebelum download dan sebelum `attachment_paths` diteruskan ke LangGraph.
 * **Dampak**: ImageAnalyzerTool tidak pernah dipanggil walaupun format gambar valid dan jalur Visual tersedia.
 * **Solusi / Pencegahan**: Izinkan pesan kosong khusus attachment gambar yang didukung, lalu isi prompt internal `analisis gambar ini` setelah download berhasil agar intent classifier memilih tim Visual. Regression test mencakup gambar tanpa caption, file non-gambar, preservasi caption, dan hasil routing Visual.
 
-## Log 108: Vision Discord Terdeteksi tetapi Gagal Sebelum Tool Dipanggil
+## Log 120: Vision Discord Terdeteksi tetapi Gagal Sebelum Tool Dipanggil
 * **Masalah**: Setelah gambar tanpa caption berhasil masuk tim Visual, Crew gagal sebelum `ImageAnalyzerTool` memberi hasil.
 * **Root Cause**: Agent controller Visual memakai Gemini 3.5 Flash berbayar lewat OpenRouter tanpa batas output eksplisit. CrewAI mengirim `max_tokens=65536`; OpenRouter membalas HTTP 402 karena saldo saat itu hanya mengizinkan sekitar 1.867 token.
 * **Dampak**: Routing dan download gambar berhasil, tetapi pengguna tetap tidak menerima analisis gambar.
 * **Solusi / Pencegahan**: Untuk image-only, `visual_node` sekarang memanggil `ImageAnalyzerTool` langsung agar tidak membuat call controller Gemini kedua dan batas output tetap 1.500 token. Model/config global tidak diubah. Regression test memastikan CrewAI tidak dipanggil; smoke call pada gambar Discord tersimpan berhasil mengembalikan analisis Vision lengkap.
 
-## Log 109: P1 Audit — Functional Safety dan Runtime Cleanup
+## Log 121: P1 Audit — Functional Safety dan Runtime Cleanup
 * **Masalah**: Audit menemukan sisa path escape di tool file/gambar, sanitizer WhatsApp merusak code/URL, exception internal bocor ke chat, setup Threads dapat menulis token `None` ke `.env` relatif CWD, approval slide dapat di-bypass, Marp WSL memilih Chrome Windows, backup melakukan `git add/commit/push` unattended dari repo aktif, Browser Use meninggalkan child process saat timeout, dan Sherlock crash pada input spasi.
 * **Root Cause**: Trust boundary belum memakai resolver terpusat; sanitizer berbasis regex tidak memahami state code/kurung; exception langsung diinterpolasi ke return; script setup memakai `Path('.env')`; schema publik mengekspos `bypass_preview`; pencarian browser hanya memeriksa Playwright lalu fallback ke `.exe`; backup mencampur repository development dengan destination backup; `subprocess.run(timeout=...)` hanya menghentikan worker utama; normalisasi Sherlock mengakses elemen hasil `split()` tanpa cek kosong.
 * **Dampak**: File di luar `outputs/` dapat dibaca/ditulis, payload chat berubah, detail sistem terekspos, credential Threads rusak/salah lokasi, approval dapat dilewati, slide gagal di WSL, perubahan kerja dapat ter-push otomatis, proses browser yatim menghabiskan resource, dan input whitespace mematikan tool OSINT.
 * **Solusi / Pencegahan**: Terapkan confinement pada seluruh boundary P1; parser WhatsApp stateful; helper error publik dengan detail hanya di log; token validation dan `ENV_PATH` absolut; pisahkan `_run` approval dari `_compile` privat serta pilih Chrome Puppeteer Linux; ganti cloud backup dengan safety stub; jalankan Browser worker sebagai process group dengan eskalasi `SIGTERM`→`SIGKILL`; normalisasi Sherlock sebelum `split()`. Targeted gate lulus 34 Python + 4 Node test, full suite lulus 344 test, healthcheck lulus 51 dengan 1 warning, endpoint WA sehat, dan kedua proses PM2 online.
 * **Penyesuaian teknis**: Startup backend setelah restart membutuhkan sekitar 26 detik sehingga batch curl pertama selesai sebelum service siap; pemeriksaan ulang berhasil. Trace `KeyboardInterrupt` MCP pada log merupakan child process lama yang dihentikan saat restart; PID backend baru tetap online dan `/health` 200. Test RED slide sempat menjalankan Marp lama karena `_compile` belum ada, menghasilkan enam kegagalan browser yang memang menjadi bukti baseline sebelum refactor.
 
-## Log 110: P2 Audit — Resource Lifetime, Race, dan False Success
+## Log 122: P2 Audit — Resource Lifetime, Race, dan False Success
 * **Masalah**: Browser worker menganggap output parsial sebagai sukses dan profile marketplace dipakai paralel; footer PDF akademik salah saat abstract/TOC lebih dari satu halaman; penghapusan satu jadwal dapat terpetakan ke clear-all; organizer memindahkan file yang baru dibuat dan abort saat satu file locked; diagram bisa tertimpa dalam detik yang sama; matplotlib figure serta workbook Excel bocor pada exception. Audit Canvas WA juga belum punya regression proof.
 * **Root Cause**: Worker hanya mengecek `final_result()` tanpa `is_done()`/`is_successful()` dan profile persistent tanpa file lock; footer menghitung jumlah front matter secara asumsi; ScheduleManager hanya punya `clear`; organizer tidak punya age guard/isolasi error; filename diagram hanya timestamp detik; cleanup resource hanya berada di success path. Canvas memakai nama field legacy Discord walau identity WA sudah diteruskan sejak P0.
 * **Dampak**: Task browser setengah jadi dapat dilaporkan berhasil, Chromium profile race/corrupt, nomor halaman akademik salah, seluruh jadwal berisiko terhapus, file output hilang sebelum dikirim, batch organizer rapuh, artefak diagram tertimpa, serta memory/file descriptor bertambah perlahan.
 * **Solusi / Pencegahan**: Wajibkan Browser history done+successful dan kunci profile marketplace memakai `fcntl.flock`; gunakan phase footer front/body aktual; tambah delete jadwal match-unik dan permission gate untuk delete/clear; tahan file organizer 5 menit serta lanjut per-file; gunakan SHA-256+nanosecond untuk diagram; tutup figure/workbook di `finally`; tambah regression route Canvas WA dan pesan channel-neutral. Targeted P2 lulus 41 test, full suite lulus 368 test dengan 2 warning dependency, compileall/diff bersih, backend restart online, dan `/health` 200.
 * **Penyesuaian teknis**: Patch gabungan chart+Excel pertama gagal karena konteks docstring Excel berbeda dari plan; tidak ada hunk yang diterapkan, file dibaca ulang lalu dipatch terpisah. Trace `KeyboardInterrupt` sebelum startup baru berasal dari penghentian MCP child saat restart; PID baru mencapai Uvicorn startup complete dan MCP startup normal.
 
-## Log 111: P3 Audit — Consistency dan Async Blocking
+## Log 123: P3 Audit — Consistency dan Async Blocking
 * **Masalah**: Prompt Manager menyebut 20 pilihan walau menu berisi 22; cache compiled graph memakai integer `id(event_loop)` yang dapat dipakai ulang; pemeriksaan/penulisan cost SQLite sinkron berjalan dari jalur async; script npm AgentMemory tidak memuat profile tools yang sama dengan PM2; script Threads pernah memakai `.env` relatif CWD.
 * **Root Cause**: Teks prompt drift setelah penambahan route; cache tidak menyimpan identity object loop; callback cost memakai handler sinkron dan Discord memanggil fungsi SQLite langsung; `package.json` tertinggal dari `ecosystem.config.js`; path Threads belum di-root sebelum P1.
 * **Dampak**: Instruksi routing inkonsisten, app/checkpointer loop lama berpotensi tertukar bila ID Python dipakai ulang, event loop dapat tersendat oleh file I/O SQLite, startup AgentMemory manual berbeda dari PM2, dan setup Threads berisiko menyentuh `.env` yang salah.
 * **Solusi / Pencegahan**: Sinkronkan prompt ke 22; key cache memakai `WeakKeyDictionary` dengan object event loop; offload cost guard dan async callback melalui `asyncio.to_thread`; samakan npm start ke `agentmemory --tools core`; pertahankan `ENV_PATH` absolut yang sudah ditutup P1. Targeted P3+regression lulus 17 test, full suite lulus 373 test dengan 2 warning dependency, compileall/diff bersih, npm membaca script yang benar, backend restart online, dan `/health` 200.
 
-## Log 112: Dashboard ANISA Layar Putih → Dinonaktifkan Permanen
+## Log 124: Dashboard ANISA Layar Putih → Dinonaktifkan Permanen
 * **Masalah**: Aplikasi desktop ANISA (`anisa-desktop.exe`, Electron) menampilkan window putih kosong saat dibuka.
 * **Root Cause**: Bukan bug — dashboard (`/dashboard` dan `/dashboard/v3`, di-mount dari `core/dashboard_server.py`) tetap sehat (HTTP 200, `/api/metrics` normal). Investigasi live-request menunjukkan Electron app masih polling backend saat window putih terjadi, jadi kemungkinan besar penyebabnya di sisi render Electron (cache/GPU/proses lama), bukan backend atau kode dashboard itu sendiri. Tidak dikonfirmasi lebih lanjut karena Bima memilih mematikan dashboard, bukan memperbaikinya.
 * **Dampak**: Tidak ada dampak fungsional ke bot (Discord/WhatsApp) — dashboard server berjalan independen, hanya diimpor dari `main.py` startup block dan dua test file yang mengimpor langsung.
 * **Solusi / Pencegahan**: Hapus pemanggilan `start_in_background()` di `main.py` (blok try/except start dashboard) sehingga `core/dashboard_server.py` tidak pernah di-mount. Port 8000 tidak lagi listening setelah restart `anisa-v3`. Kode `dashboard_server.py` dan folder `dashboard/`, `frontend/dashboard.html` dibiarkan utuh (tidak dihapus) untuk kemungkinan diaktifkan lagi nanti.
 * **Penyesuaian teknis**: `pm2 restart anisa-v3` butuh beberapa detik untuk proses lama benar-benar berhenti — log sempat menunjukkan request `/api/metrics` lanjut dan trace `KeyboardInterrupt`/`Aborted!` dari proses lama yang di-terminate, bukan error dari proses baru. Verifikasi akhir pakai `ss -tlnp` untuk memastikan port 8000 sudah tidak listening.
 * **Penyesuaian teknis**: Verifikasi Node inline dua kali gagal karena nested quote PowerShell→WSL memotong ekspresi JavaScript; diganti `npm pkg get scripts.start`, yang sekaligus mem-parse `package.json` dan mengembalikan nilai yang diharapkan. Trace `KeyboardInterrupt` sebelum PID baru tetap merupakan shutdown MCP child lama; startup baru Uvicorn dan MCP bersih.
-## Log 113: Format `git for-each-ref` Pecah di PowerShell ke WSL
+## Log 125: Format `git for-each-ref` Pecah di PowerShell ke WSL
 * **Masalah**: Command audit branch memakai `--format="%(...)"` gagal dengan syntax error sebelum Git dijalankan.
 * **Root Cause**: Quote dan tanda kurung pada placeholder format diparse ulang saat melewati PowerShell, `wsl.exe`, lalu `bash -lc`.
 * **Solusi**: Jalankan format kompleks langsung di shell WSL atau pecah audit menjadi command Git sederhana tanpa nested format.
 
-## Log 114: Branch Protection API Mengembalikan HTTP 404
+## Log 126: Branch Protection API Mengembalikan HTTP 404
 * **Masalah**: `gh api repos/.../branches/main/protection` mengembalikan HTTP 404 saat audit setting repository.
 * **Root Cause**: Branch `main` memang belum memiliki protection rule; autentikasi tetap valid.
 * **Solusi**: Perlakukan 404 endpoint protection sebagai state `not protected`, bukan kegagalan autentikasi. Aktifkan protection hanya lewat perubahan settings yang disetujui.
 
-## Log 115: GitHub App Tidak Bisa Mengubah Metadata PR Milik Owner
+## Log 127: `git diff --check` Membawa Whitespace dari Merge Base Lama
+* **Masalah**: Verifikasi PR #8 terhadap head branch sebelum cleanup melaporkan whitespace pada dokumen yang baru masuk dari merge `main`.
+* **Root Cause**: Range `origin/codex/package-a-b-integration..HEAD` ikut memeriksa seluruh commit baru dari `main`, bukan hanya diff PR terhadap base terkini.
+* **Solusi**: Untuk gate perubahan PR setelah sinkronisasi, jalankan `git diff --check origin/main..HEAD`; hasilnya bersih tanpa melakukan drive-by formatting pada dokumen lama.
+
+## Log 128: GitHub App Tidak Bisa Mengubah Metadata PR Milik Owner
 * **Masalah**: Update title/body PR #8 lewat GitHub App gagal HTTP 403 `Resource not accessible by integration`.
 * **Root Cause**: Instalasi connector memiliki akses baca repository, tetapi token integration tidak mendapat izin write untuk pull request ini.
 * **Solusi**: Setelah memastikan target PR benar, fallback ke GitHub CLI yang terautentikasi sebagai owner; jangan mengulang connector yang sama.
 
-## Log 116: Pencarian Marker Kosong Menghentikan Staging
+## Log 129: LangGraph Manager Bukan Orchestrator Penuh
+* **Masalah**: Nama dan prompt `manager_node` menyiratkan otak orkestrator, tetapi runtime hanya memilih `active_teams` atau membalas chat santai. Node ini tidak membuat `current_plan`, tidak memantau hasil spesialis, tidak melakukan reroute, dan tidak menyintesis output akhir.
+* **Root Cause**: Urutan spesialis sudah ditentukan statis di `langgraph_engine.py`; seluruh node spesialis langsung menuju node berikutnya atau `memory_finalizer_node` tanpa kembali ke manager.
+* **Solusi**: Perlakukan komponen ini sebagai router/chat fallback. Jangan menghidupkan CrewAI hierarchical manager; pisahkan menjadi router terstruktur dan chat node hanya jika refactor disetujui.
+
+## Log 130: Fast-path Hanya Menangani Sekitar 12-14 Persen Request
+* **Masalah**: Audit `logs/error.log` menemukan 28 fast-path versus 206 fallback, sehingga sekitar 88% request tetap memanggil LLM manager. Uji classifier saat ini terhadap 500 prompt nyata di `memory.db` juga hanya memberi 14% fast-path.
+* **Root Cause**: Regex sengaja konservatif dan tidak menangani chat santai, perintah dokumen umum, HTML/dashboard umum, riset Intel umum, serta semua multi-step.
+* **Solusi**: Pertahankan fallback LLM untuk request ambigu, tetapi tambah fast-path hanya untuk perintah eksplisit yang aman. Chat santai tetap membutuhkan chat node; jangan paksa semua bahasa natural menjadi regex.
+
+## Log 131: Manager Menghasilkan Narasi Tersembunyi Sebelum Delegasi
+* **Masalah**: Manager selalu membuat jawaban natural lengkap lalu memasukkannya ke `messages`, walau request akan diteruskan ke spesialis dan output final memakai pesan spesialis. Pesan tersembunyi ini ikut masuk context summarizer dan kadang dijadikan `upstream_block` oleh Admin/Seniman.
+* **Root Cause**: Satu prompt mencampur dua tugas berbeda: klasifikasi rute dan pembuatan balasan chat.
+* **Solusi**: Untuk rute spesialis, hasilkan schema route-only dan simpan pada state khusus. Panggil generator balasan hanya pada cabang santai; kirim data antarnode lewat `temp_data`, bukan pesan manager tersembunyi.
+
+## Log 132: MCP Manager Terpasang ke Agent yang Tidak Dieksekusi
+* **Masalah**: MCP `sequential_thinking`, Memory, dan Time untuk target `manager` di-start lalu di-inject ke `teams.t1_manager:manager_agent`, sedangkan agent tersebut tidak pernah masuk `Crew.kickoff()`. `manager_node` LangGraph yang aktif tidak menerima tool itu.
+* **Root Cause**: Nama `manager` di registry menunjuk CrewAI manager lama, sementara orkestrasi produksi sudah berpindah ke LangGraph manager.
+* **Solusi**: Hapus target `manager` dari MCP yang tidak punya consumer aktif dan nonaktifkan `sequential_thinking` bila tidak dipakai agent lain. Pindahkan `simpan_sesi()` ke `memory_engine.py` sebelum menghapus agent lama.
+
+## Log 133: Kontrak Route Manager Tidak Punya Regression Test
+* **Masalah**: Parser manual untuk 22 tag route tidak memiliki test langsung; prompt masih menulis "20 pilihan", dan output/tag invalid diam-diam jatuh ke `santai` sehingga pekerjaan spesialis bisa terlewat.
+* **Root Cause**: Test yang ada hanya mencakup beberapa regex Arsip dan registry MCP, bukan kontrak prompt-parser-router manager.
+* **Solusi**: Gunakan structured output dengan enum route tervalidasi dan tambahkan test parametrik untuk seluruh route, urutan multi-team, serta invalid-output fallback yang eksplisit.
+
+## Log 134: Full Suite Memiliki Enam Failure Marp Baseline
+* **Masalah**: Full pytest sebelum dan sesudah hardening manager gagal pada enam test `tests/test_slide_generator.py`.
+* **Root Cause**: Marp CLI/Chromium menghasilkan `ERR_UNHANDLED_REJECTION` pada Node.js 22.22.2; failure sudah ada sebelum perubahan manager.
+* **Solusi**: Bima menyetujui failure ini sebagai baseline di luar scope. Hasil akhir manager: 332 test lulus dan hanya enam failure Marp yang sama; slide generator tidak diubah.
+
+## Log 135: Test MCP Masih Mewajibkan Akses Manager Mati
+* **Masalah**: Full suite pertama setelah penghapusan CrewAI manager gagal di `test_manager_memory_tools_are_read_only` karena key `manager` sudah tidak ada.
+* **Root Cause**: Regression test lama masih mengunci kontrak MCP milik `teams/t1_manager.py`, padahal agent dan seluruh target MCP-nya sengaja dihapus.
+* **Solusi**: Ganti kontrak test menjadi `test_legacy_manager_has_no_mcp_access`; Memory MCP hanya untuk Arsip dan Sequential Thinking tetap disabled. Targeted MCP/registry lulus 6 test.
+
+## Log 136: Hardening LangGraph Manager Terverifikasi
+* **Masalah**: Manager sebelumnya menerima route invalid secara diam-diam, menyimpan narasi tersembunyi, memblokir event loop saat baca SQLite, dan membocorkan token route ke stream.
+* **Root Cause**: Routing memakai rantai substring manual dan manager mencampur klasifikasi dengan balasan spesialis.
+* **Solusi**: Tambahkan mapping canonical 22 route dan parser fail-closed, output route-only untuk spesialis, `asyncio.to_thread()` untuk SQLite, filter stream manager, serta current-turn upstream guard. Focused regression lulus 64 test; compile/import engine lulus; PM2 online; healthcheck lulus 50 check dengan 2 warning; startup membuktikan Sequential Thinking disabled dan tidak ada injeksi MCP ke manager.
+
+## Log 137: Preview Kerja Hilang Setelah Stream Manager Diblokir
+* **Masalah**: Discord/WhatsApp tidak lagi memberi preview yang cukup jelas saat Anisa memproses request setelah hardening Manager.
+* **Root Cause**: Stream `manager_node` sengaja diblokir agar tag `[ROUTE: ...]` dan narasi internal tidak bocor; WhatsApp hanya mempertahankan indikator typing tanpa pesan status.
+* **Solusi**: Pertahankan filter stream Manager dan status node Discord. Di WhatsApp, kirim satu pesan status umum lalu edit pesan yang sama menjadi jawaban, status voice, atau error tanpa menambah protokol streaming.
+* **Verifikasi**: Helper progress lulus 3 test, `node --check whatsapp/index.js` lulus, regression filter Manager tetap lulus, dan `bima-whatsapp` online setelah restart.
+
+## Log 138: Patch Plan Ditolak karena Prefix Baris Hilang
+* **Masalah**: Percobaan pertama membuat plan gagal dengan `invalid hunk` dan file plan tidak terbentuk.
+* **Root Cause**: Satu baris command di blok Markdown tidak diawali prefix `+` yang diwajibkan format `Add File` pada `apply_patch`.
+* **Solusi**: Pastikan setiap baris file baru memiliki prefix patch, lalu ulangi patch. Percobaan kedua berhasil tanpa perubahan parsial dari percobaan pertama.
+
+## Log 139: Diff Check Terhalang Mixed CRLF/LF Lama
+* **Masalah**: `git diff --check` menandai hampir seluruh `whatsapp/index.js` dan `error_solutions.md` sebagai trailing whitespace walau perubahan fitur hanya beberapa hunk.
+* **Root Cause**: Kedua file sudah memakai campuran line ending CRLF/LF sebelum task, sehingga karakter CR dibaca sebagai whitespace pada diff besar terhadap HEAD.
+* **Solusi**: Atas persetujuan Bima, jangan normalisasi seluruh file karena akan memperbesar diff dan menyentuh perubahan lokal lain. Verifikasi task memakai diff semantik `git diff -w`, syntax check, focused test, dan smoke runtime.
+
+## Log 140: OpenRouter Menolak Manager karena Batas Token Melebihi Kredit
+* **Masalah**: Smoke `/bot tes preview` memicu dua respons HTTP 402 dari OpenRouter; request meminta hingga 65.536 token sedangkan saldo hanya mencukupi sekitar 34.578 token.
+* **Root Cause**: `default_llm = get_langchain_llm()` tidak memberi `max_tokens`, sehingga request memakai batas maksimum model yang terlalu mahal untuk saldo aktif.
+* **Solusi**: Tangani sebagai task config terpisah: beri batas `max_tokens` eksplisit yang wajar pada LLM routing atau tambah kredit OpenRouter. Config tidak diubah dalam task preview; fallback graph tetap menyelesaikan request dan WA mengirim satu chunk.
+
+## Log 141: GitHub CLI Tidak Terpasang dan Sudo Memerlukan Password
+* **Masalah**: Publish awal gagal karena `gh` tidak ditemukan; instalasi paket sistem juga tidak bisa berjalan noninteraktif karena `sudo` meminta password.
+* **Root Cause**: GitHub CLI belum tersedia di PATH WSL dan user tidak memiliki passwordless sudo.
+* **Solusi**: Instal binary resmi GitHub CLI v2.96.0 ke `~/.local/bin/gh` tanpa sudo setelah SHA-256 tarball cocok dengan checksum rilis resmi. `gh auth status` kemudian mengonfirmasi akun `Luciansvon` sudah aktif.
+
+## Log 142: Patch Semantik Gagal Masuk ke Git Index
+* **Masalah**: `git diff -w | git apply --cached --check` gagal pada `whatsapp/index.js:21` walau hunk fitur benar.
+* **Root Cause**: Patch semantik masih membawa karakter CR dari working tree mixed CRLF/LF, sedangkan versi file di Git index memakai LF.
+* **Solusi**: Hapus karakter CR hanya dari aliran patch sebelum `git apply --cached`; jangan normalisasi working tree. Verifikasi staged diff tetap hanya memuat hunk fitur.
+
+## Log 143: Command Staging Gabungan Gagal di Quote Lintas Shell
+* **Masalah**: Command gabungan untuk patch index dan pembuatan blob berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: Quote variabel Bash bertabrakan dengan lapisan quote PowerShell saat seluruh proses digabung dalam satu command.
+* **Solusi**: Pecah staging menjadi command pendek: patch WhatsApp, buat hash blob log, update index, lalu stage file baru secara terpisah.
+
+## Log 144: Command Verifikasi PR Gagal di Quote Lintas Shell
+* **Masalah**: Command gabungan untuk membaca JSON PR, membandingkan hash, dan mencetak status berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: Substitusi command dan format string kembali melewati quote PowerShell serta Bash dalam satu baris panjang.
+* **Solusi**: Jalankan pemeriksaan PR, hash branch, dan file sementara sebagai command terpisah tanpa interpolasi bertingkat.
+
+## Log 145: Separator Log Hilang pada Blob Staging Selektif
+* **Masalah**: Diff staged pertama menempelkan header Log 89 langsung setelah Log 88 tanpa baris kosong.
+* **Root Cause**: `sed` dimulai tepat dari header Log 89, sehingga separator kosong sebelum header tidak ikut ke blob Git.
+* **Solusi**: Sisipkan satu newline eksplisit antara isi HEAD dan blok log baru, lalu cek ulang staged diff sebelum commit.
+
+## Log 146: Pencarian Marker Kosong Menghentikan Staging
 * **Masalah**: Command gabungan dengan `set -e` berhenti sebelum `git add` walau tidak ada conflict marker.
 * **Root Cause**: `rg` mengembalikan exit 1 untuk hasil pencarian kosong; shell menganggapnya kegagalan karena `set -e`.
 * **Solusi**: Jalankan pemeriksaan marker sebagai command read-only terpisah, lalu jalankan staging hanya setelah output kosong terkonfirmasi.
 
-## Log 117: Resolusi Prompt Manager Memutus Kontrak P3
+## Log 147: Resolusi Prompt Manager Memutus Kontrak P3
 * **Masalah**: Full pytest PR #7 menghasilkan 1 failure pada `test_manager_prompt_route_count_matches_menu` walau jumlah route tetap 22.
 * **Root Cause**: Resolusi konflik mempertahankan makna prompt, tetapi mengubah frasa kontrak exact `pilih SATU dari 22 pilihan di atas` yang dijaga regression test.
 * **Solusi**: Pulihkan frasa exact tersebut tanpa mengubah aturan output route spesialis; jalankan test P3 dan manager routing sebelum full suite.
 
-## Log 118: Diff PR #7 Menemukan Blank Line Berlebih di EOF
+## Log 148: Diff PR #7 Menemukan Blank Line Berlebih di EOF
 * **Masalah**: `git diff --check origin/main..HEAD` melaporkan `new blank line at EOF` pada spec progress WhatsApp.
 * **Root Cause**: Dokumen branch PR diakhiri dua newline sehingga Git membaca satu baris kosong tambahan.
 * **Solusi**: Hapus hanya baris kosong terakhir dan ulangi `git diff --check` terhadap base PR aktual.
 * **Penyesuaian teknis**: Range `origin/main..HEAD` hanya membaca commit, bukan working tree. Validasi patch dengan `git diff --check`, commit, baru ulangi range terhadap base.
+
+## Log 149: Sinkronisasi PR #8 Setelah Squash PR #7 Menghasilkan Dua Konflik
+* **Masalah**: Merge `origin/main` terbaru ke PR #8 berhenti pada conflict `error_solutions.md` dan `whatsapp/index.js`.
+* **Root Cause**: PR #7 dan PR #8 sama-sama menambah progress/filter WhatsApp serta log error dari base yang sama sebelum PR #7 di-squash.
+* **Solusi**: Gabungkan filter, sanitizer, dan progress editor; pertahankan pesan error publik tanpa detail internal; gunakan log PR #8 sebagai base lalu append log unik PR #7 dengan nomor baru.
+
+## Log 150: Rekonstruksi Append-only Menambah Blank Line EOF
+* **Masalah**: `git diff --check` melaporkan `new blank line at EOF` setelah dua versi `error_solutions.md` digabung.
+* **Root Cause**: Konten hasil rekonstruksi sudah memiliki newline akhir lalu patch add-file menambahkan satu newline lagi.
+* **Solusi**: Hapus hanya baris kosong terakhir, pertahankan satu newline POSIX, lalu ulangi `git diff --check` sebelum staging.

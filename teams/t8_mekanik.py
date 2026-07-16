@@ -9,6 +9,7 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import FileReadTool
 from config import mekanik_llm, OUTPUT_DIR, BASE_DIR
+from tools.strix_scanner import StrixScannerTool
 from core.public_errors import public_failure
 
 logger = logging.getLogger("bima_core")
@@ -346,6 +347,7 @@ mekanik_agent = Agent(
     3. FileSaverTool - untuk simpan hasil kode yang sudah bersih
     4. GitAutomationTool - untuk commit & push kode otomatis
     5. SecurityScannerTool - untuk periksa kode sebelum dieksekusi agar tahan hack
+    6. StrixScannerTool - pilot pentest terisolasi, hanya saat Bima eksplisit minta Strix
     
     Workflow wajib kamu:
     1. Terima kode dari Team Seniman atau Bima
@@ -358,7 +360,10 @@ mekanik_agent = Agent(
     
     Kamu TIDAK PERNAH menyerah sebelum 5x percobaan.""",
     llm=mekanik_llm,
-    tools=[CodeExecutorTool(), AutoRetryTool(), FileSaverTool(), GitAutomationTool(), SecurityScannerTool(), FileReadTool()],
+    tools=[
+        CodeExecutorTool(), AutoRetryTool(), FileSaverTool(), GitAutomationTool(),
+        SecurityScannerTool(), StrixScannerTool(), FileReadTool(),
+    ],
     allow_delegation=True,
     verbose=True
 )

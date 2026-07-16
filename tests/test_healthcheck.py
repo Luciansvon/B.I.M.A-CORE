@@ -25,3 +25,15 @@ def test_existing_indexes_are_ready(tmp_path):
         "repo_index": True,
         "vault_index": True,
     }
+
+
+def test_accessible_wsl_mounted_vault_is_healthy(monkeypatch):
+    module = importlib.import_module("scripts.healthcheck")
+    monkeypatch.setenv("OBSIDIAN_PATH", "/mnt/c/Users/example/OneDrive/Vault")
+    monkeypatch.setattr(module.Path, "exists", lambda _path: True)
+    report = module.CheckReport()
+
+    module._check_vault(report)
+
+    assert report.passed == 1
+    assert report.warnings == 0
