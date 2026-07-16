@@ -536,3 +536,8 @@
 * **Masalah**: Command gabungan dengan `set -e` berhenti sebelum `git add` walau tidak ada conflict marker.
 * **Root Cause**: `rg` mengembalikan exit 1 untuk hasil pencarian kosong; shell menganggapnya kegagalan karena `set -e`.
 * **Solusi**: Jalankan pemeriksaan marker sebagai command read-only terpisah, lalu jalankan staging hanya setelah output kosong terkonfirmasi.
+
+## Log 117: Resolusi Prompt Manager Memutus Kontrak P3
+* **Masalah**: Full pytest PR #7 menghasilkan 1 failure pada `test_manager_prompt_route_count_matches_menu` walau jumlah route tetap 22.
+* **Root Cause**: Resolusi konflik mempertahankan makna prompt, tetapi mengubah frasa kontrak exact `pilih SATU dari 22 pilihan di atas` yang dijaga regression test.
+* **Solusi**: Pulihkan frasa exact tersebut tanpa mengubah aturan output route spesialis; jalankan test P3 dan manager routing sebelum full suite.

@@ -158,7 +158,7 @@ PRINSIP "TANYA DULU SEBELUM ACTION":
 FORMAT OUTPUT WAJIB:
 - Kalau route `santai`: baris pertama `[ROUTE: santai]`, lalu balasan untuk Bima.
 - Kalau route spesialis: keluarkan tepat satu tag `[ROUTE: ...]` tanpa narasi lain.
-- Pilih tepat satu dari 22 route di atas."""
+- pilih SATU dari 22 pilihan di atas."""
 
     logger.info("[LANGGRAPH MANAGER] Membaca request dan memikirkan strategi...")
     chunks: list = []
