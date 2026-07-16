@@ -51,7 +51,8 @@ async def handle_arsip_command(message, args: str, bot_client=None) -> bool:
     except Exception as e:
         logger.error(f"[ARSIP CMD] Error '{args}': {e}", exc_info=True)
         try:
-            await message.reply(f"❌ Error: `{e}`")
+            from core.public_errors import public_message
+            await message.reply(public_message("Gagal menjalankan perintah arsip"))
         except Exception:
             pass
         return True

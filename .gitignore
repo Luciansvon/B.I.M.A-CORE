@@ -84,3 +84,7 @@ assets/f5_tts_cache/
 # Vendored local tool clones (pip-installed into bima_env; source not tracked here)
 # agent-reach = clone dari github.com/Panniantong/agent-reach, di-build lokal (lihat docs/error_solutions.md Log 11)
 agent-reach/
+
+# Codex chat attachments and local tool clones
+.codex-remote-attachments/
+databasement/

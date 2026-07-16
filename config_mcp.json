@@ -107,6 +107,18 @@
       "_note": "Mekanik di-skip karena udah punya GitAutomationTool (status/commit/push) di t8_mekanik.py. Git MCP cuma buat kodok diagnostic history."
     },
     {
+      "name": "context7",
+      "description": "Upstash Context7 — resolve-library-id + get-library-docs, fetch dokumentasi library eksternal versi terbaru (anti-halusinasi API outdated). Jalan tanpa API key (rate limit lebih rendah); kalau mau naikin limit, tambah CONTEXT7_API_KEY manual ke blok env di sini + .env (skema `_expand_vars` di mcp_client_manager.py gak fallback ke kosong kalau var gak di-set, jadi jangan pakai `${VAR}` di sini sebelum key-nya beneran ada di .env).",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "env": {},
+      "tools": null,
+      "attach_to": ["kodok", "mekanik"],
+      "requires_bin": "npx"
+    },
+    {
       "name": "sqlite",
       "description": "SQLite MCP reference — DISABLED karena upstream archived tanpa security update. Pakai akses SQLite internal yang dibatasi.",
       "enabled": false,

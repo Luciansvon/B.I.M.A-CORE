@@ -9,6 +9,7 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import FileReadTool
 from config import visual_llm, OUTPUT_DIR, VISUAL_MODEL_NAME
+from core.path_security import resolve_allowed_path
 from tools.slide_generator import SlideGeneratorTool
 
 # ============================================================
@@ -216,6 +217,7 @@ class ExcelReader(BaseTool):
     Input: path lokal file Excel."""
 
     def _run(self, filepath: str) -> str:
+        wb = None
         try:
             import openpyxl
             
@@ -252,12 +254,20 @@ class ExcelReader(BaseTool):
             if len(wb.sheetnames) > MAX_SHEETS:
                 output.append(f"... (terpotong, {len(wb.sheetnames)-MAX_SHEETS} sheet lagi)")
 
-            wb.close()
             return "\n".join(output)
         except ImportError:
             return "FAILED|openpyxl belum terinstall. Jalankan: pip install openpyxl"
         except Exception as e:
             return f"FAILED|Gagal baca Excel: {e}"
+        finally:
+            if wb is not None:
+                try:
+                    wb.close()
+                except Exception:
+                    logger.warning(
+                        "[VISUAL] Gagal menutup workbook Excel",
+                        exc_info=True,
+                    )
 
 # ============================================================
 # Tool 5: Baca Word (DOCX)
@@ -622,6 +632,17 @@ class ImageAnalyzerTool(BaseTool):
             # Cek apakah input adalah path lokal atau URL
             p = Path(image_input)
             if p.exists():
+                try:
+                    p = resolve_allowed_path(
+                        p,
+                        (OUTPUT_DIR,),
+                        base_dir=OUTPUT_DIR.parent,
+                        allowed_suffixes={
+                            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+                        },
+                    )
+                except ValueError:
+                    return "FAILED|Path tidak diizinkan"
                 # Validasi ukuran file (max 10MB)
                 file_size = p.stat().st_size
                 if file_size > 10 * 1024 * 1024:
@@ -688,6 +709,17 @@ class ImageToCodeTool(BaseTool):
         try:
             p = Path(image_input)
             if p.exists():
+                try:
+                    p = resolve_allowed_path(
+                        p,
+                        (OUTPUT_DIR,),
+                        base_dir=OUTPUT_DIR.parent,
+                        allowed_suffixes={
+                            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+                        },
+                    )
+                except ValueError:
+                    return "FAILED|Path tidak diizinkan"
                 file_size = p.stat().st_size
                 if file_size > 10 * 1024 * 1024:
                     return f"FAILED|File terlalu besar ({file_size // 1024 // 1024}MB)."
