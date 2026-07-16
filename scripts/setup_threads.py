@@ -4,10 +4,13 @@ import urllib.parse
 import json
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_PATH = PROJECT_ROOT / ".env"
+
+
 # Load existing .env if possible
-def load_env():
-    env_path = Path('.env')
-    env_data = {}
+def load_env(env_path: Path = ENV_PATH) -> dict[str, str]:
+    env_data: dict[str, str] = {}
     if env_path.exists():
         with open(env_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -17,15 +20,20 @@ def load_env():
                     env_data[k.strip()] = v.strip()
     return env_data
 
-def save_env(updates):
-    env_path = Path('.env')
+def save_env(updates: dict[str, object], env_path: Path = ENV_PATH) -> None:
+    clean_updates: dict[str, str] = {}
+    for key, value in updates.items():
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Nilai environment {key} tidak valid")
+        clean_updates[key] = value.strip()
+
     lines = []
     if env_path.exists():
         with open(env_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
             
     # Update existing keys or append
-    for key, val in updates.items():
+    for key, val in clean_updates.items():
         found = False
         for i, line in enumerate(lines):
             if line.strip().startswith(f"{key}="):
@@ -38,7 +46,15 @@ def save_env(updates):
     with open(env_path, 'w', encoding='utf-8') as f:
         f.writelines(lines)
 
-def main():
+
+def require_access_token(payload: dict) -> str:
+    token = payload.get("access_token")
+    if not isinstance(token, str) or not token.strip():
+        raise ValueError("Response Threads tidak berisi access_token")
+    return token.strip()
+
+
+def main() -> None:
     print("=" * 60)
     print("Threads API Setup Helper — BIMA_CORE")
     print("=" * 60)
@@ -106,7 +122,7 @@ def main():
         req = urllib.request.Request(token_url, data=data)
         with urllib.request.urlopen(req) as response:
             res_data = json.loads(response.read().decode('utf-8'))
-            short_token = res_data.get('access_token')
+            short_token = require_access_token(res_data)
             user_id = res_data.get('user_id')
             print(f"Sukses mendapatkan Short-Lived Token! User ID: {user_id}")
     except Exception as e:
@@ -122,7 +138,7 @@ def main():
     try:
         with urllib.request.urlopen(long_token_url) as response:
             res_data = json.loads(response.read().decode('utf-8'))
-            long_token = res_data.get('access_token')
+            long_token = require_access_token(res_data)
             expires_in = res_data.get('expires_in')
             print(f"Sukses mendapatkan Long-Lived Token! Berlaku selama: {expires_in} detik (sekitar 60 hari).")
     except Exception as e:

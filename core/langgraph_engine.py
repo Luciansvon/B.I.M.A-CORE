@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from weakref import WeakKeyDictionary
 from langgraph.graph import StateGraph, END
 from core.langgraph_nodes.state import BimaState
 from core.langgraph_nodes.manager import manager_node
@@ -266,20 +267,25 @@ bima_app = workflow.compile()
 # bound ke loop tempat dia di-instantiate — kalau dipakai di loop lain → RuntimeError.
 # Solusi: tiap event loop punya compiled app + aiosqlite connection sendiri.
 _CHECKPOINT_DB = Path(__file__).parent.parent / "memory" / "checkpoints.db"
-_app_by_loop: dict[int, object] = {}
-_conn_by_loop: dict[int, object] = {}
+_app_by_loop: WeakKeyDictionary[asyncio.AbstractEventLoop, object] = (
+    WeakKeyDictionary()
+)
+_conn_by_loop: WeakKeyDictionary[asyncio.AbstractEventLoop, object] = (
+    WeakKeyDictionary()
+)
 
 
 async def _ensure_app():
     """Get atau create compiled app untuk event loop aktif. Idempotent + loop-safe."""
     global bima_app
-    loop_id = id(asyncio.get_running_loop())
-    if loop_id in _app_by_loop:
-        return _app_by_loop[loop_id]
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    if loop in _app_by_loop:
+        return _app_by_loop[loop]
 
     if os.environ.get("ENABLE_CHECKPOINTING", "true").lower() != "true":
         app = workflow.compile()
-        _app_by_loop[loop_id] = app
+        _app_by_loop[loop] = app
         bima_app = app
         return app
 
@@ -291,15 +297,15 @@ async def _ensure_app():
         conn = await aiosqlite.connect(str(_CHECKPOINT_DB))
         saver = AsyncSqliteSaver(conn)
         app = workflow.compile(checkpointer=saver)
-        _conn_by_loop[loop_id] = conn
-        _app_by_loop[loop_id] = app
+        _conn_by_loop[loop] = conn
+        _app_by_loop[loop] = app
         bima_app = app
         logger.info(f"[LANGGRAPH] ✅ Per-loop checkpointing aktif (loop_id={loop_id}) → {_CHECKPOINT_DB.name}")
         return app
     except Exception as e:
         logger.error(f"[LANGGRAPH] Init checkpointer gagal (loop_id={loop_id}), fallback non-checkpoint: {e}", exc_info=True)
         app = workflow.compile()
-        _app_by_loop[loop_id] = app
+        _app_by_loop[loop] = app
         bima_app = app
         return app
 
@@ -311,7 +317,8 @@ async def init_engine():
 
 async def shutdown_engine():
     """Close SEMUA per-loop checkpoint connections."""
-    for loop_id, conn in list(_conn_by_loop.items()):
+    for loop, conn in list(_conn_by_loop.items()):
+        loop_id = id(loop)
         try:
             await conn.close()
             logger.info(f"[LANGGRAPH] Closed checkpoint connection (loop_id={loop_id})")
@@ -330,9 +337,19 @@ def is_user_facing_stream_event(event: dict) -> bool:
     return metadata.get("langgraph_node") != "manager_node"
 
 
-async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment_paths: list = None, progress_callback=None, discord_user_id: str = "", source_channel: str = ""):
+async def run_langgraph_engine(
+    user_request: str,
+    konteks_waktu: str,
+    attachment_paths: list | None = None,
+    progress_callback=None,
+    discord_user_id: str = "",
+    source_channel: str = "",
+    conversation_id: str = "",
+):
     # T1-A: progress_callback TIDAK masuk state — function gak msgpack-serializable,
     # akan crash checkpointer aput(). Register ke module dict, lookup di notify_progress.
+    from core.langgraph_nodes.state import build_thread_id
+
     initial_state = {
         "messages": [],
         "user_request": user_request,
@@ -344,8 +361,14 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
         "is_finished": False,
         "discord_user_id": discord_user_id,
         "source_channel": source_channel,
+        "conversation_id": conversation_id,
     }
-    _engine_thread_id = f"{discord_user_id or 'anon'}_{source_channel or 'unknown'}"
+    thread_id = build_thread_id(
+        discord_user_id,
+        source_channel,
+        conversation_id,
+    )
+    _engine_thread_id = thread_id
     if progress_callback:
         from core.langgraph_nodes.state import register_progress_callback
         register_progress_callback(_engine_thread_id, progress_callback)
@@ -362,7 +385,6 @@ async def run_langgraph_engine(user_request: str, konteks_waktu: str, attachment
 
     # T1-A: thread_id buat checkpoint continuity (per user + channel)
     # Kalau checkpointer aktif, state percakapan persist antar restart bot.
-    thread_id = f"{discord_user_id or 'anon'}_{source_channel or 'unknown'}"
     config: dict = {"configurable": {"thread_id": thread_id}}
 
     # T1-D: attach CostTracker callback kalau cost guardrails aktif

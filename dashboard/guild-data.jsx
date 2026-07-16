@@ -129,19 +129,19 @@ const QUICK_PROMPTS = [
 ];
 
 const LOG_TEMPLATES = [
-  { lvl: 'INFO', tpl: '<a>%a</a> menerima quest dari <a>BIMA</a>' },
-  { lvl: 'OK',   tpl: '<a>%a</a> selesaikan task <code>#</code><n>%n</n> · <n>%t</n>ms' },
-  { lvl: 'INFO', tpl: '<a>%a</a> scan <n>%n</n> dokumen, indexed.' },
-  { lvl: 'WARN', tpl: '<a>%a</a> latency naik ke <n>%t</n>ms — backoff aktif' },
-  { lvl: 'OK',   tpl: '<a>%a</a> commit ke vault · <n>%n</n> entries baru' },
-  { lvl: 'LOOT', tpl: '<a>%a</a> dapat <n>+%n</n> Gold Token · loot drop' },
-  { lvl: 'INFO', tpl: '<a>%a</a> meditasi 30s · MP refilled' },
-  { lvl: 'ERR',  tpl: '<a>%a</a> retry <n>%n</n>/5 · timeout pada upstream' },
-  { lvl: 'OK',   tpl: '<a>%a</a> render artifact · SVG <n>%n</n>kb' },
-  { lvl: 'INFO', tpl: '<a>%a</a> handoff ke <a>%a2</a> — context <n>%n</n>K tokens' },
-  { lvl: 'LOOT', tpl: 'Loot drop! <a>%a</a> menemukan rare item' },
-  { lvl: 'OK',   tpl: 'Vault sync · <n>%n</n> rows · <n>%t</n>ms' },
-  { lvl: 'WARN', tpl: 'Token usage <n>%n</n>% · monitor budget' },
+  { lvl: 'INFO', tpl: '[%a] menerima quest dari [BIMA]' },
+  { lvl: 'OK',   tpl: '[%a] selesaikan task #%n · %tms' },
+  { lvl: 'INFO', tpl: '[%a] scan %n dokumen, indexed.' },
+  { lvl: 'WARN', tpl: '[%a] latency naik ke %tms — backoff aktif' },
+  { lvl: 'OK',   tpl: '[%a] commit ke vault · %n entries baru' },
+  { lvl: 'LOOT', tpl: '[%a] dapat +%n Gold Token · loot drop' },
+  { lvl: 'INFO', tpl: '[%a] meditasi 30s · MP refilled' },
+  { lvl: 'ERR',  tpl: '[%a] retry %n/5 · timeout pada upstream' },
+  { lvl: 'OK',   tpl: '[%a] render artifact · SVG %nkb' },
+  { lvl: 'INFO', tpl: '[%a] handoff ke [%a2] — context %nK tokens' },
+  { lvl: 'LOOT', tpl: 'Loot drop! [%a] menemukan rare item' },
+  { lvl: 'OK',   tpl: 'Vault sync · %n rows · %tms' },
+  { lvl: 'WARN', tpl: 'Token usage %n% · monitor budget' },
 ];
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -160,10 +160,10 @@ function genLog() {
   const n = rint(2, 99);
   const t = rint(20, 800);
   const text = tpl.tpl
-    .replace('%a2', `<span class="agent-name">${a2.name}</span>`)
-    .replace('%a',  `<span class="agent-name">${a.name}</span>`)
-    .replace(/%n/g, `<span class="num">${n}</span>`)
-    .replace(/%t/g, `<span class="num">${t}</span>`);
+    .replace('%a2', a2.name)
+    .replace('%a', a.name)
+    .replace(/%n/g, n)
+    .replace(/%t/g, t);
   return { lvl: tpl.lvl, text, time: fmtTime() };
 }
 

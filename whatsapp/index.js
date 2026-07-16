@@ -26,6 +26,7 @@ const {
     VOICE_READY_MESSAGE,
     updateProgressMessage,
 } = require('./progress_message');
+const { sanitizeForWhatsApp } = require('./sanitize');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 // ============================================================
@@ -406,10 +407,11 @@ function smartChunks(text, limit = CONFIG.maxChunkLength) {
 // ============================================================
 // KIRIM KE BRIDGE SERVER
 // ============================================================
-async function sendToAnisa(message, attachmentPaths = []) {
+async function sendToAnisa(message, senderId, attachmentPaths = []) {
     try {
         const res = await axios.post(`${CONFIG.bridgeUrl}/chat`, {
             message,
+            sender_id: senderId,
             token: CONFIG.bridgeToken,
             attachment_paths: attachmentPaths,
         }, {
@@ -689,7 +691,7 @@ async function handleMessage(msg) {
 
         let result;
         try {
-            result = await sendToAnisa(perintah, attachmentPaths);
+            result = await sendToAnisa(perintah, senderId, attachmentPaths);
         } finally {
             clearInterval(typingInterval);
             await chat.clearState().catch(() => {});
@@ -713,7 +715,7 @@ async function handleMessage(msg) {
 
         let chunks = [];
         if (!skipTextReply) {
-            chunks = smartChunks(result.response);
+            chunks = smartChunks(sanitizeForWhatsApp(result.response));
             await updateProgressMessage(progressMessage, msg, chunks[0]);
             for (let i = 1; i < chunks.length; i++) {
                 await new Promise(r => setTimeout(r, 500));

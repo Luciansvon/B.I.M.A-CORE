@@ -76,8 +76,8 @@ function ChatPanel({ addLog, addToast }) {
     addLog({
       lvl: isErr ? 'ERR' : 'OK',
       text: isErr
-        ? `<span class="agent-name">ANISA</span> error: ${text.slice(0, 80)}`
-        : `<span class="agent-name">ANISA</span> respond · quest dispatched`,
+        ? `[ANISA] error: ${text.slice(0, 80)}`
+        : `[ANISA] respond · quest dispatched`,
       time: fmtTime(),
     });
     if (!isErr) addToast('loot', 'QUEST DISPATCHED', 'Anisa membagi tugas ke tim');
@@ -91,7 +91,7 @@ function ChatPanel({ addLog, addToast }) {
     setInput('');
     setMessages(m => [...m, { role: 'user', text, time: fmtTime() }]);
     setBusy(true);
-    addLog({ lvl: 'INFO', text: `<span class="agent-name">LORD</span> kirim perintah ke <span class="agent-name">ANISA</span>`, time: fmtTime() });
+    addLog({ lvl: 'INFO', text: `[LORD] kirim perintah ke [ANISA]`, time: fmtTime() });
 
     if (online === false) {
       // Offline-mode stub so the UI still feels alive when running standalone.
@@ -273,7 +273,7 @@ function ActivityPanel({ logs }) {
           <div key={i} className="log-row">
             <span className="t">{l.time}</span>
             <span className={`lvl ${l.lvl}`}>{l.lvl}</span>
-            <span className="msg-text" dangerouslySetInnerHTML={{ __html: l.text }} />
+            <span className="msg-text">{l.text}</span>
           </div>
         ))}
       </div>

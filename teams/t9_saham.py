@@ -12,6 +12,7 @@ from crewai.tools import BaseTool
 from crewai_tools import SerperDevTool
 from config import intel_llm  # reuse LLM intel; ganti ke saham_llm kalau nanti dibuat
 from core.api_retry import call_with_retry
+from core.public_errors import public_failure
 
 logger = logging.getLogger('bima_core')
 search_tool = SerperDevTool()
@@ -123,7 +124,8 @@ class StockQuoteTool(BaseTool):
                 f"⏰ Update: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             )
         except Exception as e:
-            return f"Gagal ambil quote {symbol}: {e}"
+            logger.exception("[SAHAM] Gagal ambil quote %s", symbol)
+            return public_failure(f"Gagal ambil quote {symbol}")
 
 # ============================================================
 # Tool 2: Technical Analysis — RSI, MACD, SMA, Bollinger
@@ -191,7 +193,8 @@ class TechnicalAnalysisTool(BaseTool):
                 f"📡 SINYAL:\n- " + "\n- ".join(sinyal)
             )
         except Exception as e:
-            return f"Gagal TA {symbol}: {e}"
+            logger.exception("[SAHAM] Gagal analisis teknikal %s", symbol)
+            return public_failure(f"Gagal analisis teknikal {symbol}")
 
 # ============================================================
 # Tool 3: Fundamental Analysis — PER, PBV, ROE, EPS, Dividend
@@ -254,7 +257,8 @@ class FundamentalAnalysisTool(BaseTool):
                 f"📋 CATATAN: " + (", ".join(verdict) if verdict else "Tidak ada flag mencolok.")
             )
         except Exception as e:
-            return f"Gagal fundamental {symbol}: {e}"
+            logger.exception("[SAHAM] Gagal analisis fundamental %s", symbol)
+            return public_failure(f"Gagal analisis fundamental {symbol}")
 
 # ============================================================
 # Tool 4: News Sentiment — berita terbaru saham
@@ -270,7 +274,8 @@ class StockNewsTool(BaseTool):
             result = search_tool.run(search_query=q)
             return f"=== Berita: {query} ===\n{result}"
         except Exception as e:
-            return f"Gagal ambil berita: {e}"
+            logger.exception("[SAHAM] Gagal ambil berita %s", query)
+            return public_failure("Gagal ambil berita")
 
 # ============================================================
 # Tool 5: Decision Engine — agregator BUY/HOLD/SELL
@@ -356,7 +361,8 @@ class DecisionEngineTool(BaseTool):
                 f"\n\n⚠️ Disclaimer: Output ini bukan ajakan beli/jual. Always DYOR & sesuaikan profil risiko."
             )
         except Exception as e:
-            return f"Decision engine error: {e}"
+            logger.exception("[SAHAM] Decision engine gagal untuk %s", symbol)
+            return public_failure(f"Decision engine gagal untuk {symbol}")
 
 # ============================================================
 # Saham Agent

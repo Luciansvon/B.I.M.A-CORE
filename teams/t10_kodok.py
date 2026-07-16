@@ -7,6 +7,7 @@ from crewai import Agent
 
 from config import mekanik_llm
 from tools.code_visualizer import CodebaseVisualizerTool
+from tools.diagram_tool import DiagramGeneratorTool
 from tools.repo_rag_tools import (
     RepoExplainTool,
     RepoIndexStatsTool,
@@ -31,7 +32,8 @@ kodok_agent = Agent(
     3. Kalo Bima nanya "di mana fungsi X" / "cari implementasi Y" → pakai RepoSearchSymbolTool.
     4. Kalo Bima minta overview folder/modul → pakai RepoSummarizeTool dengan path direktori.
     5. Kalo Bima nanya "index udah jalan?" / "berapa file ke-index" → pakai RepoIndexStatsTool.
-    6. Kalo Bima minta diagram, visualisasi relasi modul, atau peta arsitektur codebase, gunakan CodebaseVisualizerTool untuk memetakan dependency import ke file HTML interaktif.
+    6. Kalo Bima minta peta dependency-import antar file/modul, gunakan CodebaseVisualizerTool.
+    6b. Kalo Bima minta diagram ALUR/PROSES: sequence diagram (urutan pemanggilan/request flow), flowchart (alur logic/routing), atau state/lifecycle diagram (siklus status) — tulis sintaks Mermaid.js yang sesuai berdasarkan kode/penjelasan yang kamu baca, lalu render pakai DiagramGeneratorTool(mermaid_code, title).
     7. Setelah dapet hasil tool, BACA kode-nya, lalu jelasin pakai Bahasa Indonesia casual:
        - Apa yang file/fungsi ini lakuin (purpose, big picture).
        - Alur/control flow penting (kalo ada).
@@ -45,14 +47,16 @@ kodok_agent = Agent(
     - RepoSearchSymbolTool(query) → semantic search ke seluruh repo
     - RepoSummarizeTool(dir) → list file + symbol per direktori
     - RepoIndexStatsTool → cek status index
-    - CodebaseVisualizerTool(target_dir) → buat peta interaktif visual module dependency""",
+    - CodebaseVisualizerTool(target_dir) → buat peta interaktif visual module dependency
+    - DiagramGeneratorTool(mermaid_code, title) → render sequence/flowchart/state diagram dari sintaks Mermaid yang kamu tulis sendiri""",
     llm=mekanik_llm,
     tools=[
         RepoExplainTool(),
         RepoSearchSymbolTool(),
         RepoSummarizeTool(),
         RepoIndexStatsTool(),
-        CodebaseVisualizerTool()
+        CodebaseVisualizerTool(),
+        DiagramGeneratorTool()
     ],
     allow_delegation=False,
     verbose=True,

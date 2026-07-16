@@ -23,10 +23,23 @@ def unregister_progress_callback(thread_id: str) -> None:
         _progress_callbacks.pop(thread_id, None)
 
 
-def _derive_thread_id_from_state(state) -> str:
-    user_id = state.get("discord_user_id") or "anon"
-    channel = state.get("source_channel") or "unknown"
-    return f"{user_id}_{channel}"
+def build_thread_id(
+    user_id: str = "",
+    source_channel: str = "",
+    conversation_id: str = "",
+) -> str:
+    user = user_id or "anon"
+    channel = source_channel or "unknown"
+    conversation = conversation_id or channel
+    return f"{channel}:{user}:{conversation}"
+
+
+def _derive_thread_id_from_state(state: "BimaState") -> str:
+    return build_thread_id(
+        state.get("discord_user_id", ""),
+        state.get("source_channel", ""),
+        state.get("conversation_id", ""),
+    )
 
 # Ini adalah "Otak Pusat" atau papan tulis bersama untuk agen-agen kita.
 # Setiap kali agen bekerja, mereka akan membaca dan memperbarui State ini.
@@ -69,6 +82,9 @@ class BimaState(TypedDict):
     # Dipakai seniman_node untuk Discord-guard di video gen (Discord 25MB limit ketat,
     # WA 100MB lega — kalau Discord trigger video, redirect user ke WA).
     source_channel: NotRequired[str]
+
+    # ID chat/channel nyata untuk isolasi checkpoint dan progress callback.
+    conversation_id: NotRequired[str]
 
     # T1-E: Conversation summary — diisi context_summarizer_node kalau messages > threshold.
     # Manager + agen pakai field ini untuk konteks panjang tanpa harus parse semua history.
