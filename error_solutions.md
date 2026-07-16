@@ -616,3 +616,8 @@
 * **Masalah**: Verifikasi PR #8 terhadap head branch sebelum cleanup melaporkan whitespace pada dokumen yang baru masuk dari merge `main`.
 * **Root Cause**: Range `origin/codex/package-a-b-integration..HEAD` ikut memeriksa seluruh commit baru dari `main`, bukan hanya diff PR terhadap base terkini.
 * **Solusi**: Untuk gate perubahan PR setelah sinkronisasi, jalankan `git diff --check origin/main..HEAD`; hasilnya bersih tanpa melakukan drive-by formatting pada dokumen lama.
+
+## Log 128: GitHub App Tidak Bisa Mengubah Metadata PR Milik Owner
+* **Masalah**: Update title/body PR #8 lewat GitHub App gagal HTTP 403 `Resource not accessible by integration`.
+* **Root Cause**: Instalasi connector memiliki akses baca repository, tetapi token integration tidak mendapat izin write untuk pull request ini.
+* **Solusi**: Setelah memastikan target PR benar, fallback ke GitHub CLI yang terautentikasi sebagai owner; jangan mengulang connector yang sama.
