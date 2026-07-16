@@ -332,6 +332,11 @@ _STREAM_DEBOUNCE_S = 0.6
 _DISCORD_MAX = 1900
 
 
+def is_user_facing_stream_event(event: dict) -> bool:
+    metadata = event.get("metadata", {}) or {}
+    return metadata.get("langgraph_node") != "manager_node"
+
+
 async def run_langgraph_engine(
     user_request: str,
     konteks_waktu: str,
@@ -397,6 +402,8 @@ async def run_langgraph_engine(
         async for event in app.astream_events(initial_state, version="v2", config=config):
             kind = event.get("event")
             if kind == "on_chat_model_stream":
+                if not is_user_facing_stream_event(event):
+                    continue
                 chunk = event.get("data", {}).get("chunk")
                 token = getattr(chunk, "content", "") or ""
                 if token:

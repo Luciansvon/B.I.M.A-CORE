@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-from core.langgraph_nodes.state import BimaState, notify_progress
+from core.langgraph_nodes.state import BimaState, get_current_upstream_text, notify_progress
 from core.langgraph_nodes.llm_config import get_langchain_llm
 from core.langgraph_nodes.html_assets import (
     build_html_skeleton,
@@ -217,14 +217,11 @@ async def seniman_node(state: BimaState) -> dict:
     search_data = temp_data.get("last_search_result", "")
     data_section = f"\n\n=== DATA UNTUK DIVISUALISASIKAN ===\n{search_data}\n=== AKHIR DATA ===" if search_data else ""
 
-    # Upstream agent's polished output (manager, intel, atau arsip)
-    prev_messages = state.get("messages", []) or []
+    # Upstream agent's polished output from this graph run.
+    upstream_text = get_current_upstream_text(state, "seniman")
     upstream_block = ""
-    if prev_messages:
-        last = prev_messages[-1]
-        upstream_text = (getattr(last, "content", "") or str(last))[:2500]
-        if upstream_text.strip():
-            upstream_block = f"\n\n=== ANALISIS / OUTPUT TIM SEBELUMNYA ===\n{upstream_text}"
+    if upstream_text:
+        upstream_block = f"\n\n=== ANALISIS / OUTPUT TIM SEBELUMNYA ===\n{upstream_text}"
 
     # History fallback kalau user_request singkat (mungkin reply ke pertanyaan klarifikasi)
     history_block = ""
@@ -329,4 +326,3 @@ ATURAN KETAT:
         "messages": [AIMessage(content=result)],
         "is_finished": True
     }
-

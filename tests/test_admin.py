@@ -1,8 +1,25 @@
 import json
+import subprocess
+
 import pytest
 from pathlib import Path
 from config import OUTPUT_DIR
 from teams.t4_admin import ExcelGeneratorTool, PDFGeneratorTool, DataAnalysisTool
+import teams.t4_admin.excel_tool as excel_module
+
+
+def _fake_officecli_run(
+    args: list[str], **_: object
+) -> subprocess.CompletedProcess[str]:
+    command = args[1]
+    if command == "create":
+        Path(args[2]).touch()
+        return subprocess.CompletedProcess(args, 0, "", "")
+    if command == "batch":
+        payload = {"data": {"summary": {"failed": 0}, "results": []}}
+        return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+    return subprocess.CompletedProcess(args, 0, "", "")
+
 
 def test_data_analysis_fallback_path(tmp_path):
     # Buat file CSV dummy di OUTPUT_DIR
@@ -21,7 +38,18 @@ def test_data_analysis_fallback_path(tmp_path):
     # Harus berhasil memproses (mengembalikan path file chart)
     assert res.startswith("SUCCESS") or "SUCCESS" in res
 
-def test_excel_generator_with_charts():
+def test_excel_generator_with_charts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(excel_module, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(
+        excel_module,
+        "_officecli_bin",
+        lambda: "/usr/bin/officecli",
+    )
+    monkeypatch.setattr(excel_module.subprocess, "run", _fake_officecli_run)
+
     # Setup data JSON dengan chart tingkat dokumen dan tingkat sheet
     excel_data = {
         "filename": "test_chart_excel",

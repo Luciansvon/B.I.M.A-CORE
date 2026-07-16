@@ -34,19 +34,16 @@ def get_llm(model_name: str) -> LLM:
 VISUAL_MODEL_NAME = "google/gemini-3.5-flash"
 
 try:
-    # 1. MANAGER & ROUTING LLM (Paling sering dipanggil, harus termurah)
-    manager_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")     # Sangat murah/gratis untuk routing santai
-
-    # 2. VISUAL LLM (Spesialis gambar/PDF)
+    # VISUAL LLM (Spesialis gambar/PDF)
     visual_llm = get_llm(f"openrouter/{VISUAL_MODEL_NAME}")
     
-    # 3. SPESIALIS MENENGAH (Tugas umum, harga terjangkau)
+    # SPESIALIS MENENGAH (Tugas umum, harga terjangkau)
     arsip_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")       
     admin_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")       
     lifestyle_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")   
     seniman_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")     
     
-    # 4. SPESIALIS BERAT/LOGIKA (Minta model paling pintar)
+    # SPESIALIS BERAT/LOGIKA (Minta model paling pintar)
     intel_llm = get_llm("openrouter/deepseek/deepseek-v4-flash")       # Riset web & ekstraksi data
     mekanik_llm = get_llm("openrouter/deepseek/deepseek-v4-pro")       # Coding & Debugging
     

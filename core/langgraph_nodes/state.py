@@ -91,6 +91,28 @@ class BimaState(TypedDict):
     conversation_summary: NotRequired[str]
 
 
+_UPSTREAM_TEAMS = {
+    "seniman": frozenset({"intel", "arsip"}),
+    "admin": frozenset({"intel", "arsip", "seniman"}),
+}
+
+
+def get_current_upstream_text(
+    state: BimaState,
+    target_team: str,
+    max_chars: int = 2500,
+) -> str:
+    allowed = _UPSTREAM_TEAMS.get(target_team, frozenset())
+    if not allowed.intersection(state.get("active_teams", [])):
+        return ""
+
+    messages = state.get("messages", []) or []
+    if not messages:
+        return ""
+    last = messages[-1]
+    return (getattr(last, "content", "") or str(last))[:max_chars].strip()
+
+
 async def notify_progress(state: BimaState, message: str) -> None:
     """Kirim status progress ke Discord. Silent jika callback tidak ada atau gagal.
 
