@@ -45,4 +45,3 @@
 - Restart `bima-whatsapp`, lalu cek log startup tanpa error.
 - Smoke manual: kirim `/bot <pesan>` dan pastikan status muncul sekali lalu berubah menjadi jawaban.
 - Smoke Discord: kirim satu perintah normal dan pastikan status Manager/tim tetap terlihat tanpa `[ROUTE: ...]`.
-

@@ -541,3 +541,9 @@
 * **Masalah**: Full pytest PR #7 menghasilkan 1 failure pada `test_manager_prompt_route_count_matches_menu` walau jumlah route tetap 22.
 * **Root Cause**: Resolusi konflik mempertahankan makna prompt, tetapi mengubah frasa kontrak exact `pilih SATU dari 22 pilihan di atas` yang dijaga regression test.
 * **Solusi**: Pulihkan frasa exact tersebut tanpa mengubah aturan output route spesialis; jalankan test P3 dan manager routing sebelum full suite.
+
+## Log 118: Diff PR #7 Menemukan Blank Line Berlebih di EOF
+* **Masalah**: `git diff --check origin/main..HEAD` melaporkan `new blank line at EOF` pada spec progress WhatsApp.
+* **Root Cause**: Dokumen branch PR diakhiri dua newline sehingga Git membaca satu baris kosong tambahan.
+* **Solusi**: Hapus hanya baris kosong terakhir dan ulangi `git diff --check` terhadap base PR aktual.
+* **Penyesuaian teknis**: Range `origin/main..HEAD` hanya membaca commit, bukan working tree. Validasi patch dengan `git diff --check`, commit, baru ulangi range terhadap base.
