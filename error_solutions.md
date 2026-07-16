@@ -611,3 +611,8 @@
 * **Masalah**: `gh api repos/.../branches/main/protection` mengembalikan HTTP 404 saat audit setting repository.
 * **Root Cause**: Branch `main` memang belum memiliki protection rule; autentikasi tetap valid.
 * **Solusi**: Perlakukan 404 endpoint protection sebagai state `not protected`, bukan kegagalan autentikasi. Aktifkan protection hanya lewat perubahan settings yang disetujui.
+
+## Log 127: `git diff --check` Membawa Whitespace dari Merge Base Lama
+* **Masalah**: Verifikasi PR #8 terhadap head branch sebelum cleanup melaporkan whitespace pada dokumen yang baru masuk dari merge `main`.
+* **Root Cause**: Range `origin/codex/package-a-b-integration..HEAD` ikut memeriksa seluruh commit baru dari `main`, bukan hanya diff PR terhadap base terkini.
+* **Solusi**: Untuk gate perubahan PR setelah sinkronisasi, jalankan `git diff --check origin/main..HEAD`; hasilnya bersih tanpa melakukan drive-by formatting pada dokumen lama.
