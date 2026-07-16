@@ -28,14 +28,14 @@
     },
     {
       "name": "sequential_thinking",
-      "description": "Anthropic Sequential Thinking — structured reasoning chain.",
-      "enabled": true,
+      "description": "Sequential Thinking — DISABLED karena CrewAI manager lama sudah dihapus dan tidak ada consumer runtime.",
+      "enabled": false,
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@2026.7.4"],
       "env": {},
       "tools": null,
-      "attach_to": ["manager"],
+      "attach_to": [],
       "requires_bin": "npx"
     },
     {
@@ -50,10 +50,9 @@
       },
       "tools": null,
       "tool_allowlist_by_agent": {
-        "manager": ["read_graph", "search_nodes", "open_nodes"],
         "arsip": ["create_entities", "create_relations", "add_observations", "read_graph", "search_nodes", "open_nodes"]
       },
-      "attach_to": ["arsip", "manager"],
+      "attach_to": ["arsip"],
       "requires_bin": "npx"
     },
     {
@@ -65,7 +64,7 @@
       "args": ["--from", "mcp-server-time==2026.7.10", "mcp-server-time"],
       "env": {},
       "tools": null,
-      "attach_to": ["manager", "saham", "lifestyle"],
+      "attach_to": ["saham", "lifestyle"],
       "requires_bin": "uvx"
     },
     {

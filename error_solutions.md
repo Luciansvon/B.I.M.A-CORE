@@ -621,3 +621,115 @@
 * **Masalah**: Update title/body PR #8 lewat GitHub App gagal HTTP 403 `Resource not accessible by integration`.
 * **Root Cause**: Instalasi connector memiliki akses baca repository, tetapi token integration tidak mendapat izin write untuk pull request ini.
 * **Solusi**: Setelah memastikan target PR benar, fallback ke GitHub CLI yang terautentikasi sebagai owner; jangan mengulang connector yang sama.
+
+## Log 129: LangGraph Manager Bukan Orchestrator Penuh
+* **Masalah**: Nama dan prompt `manager_node` menyiratkan otak orkestrator, tetapi runtime hanya memilih `active_teams` atau membalas chat santai. Node ini tidak membuat `current_plan`, tidak memantau hasil spesialis, tidak melakukan reroute, dan tidak menyintesis output akhir.
+* **Root Cause**: Urutan spesialis sudah ditentukan statis di `langgraph_engine.py`; seluruh node spesialis langsung menuju node berikutnya atau `memory_finalizer_node` tanpa kembali ke manager.
+* **Solusi**: Perlakukan komponen ini sebagai router/chat fallback. Jangan menghidupkan CrewAI hierarchical manager; pisahkan menjadi router terstruktur dan chat node hanya jika refactor disetujui.
+
+## Log 130: Fast-path Hanya Menangani Sekitar 12-14 Persen Request
+* **Masalah**: Audit `logs/error.log` menemukan 28 fast-path versus 206 fallback, sehingga sekitar 88% request tetap memanggil LLM manager. Uji classifier saat ini terhadap 500 prompt nyata di `memory.db` juga hanya memberi 14% fast-path.
+* **Root Cause**: Regex sengaja konservatif dan tidak menangani chat santai, perintah dokumen umum, HTML/dashboard umum, riset Intel umum, serta semua multi-step.
+* **Solusi**: Pertahankan fallback LLM untuk request ambigu, tetapi tambah fast-path hanya untuk perintah eksplisit yang aman. Chat santai tetap membutuhkan chat node; jangan paksa semua bahasa natural menjadi regex.
+
+## Log 131: Manager Menghasilkan Narasi Tersembunyi Sebelum Delegasi
+* **Masalah**: Manager selalu membuat jawaban natural lengkap lalu memasukkannya ke `messages`, walau request akan diteruskan ke spesialis dan output final memakai pesan spesialis. Pesan tersembunyi ini ikut masuk context summarizer dan kadang dijadikan `upstream_block` oleh Admin/Seniman.
+* **Root Cause**: Satu prompt mencampur dua tugas berbeda: klasifikasi rute dan pembuatan balasan chat.
+* **Solusi**: Untuk rute spesialis, hasilkan schema route-only dan simpan pada state khusus. Panggil generator balasan hanya pada cabang santai; kirim data antarnode lewat `temp_data`, bukan pesan manager tersembunyi.
+
+## Log 132: MCP Manager Terpasang ke Agent yang Tidak Dieksekusi
+* **Masalah**: MCP `sequential_thinking`, Memory, dan Time untuk target `manager` di-start lalu di-inject ke `teams.t1_manager:manager_agent`, sedangkan agent tersebut tidak pernah masuk `Crew.kickoff()`. `manager_node` LangGraph yang aktif tidak menerima tool itu.
+* **Root Cause**: Nama `manager` di registry menunjuk CrewAI manager lama, sementara orkestrasi produksi sudah berpindah ke LangGraph manager.
+* **Solusi**: Hapus target `manager` dari MCP yang tidak punya consumer aktif dan nonaktifkan `sequential_thinking` bila tidak dipakai agent lain. Pindahkan `simpan_sesi()` ke `memory_engine.py` sebelum menghapus agent lama.
+
+## Log 133: Kontrak Route Manager Tidak Punya Regression Test
+* **Masalah**: Parser manual untuk 22 tag route tidak memiliki test langsung; prompt masih menulis "20 pilihan", dan output/tag invalid diam-diam jatuh ke `santai` sehingga pekerjaan spesialis bisa terlewat.
+* **Root Cause**: Test yang ada hanya mencakup beberapa regex Arsip dan registry MCP, bukan kontrak prompt-parser-router manager.
+* **Solusi**: Gunakan structured output dengan enum route tervalidasi dan tambahkan test parametrik untuk seluruh route, urutan multi-team, serta invalid-output fallback yang eksplisit.
+
+## Log 134: Full Suite Memiliki Enam Failure Marp Baseline
+* **Masalah**: Full pytest sebelum dan sesudah hardening manager gagal pada enam test `tests/test_slide_generator.py`.
+* **Root Cause**: Marp CLI/Chromium menghasilkan `ERR_UNHANDLED_REJECTION` pada Node.js 22.22.2; failure sudah ada sebelum perubahan manager.
+* **Solusi**: Bima menyetujui failure ini sebagai baseline di luar scope. Hasil akhir manager: 332 test lulus dan hanya enam failure Marp yang sama; slide generator tidak diubah.
+
+## Log 135: Test MCP Masih Mewajibkan Akses Manager Mati
+* **Masalah**: Full suite pertama setelah penghapusan CrewAI manager gagal di `test_manager_memory_tools_are_read_only` karena key `manager` sudah tidak ada.
+* **Root Cause**: Regression test lama masih mengunci kontrak MCP milik `teams/t1_manager.py`, padahal agent dan seluruh target MCP-nya sengaja dihapus.
+* **Solusi**: Ganti kontrak test menjadi `test_legacy_manager_has_no_mcp_access`; Memory MCP hanya untuk Arsip dan Sequential Thinking tetap disabled. Targeted MCP/registry lulus 6 test.
+
+## Log 136: Hardening LangGraph Manager Terverifikasi
+* **Masalah**: Manager sebelumnya menerima route invalid secara diam-diam, menyimpan narasi tersembunyi, memblokir event loop saat baca SQLite, dan membocorkan token route ke stream.
+* **Root Cause**: Routing memakai rantai substring manual dan manager mencampur klasifikasi dengan balasan spesialis.
+* **Solusi**: Tambahkan mapping canonical 22 route dan parser fail-closed, output route-only untuk spesialis, `asyncio.to_thread()` untuk SQLite, filter stream manager, serta current-turn upstream guard. Focused regression lulus 64 test; compile/import engine lulus; PM2 online; healthcheck lulus 50 check dengan 2 warning; startup membuktikan Sequential Thinking disabled dan tidak ada injeksi MCP ke manager.
+
+## Log 137: Preview Kerja Hilang Setelah Stream Manager Diblokir
+* **Masalah**: Discord/WhatsApp tidak lagi memberi preview yang cukup jelas saat Anisa memproses request setelah hardening Manager.
+* **Root Cause**: Stream `manager_node` sengaja diblokir agar tag `[ROUTE: ...]` dan narasi internal tidak bocor; WhatsApp hanya mempertahankan indikator typing tanpa pesan status.
+* **Solusi**: Pertahankan filter stream Manager dan status node Discord. Di WhatsApp, kirim satu pesan status umum lalu edit pesan yang sama menjadi jawaban, status voice, atau error tanpa menambah protokol streaming.
+* **Verifikasi**: Helper progress lulus 3 test, `node --check whatsapp/index.js` lulus, regression filter Manager tetap lulus, dan `bima-whatsapp` online setelah restart.
+
+## Log 138: Patch Plan Ditolak karena Prefix Baris Hilang
+* **Masalah**: Percobaan pertama membuat plan gagal dengan `invalid hunk` dan file plan tidak terbentuk.
+* **Root Cause**: Satu baris command di blok Markdown tidak diawali prefix `+` yang diwajibkan format `Add File` pada `apply_patch`.
+* **Solusi**: Pastikan setiap baris file baru memiliki prefix patch, lalu ulangi patch. Percobaan kedua berhasil tanpa perubahan parsial dari percobaan pertama.
+
+## Log 139: Diff Check Terhalang Mixed CRLF/LF Lama
+* **Masalah**: `git diff --check` menandai hampir seluruh `whatsapp/index.js` dan `error_solutions.md` sebagai trailing whitespace walau perubahan fitur hanya beberapa hunk.
+* **Root Cause**: Kedua file sudah memakai campuran line ending CRLF/LF sebelum task, sehingga karakter CR dibaca sebagai whitespace pada diff besar terhadap HEAD.
+* **Solusi**: Atas persetujuan Bima, jangan normalisasi seluruh file karena akan memperbesar diff dan menyentuh perubahan lokal lain. Verifikasi task memakai diff semantik `git diff -w`, syntax check, focused test, dan smoke runtime.
+
+## Log 140: OpenRouter Menolak Manager karena Batas Token Melebihi Kredit
+* **Masalah**: Smoke `/bot tes preview` memicu dua respons HTTP 402 dari OpenRouter; request meminta hingga 65.536 token sedangkan saldo hanya mencukupi sekitar 34.578 token.
+* **Root Cause**: `default_llm = get_langchain_llm()` tidak memberi `max_tokens`, sehingga request memakai batas maksimum model yang terlalu mahal untuk saldo aktif.
+* **Solusi**: Tangani sebagai task config terpisah: beri batas `max_tokens` eksplisit yang wajar pada LLM routing atau tambah kredit OpenRouter. Config tidak diubah dalam task preview; fallback graph tetap menyelesaikan request dan WA mengirim satu chunk.
+
+## Log 141: GitHub CLI Tidak Terpasang dan Sudo Memerlukan Password
+* **Masalah**: Publish awal gagal karena `gh` tidak ditemukan; instalasi paket sistem juga tidak bisa berjalan noninteraktif karena `sudo` meminta password.
+* **Root Cause**: GitHub CLI belum tersedia di PATH WSL dan user tidak memiliki passwordless sudo.
+* **Solusi**: Instal binary resmi GitHub CLI v2.96.0 ke `~/.local/bin/gh` tanpa sudo setelah SHA-256 tarball cocok dengan checksum rilis resmi. `gh auth status` kemudian mengonfirmasi akun `Luciansvon` sudah aktif.
+
+## Log 142: Patch Semantik Gagal Masuk ke Git Index
+* **Masalah**: `git diff -w | git apply --cached --check` gagal pada `whatsapp/index.js:21` walau hunk fitur benar.
+* **Root Cause**: Patch semantik masih membawa karakter CR dari working tree mixed CRLF/LF, sedangkan versi file di Git index memakai LF.
+* **Solusi**: Hapus karakter CR hanya dari aliran patch sebelum `git apply --cached`; jangan normalisasi working tree. Verifikasi staged diff tetap hanya memuat hunk fitur.
+
+## Log 143: Command Staging Gabungan Gagal di Quote Lintas Shell
+* **Masalah**: Command gabungan untuk patch index dan pembuatan blob berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: Quote variabel Bash bertabrakan dengan lapisan quote PowerShell saat seluruh proses digabung dalam satu command.
+* **Solusi**: Pecah staging menjadi command pendek: patch WhatsApp, buat hash blob log, update index, lalu stage file baru secara terpisah.
+
+## Log 144: Command Verifikasi PR Gagal di Quote Lintas Shell
+* **Masalah**: Command gabungan untuk membaca JSON PR, membandingkan hash, dan mencetak status berhenti dengan `unexpected EOF while looking for matching quote`.
+* **Root Cause**: Substitusi command dan format string kembali melewati quote PowerShell serta Bash dalam satu baris panjang.
+* **Solusi**: Jalankan pemeriksaan PR, hash branch, dan file sementara sebagai command terpisah tanpa interpolasi bertingkat.
+
+## Log 145: Separator Log Hilang pada Blob Staging Selektif
+* **Masalah**: Diff staged pertama menempelkan header Log 89 langsung setelah Log 88 tanpa baris kosong.
+* **Root Cause**: `sed` dimulai tepat dari header Log 89, sehingga separator kosong sebelum header tidak ikut ke blob Git.
+* **Solusi**: Sisipkan satu newline eksplisit antara isi HEAD dan blok log baru, lalu cek ulang staged diff sebelum commit.
+
+## Log 146: Pencarian Marker Kosong Menghentikan Staging
+* **Masalah**: Command gabungan dengan `set -e` berhenti sebelum `git add` walau tidak ada conflict marker.
+* **Root Cause**: `rg` mengembalikan exit 1 untuk hasil pencarian kosong; shell menganggapnya kegagalan karena `set -e`.
+* **Solusi**: Jalankan pemeriksaan marker sebagai command read-only terpisah, lalu jalankan staging hanya setelah output kosong terkonfirmasi.
+
+## Log 147: Resolusi Prompt Manager Memutus Kontrak P3
+* **Masalah**: Full pytest PR #7 menghasilkan 1 failure pada `test_manager_prompt_route_count_matches_menu` walau jumlah route tetap 22.
+* **Root Cause**: Resolusi konflik mempertahankan makna prompt, tetapi mengubah frasa kontrak exact `pilih SATU dari 22 pilihan di atas` yang dijaga regression test.
+* **Solusi**: Pulihkan frasa exact tersebut tanpa mengubah aturan output route spesialis; jalankan test P3 dan manager routing sebelum full suite.
+
+## Log 148: Diff PR #7 Menemukan Blank Line Berlebih di EOF
+* **Masalah**: `git diff --check origin/main..HEAD` melaporkan `new blank line at EOF` pada spec progress WhatsApp.
+* **Root Cause**: Dokumen branch PR diakhiri dua newline sehingga Git membaca satu baris kosong tambahan.
+* **Solusi**: Hapus hanya baris kosong terakhir dan ulangi `git diff --check` terhadap base PR aktual.
+* **Penyesuaian teknis**: Range `origin/main..HEAD` hanya membaca commit, bukan working tree. Validasi patch dengan `git diff --check`, commit, baru ulangi range terhadap base.
+
+## Log 149: Sinkronisasi PR #8 Setelah Squash PR #7 Menghasilkan Dua Konflik
+* **Masalah**: Merge `origin/main` terbaru ke PR #8 berhenti pada conflict `error_solutions.md` dan `whatsapp/index.js`.
+* **Root Cause**: PR #7 dan PR #8 sama-sama menambah progress/filter WhatsApp serta log error dari base yang sama sebelum PR #7 di-squash.
+* **Solusi**: Gabungkan filter, sanitizer, dan progress editor; pertahankan pesan error publik tanpa detail internal; gunakan log PR #8 sebagai base lalu append log unik PR #7 dengan nomor baru.
+
+## Log 150: Rekonstruksi Append-only Menambah Blank Line EOF
+* **Masalah**: `git diff --check` melaporkan `new blank line at EOF` setelah dua versi `error_solutions.md` digabung.
+* **Root Cause**: Konten hasil rekonstruksi sudah memiliki newline akhir lalu patch add-file menambahkan satu newline lagi.
+* **Solusi**: Hapus hanya baris kosong terakhir, pertahankan satu newline POSIX, lalu ulangi `git diff --check` sebelum staging.

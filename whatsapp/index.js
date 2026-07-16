@@ -22,6 +22,11 @@ const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
 const { shouldHandleMessage } = require('./message_filter');
+const {
+    PROCESSING_MESSAGE,
+    VOICE_READY_MESSAGE,
+    updateProgressMessage,
+} = require('./progress_message');
 const { sanitizeForWhatsApp } = require('./sanitize');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
@@ -534,6 +539,7 @@ client.on('disconnected', (reason) => {
 // MESSAGE HANDLER
 // ============================================================
 async function handleMessage(msg) {
+    let progressMessage = null;
     try {
         const text = msg.body?.trim() || '';
         const lower = text.toLowerCase();
@@ -671,6 +677,8 @@ async function handleMessage(msg) {
 
         log('INFO', `→ Anisa: "${perintah.substring(0, 80) || '[voice note → STT]'}"`);
 
+        progressMessage = await msg.reply(PROCESSING_MESSAGE);
+
         // Keep "typing..." indicator hidup selama LangGraph proses (re-trigger tiap 8s)
         const typingInterval = setInterval(() => {
             chat.sendStateTyping().catch(() => {});
@@ -685,7 +693,11 @@ async function handleMessage(msg) {
         }
 
         if (!result?.response) {
-            await msg.reply('😵 Tidak ada respons. Coba lagi.');
+            await updateProgressMessage(
+                progressMessage,
+                msg,
+                '😵 Tidak ada respons. Coba lagi.',
+            );
             return;
         }
 
@@ -699,11 +711,13 @@ async function handleMessage(msg) {
         let chunks = [];
         if (!skipTextReply) {
             chunks = smartChunks(sanitizeForWhatsApp(result.response));
-            await msg.reply(chunks[0]);
+            await updateProgressMessage(progressMessage, msg, chunks[0]);
             for (let i = 1; i < chunks.length; i++) {
                 await new Promise(r => setTimeout(r, 500));
                 await chat.sendMessage(chunks[i]);
             }
+        } else {
+            await updateProgressMessage(progressMessage, msg, VOICE_READY_MESSAGE);
         }
 
         // Kirim voice note kalau ada
@@ -731,7 +745,20 @@ async function handleMessage(msg) {
         log('INFO', `✓ ${chunks.length} chunk, ${result.output_files?.length || 0} files${voiceFile ? ` + voice(${voiceMode})` : ''}`);
     } catch (error) {
         log('ERROR', `${error.message}`);
-        try { await msg.reply('❌ WhatsApp gagal memproses pesan. Coba sekali lagi.'); } catch {}
+        const publicError = '❌ WhatsApp gagal memproses pesan. Coba sekali lagi.';
+        try {
+            if (progressMessage) {
+                await updateProgressMessage(
+                    progressMessage,
+                    msg,
+                    publicError,
+                );
+            } else {
+                await msg.reply(publicError);
+            }
+        } catch (replyError) {
+            log('ERROR', `Gagal kirim status error: ${replyError.message}`);
+        }
     }
 }
 

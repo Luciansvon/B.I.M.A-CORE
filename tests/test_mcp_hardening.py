@@ -36,8 +36,12 @@ def test_active_mcp_packages_are_pinned_and_sqlite_is_disabled() -> None:
     assert servers["memory_anthropic"]["args"][1].endswith("@2026.7.4")
 
 
-def test_manager_memory_tools_are_read_only() -> None:
+def test_legacy_manager_has_no_mcp_access() -> None:
     servers = {server["name"]: server for server in _mcp_config()["servers"]}
-    manager_tools = servers["memory_anthropic"]["tool_allowlist_by_agent"]["manager"]
+    memory = servers["memory_anthropic"]
+    sequential = servers["sequential_thinking"]
 
-    assert manager_tools == ["read_graph", "search_nodes", "open_nodes"]
+    assert "manager" not in memory["tool_allowlist_by_agent"]
+    assert "manager" not in memory["attach_to"]
+    assert sequential["enabled"] is False
+    assert "manager" not in sequential["attach_to"]
