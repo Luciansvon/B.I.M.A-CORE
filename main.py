@@ -113,15 +113,23 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"[SECURITY] Gagal melakukan audit keamanan MCP: {e}")
 
-    # Init MCP client manager — consume MCP server eksternal (fetch, markitdown, dll)
+    # Init MCP client manager di background supaya timeout server eksternal gak
+    # menahan startup Discord.
     try:
         from config import BASE_DIR, MCP_CLIENTS_CONFIG
-        from core.mcp_client_manager import init_manager, shutdown_manager
-        mcp_mgr = init_manager(MCP_CLIENTS_CONFIG, BASE_DIR)
-        _inject_mcp_tools(mcp_mgr)
-        from teams.t3_arsip import start_vault_index_background
-        start_vault_index_background()
-        atexit.register(shutdown_manager)
+        from core.mcp_startup import start_mcp_clients_in_background
+
+        def _on_mcp_ready(mcp_mgr: object) -> None:
+            _inject_mcp_tools(mcp_mgr)
+            from teams.t3_arsip import start_vault_index_background
+
+            start_vault_index_background()
+
+        start_mcp_clients_in_background(
+            MCP_CLIENTS_CONFIG,
+            BASE_DIR,
+            _on_mcp_ready,
+        )
     except Exception as e:
         logger.warning(f"MCP client gagal init (bot tetap jalan tanpa MCP eksternal): {e}")
 

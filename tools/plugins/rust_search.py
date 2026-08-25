@@ -3,14 +3,16 @@ B.I.M.A Core — Rust Search Tool (CrewAI Plugin)
 Wrapper Python untuk binary Rust `bima_search` yang sudah dikompilasi.
 Bisa dipakai sebagai tool untuk Team Arsip atau Agent manapun.
 """
-import subprocess
 import json
+import subprocess
 from pathlib import Path
+
 from crewai.tools import BaseTool
 
-BIMA_SEARCH_BIN = Path(__file__).parent.parent / "bima_search"
-SEARCH_INDEX_DIR = Path(__file__).parent.parent / "search_index"
-SOURCE_DIR = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BIMA_SEARCH_BIN = PROJECT_ROOT / "tools" / "bima_search" / "target" / "release" / "bima_search"
+SEARCH_INDEX_DIR = PROJECT_ROOT / "search_index"
+SOURCE_DIR = PROJECT_ROOT
 
 class RustSearchTool(BaseTool):
     name: str = "rust_search_tool"
@@ -21,7 +23,7 @@ class RustSearchTool(BaseTool):
     )
     
     def _run(self, query: str) -> str:
-        if not BIMA_SEARCH_BIN.exists():
+        if not BIMA_SEARCH_BIN.is_file():
             return "❌ Binary bima_search belum dikompilasi. Jalankan: cd tools/bima_search && cargo build --release"
         
         if not SEARCH_INDEX_DIR.exists():
@@ -77,7 +79,7 @@ class RustReindexTool(BaseTool):
     )
     
     def _run(self, input_str: str = "") -> str:
-        if not BIMA_SEARCH_BIN.exists():
+        if not BIMA_SEARCH_BIN.is_file():
             return "❌ Binary bima_search belum dikompilasi."
         
         try:
