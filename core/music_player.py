@@ -34,6 +34,11 @@ _YDL_OPTS = {
     "no_warnings": True,
     "default_search": "ytsearch1:",
     "source_address": "0.0.0.0",
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android"],
+        },
+    },
 }
 
 # FFmpeg options
@@ -43,6 +48,23 @@ _YDL_OPTS = {
 #   -bufsize lebarin buffer biar gak underrun di network jelek.
 _FFMPEG_BEFORE = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
 _FFMPEG_OPTS = "-vn -ar 48000 -ac 2 -f s16le -bufsize 1M -loglevel warning"
+
+
+class MusicLoadError(RuntimeError):
+    """Error aman yang boleh ditampilkan ke user Discord."""
+
+
+def _safe_ytdlp_error(error: Exception) -> MusicLoadError:
+    message = str(error).lower()
+    bot_check_markers = (
+        "not a bot",
+        "sign in to confirm",
+        "http error 429",
+        "too many requests",
+    )
+    if any(marker in message for marker in bot_check_markers):
+        return MusicLoadError("YouTube lagi membatasi akses. Coba lagi sebentar.")
+    return MusicLoadError("Sumber audio gagal diproses. Coba URL atau judul lain.")
 
 
 @dataclass
@@ -90,7 +112,11 @@ async def _ytdl_extract_one(query: str) -> Track | None:
                 info = entries[0]
             return info
 
-    info = await asyncio.to_thread(_extract)
+    try:
+        info = await asyncio.to_thread(_extract)
+    except yt_dlp.utils.DownloadError as error:
+        logger.warning("[MUSIC] yt-dlp single extract gagal: %s", type(error).__name__)
+        raise _safe_ytdlp_error(error) from error
     if not info:
         return None
 
@@ -118,7 +144,11 @@ async def _ytdl_extract_playlist(url: str, max_tracks: int = _MAX_PLAYLIST_TRACK
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
 
-    info = await asyncio.to_thread(_extract)
+    try:
+        info = await asyncio.to_thread(_extract)
+    except yt_dlp.utils.DownloadError as error:
+        logger.warning("[MUSIC] yt-dlp playlist extract gagal: %s", type(error).__name__)
+        raise _safe_ytdlp_error(error) from error
     if not info or "entries" not in info:
         return []
 
@@ -156,11 +186,21 @@ class MusicPlayer:
     # -------- connection lifecycle --------
 
     async def connect(self, voice_channel: discord.VoiceChannel) -> bool:
-        if self.voice_client and self.voice_client.is_connected():
-            if self.voice_client.channel == voice_channel:
+        cached_voice = getattr(self.guild, "voice_client", None) or self.voice_client
+        if cached_voice and cached_voice.is_connected():
+            self.voice_client = cached_voice
+            if cached_voice.channel == voice_channel:
                 return True
-            await self.voice_client.move_to(voice_channel)
+            await cached_voice.move_to(voice_channel)
             return True
+
+        if cached_voice:
+            logger.warning(
+                f"[MUSIC] Bersihin stale voice cache guild={self.guild.id} sebelum reconnect"
+            )
+            await self._close_voice_client(cached_voice, force=True)
+            self.voice_client = None
+
         try:
             self.voice_client = await voice_channel.connect(timeout=15, reconnect=True)
             return True
@@ -168,17 +208,44 @@ class MusicPlayer:
             logger.error(f"[MUSIC] Connect gagal: {e}", exc_info=True)
             return False
 
-    async def disconnect(self):
+    async def disconnect(self) -> bool:
         self._cancel_idle()
         self.queue.clear()
         self.current = None
-        if self.voice_client and self.voice_client.is_connected():
-            try:
-                self.voice_client.stop()
-                await self.voice_client.disconnect(force=False)
-            except Exception:
-                pass
+        cached_voice = getattr(self.guild, "voice_client", None) or self.voice_client
+        if not cached_voice:
+            self.voice_client = None
+            return False
+
+        disconnected = await self._close_voice_client(
+            cached_voice,
+            force=not cached_voice.is_connected(),
+        )
         self.voice_client = None
+        return disconnected
+
+    async def _close_voice_client(
+        self,
+        voice_client: discord.VoiceClient,
+        *,
+        force: bool,
+    ) -> bool:
+        try:
+            voice_client.stop()
+        except Exception as e:
+            logger.warning(f"[MUSIC] Voice stop gagal sebelum disconnect: {e}")
+
+        try:
+            await voice_client.disconnect(force=force)
+            return True
+        except Exception as e:
+            logger.warning(f"[MUSIC] Voice disconnect gagal, pakai cleanup cache: {e}")
+            try:
+                voice_client.cleanup()
+                return True
+            except Exception as cleanup_error:
+                logger.error(f"[MUSIC] Voice cleanup cache gagal: {cleanup_error}")
+                return False
 
     def _cancel_idle(self):
         if self._idle_task and not self._idle_task.done():
@@ -250,7 +317,18 @@ class MusicPlayer:
         # Lazy fresh-extract buat playlist track (stream_url kosong saat enqueue flat).
         # Juga handle: stream URL expired (YouTube tokens biasanya ~6 jam) — re-extract.
         if not next_track.stream_url:
-            fresh = await _ytdl_extract_one(next_track.url)
+            try:
+                fresh = await _ytdl_extract_one(next_track.url)
+            except MusicLoadError:
+                logger.warning("[MUSIC] Fresh extract ditolak source, skip: %s", next_track.title)
+                fresh = None
+            except Exception as error:
+                logger.error(
+                    "[MUSIC] Fresh extract gagal (%s), skip: %s",
+                    type(error).__name__,
+                    next_track.title,
+                )
+                fresh = None
             if not fresh:
                 logger.warning(f"[MUSIC] Fresh extract gagal, skip: {next_track.title}")
                 self.current = None
