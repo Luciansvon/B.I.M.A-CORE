@@ -23,8 +23,10 @@ from pydantic import BaseModel, Field
 from core.desktop_bridge_client import capture, ui_tree, BASE_URL as _BRIDGE_URL, health as bridge_health
 from core.event_bus import emit
 from core.langgraph_nodes.state import BimaState, notify_progress
+from core.model_router import model_profile, openrouter_extra_body
 
 logger = logging.getLogger('bima_core')
+OBSERVER_MODEL = model_profile("observer").model
 
 _last_phash: Optional[str] = None
 _last_observation_text: Optional[str] = None
@@ -319,7 +321,8 @@ async def analyze_screen(
             )
 
         result = await client.chat.completions.create(
-            model="google/gemini-3.5-flash",
+            model=OBSERVER_MODEL,
+            extra_body=openrouter_extra_body("observer"),
             response_model=response_model,
             messages=[
                 {"role": "system", "content": sys_prompt},

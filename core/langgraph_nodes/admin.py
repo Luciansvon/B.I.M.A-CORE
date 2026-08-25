@@ -6,6 +6,8 @@ from langchain_core.messages import AIMessage
 from core.langgraph_nodes.state import BimaState, get_current_upstream_text, notify_progress
 from teams.t4_admin import admin_agent, detect_style, detect_format, STYLES
 from crewai import Task, Crew
+from config import admin_heavy_llm, admin_llm
+from core.model_router import clone_agent_with_llm, select_profile
 
 logger = logging.getLogger('bima_core')
 
@@ -42,6 +44,13 @@ async def admin_node(state: BimaState) -> dict:
             history_block = f"\n\n=== HISTORI PERCAKAPAN TERAKHIR ===\n{rc}"
 
     logger.info(f"[LANGGRAPH ADMIN] Style={detected_style} | Format={detected_format} | Menyiapkan...")
+
+    profile = select_profile("admin", user_request)
+    request_agent = clone_agent_with_llm(
+        admin_agent,
+        admin_heavy_llm if profile == "heavy" else admin_llm,
+    )
+    logger.info("[MODEL_ROUTER] team=admin profile=%s", profile)
 
     task = Task(
         description=f"""{realtime_context}{history_block}{upstream_block}{data_context}
@@ -94,11 +103,11 @@ async def admin_node(state: BimaState) -> dict:
 
         WAJIB FINAL OUTPUT: SUCCESS|path_file|keterangan ATAU FAILED|alasan""",
         expected_output="Path file dalam format SUCCESS|path|keterangan.",
-        agent=admin_agent
+        agent=request_agent
     )
 
     crew = Crew(
-        agents=[admin_agent],
+        agents=[request_agent],
         tasks=[task],
         verbose=True
     )

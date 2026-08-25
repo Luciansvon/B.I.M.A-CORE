@@ -1,11 +1,11 @@
 """Tim Kodok (kode-doctor) — agent yang bisa baca + jelasin repo BIMA_CORE.
 
 Pakai RepoExplain/Search/Summarize/Stats tool (semantic + AST chunking).
-LLM: mekanik_llm (DeepSeek-pro) karena task-nya code reasoning.
+LLM: kodok_llm (DeepSeek Pro) karena task-nya code reasoning.
 """
 from crewai import Agent
 
-from config import mekanik_llm
+from config import kodok_llm
 from tools.code_visualizer import CodebaseVisualizerTool
 from tools.diagram_tool import DiagramGeneratorTool
 from tools.repo_rag_tools import (
@@ -49,7 +49,7 @@ kodok_agent = Agent(
     - RepoIndexStatsTool → cek status index
     - CodebaseVisualizerTool(target_dir) → buat peta interaktif visual module dependency
     - DiagramGeneratorTool(mermaid_code, title) → render sequence/flowchart/state diagram dari sintaks Mermaid yang kamu tulis sendiri""",
-    llm=mekanik_llm,
+    llm=kodok_llm,
     tools=[
         RepoExplainTool(),
         RepoSearchSymbolTool(),

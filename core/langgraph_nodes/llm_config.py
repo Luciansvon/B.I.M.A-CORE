@@ -4,6 +4,7 @@ import logging
 from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import AsyncCallbackHandler
 from dotenv import load_dotenv
+from core.model_router import DAILY_MODEL, model_profile
 
 load_dotenv()
 
@@ -46,7 +47,13 @@ def compress_context(text: str, target_ratio: float = 0.4) -> str:
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 
-def get_langchain_llm(model_name: str = "deepseek/deepseek-v4-flash", max_tokens: int | None = None) -> ChatOpenAI:
+def get_langchain_llm(
+    model_name: str = DAILY_MODEL,
+    max_tokens: int | None = None,
+    *,
+    fallbacks: tuple[str, ...] = (),
+    reasoning_effort: str | None = None,
+) -> ChatOpenAI:
     # LangChain ChatOpenAI kirim model_name apa adanya ke OpenRouter,
     # JANGAN pakai prefix "openrouter/" (itu khusus CrewAI/LiteLLM).
     if model_name.startswith("openrouter/"):
@@ -61,16 +68,32 @@ def get_langchain_llm(model_name: str = "deepseek/deepseek-v4-flash", max_tokens
     }
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
+    extra_body: dict[str, object] = {}
+    if fallbacks:
+        extra_body["models"] = [model_name, *fallbacks]
     if os.environ.get("ENABLE_COST_GUARDRAILS", "false").lower() == "true":
-        kwargs["extra_body"] = {"usage": {"include": True}}
+        extra_body["usage"] = {"include": True}
+    if extra_body:
+        kwargs["extra_body"] = extra_body
     return ChatOpenAI(**kwargs)
+
+
+def get_team_langchain_llm(team: str, profile: str = "standard") -> ChatOpenAI:
+    selected = model_profile(team, profile)
+    return get_langchain_llm(
+        selected.model,
+        fallbacks=selected.fallbacks,
+        reasoning_effort=selected.reasoning_effort,
+    )
 
 
 # T1-C: Model Complexity Router — pilih model berdasarkan kompleksitas tugas
 _COMPLEXITY_MAP = {
-    "routing":  "deepseek/deepseek-v4-flash",   # intent classify, santai
-    "standard": "deepseek/deepseek-v4-flash",   # most agents
-    "heavy":    "deepseek/deepseek-v4-pro",     # mekanik, complex intel
+    "routing": model_profile("manager"),
+    "standard": model_profile("manager"),
+    "heavy": model_profile("mekanik", "heavy"),
 }
 
 
@@ -80,15 +103,21 @@ def get_llm_for_task(complexity: str = "standard") -> ChatOpenAI:
     """
     if os.environ.get("ENABLE_MODEL_ROUTER", "true").lower() != "true":
         return default_llm
-    model = _COMPLEXITY_MAP.get(complexity, _COMPLEXITY_MAP["standard"])
-    return get_langchain_llm(model)
+    selected = _COMPLEXITY_MAP.get(complexity, _COMPLEXITY_MAP["standard"])
+    return get_langchain_llm(
+        selected.model,
+        fallbacks=selected.fallbacks,
+        reasoning_effort=selected.reasoning_effort,
+    )
 
 
 # Kita inisialisasi LLM utama untuk percobaan ini
-default_llm = get_langchain_llm()
+default_llm = get_team_langchain_llm("manager")
 # Convenience exports (T1-C) — supaya node-node bisa import langsung tanpa router call
-fast_llm = get_langchain_llm(_COMPLEXITY_MAP["routing"])
-heavy_llm = get_langchain_llm(_COMPLEXITY_MAP["heavy"])
+fast_llm = get_team_langchain_llm("manager")
+heavy_llm = get_team_langchain_llm("mekanik", "heavy")
+intel_llm = get_team_langchain_llm("intel")
+seniman_llm = get_team_langchain_llm("seniman")
 
 
 # T1-D: CostTracker callback — capture OpenRouter cost dari response metadata

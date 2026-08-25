@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Optional
 
 from crewai.tools import BaseTool
+from core.model_router import model_profile, openrouter_extra_body
 
 
 _TEMPLATES_DIR = Path(__file__).parent / "prompt_templates"
-_DEFAULT_MODEL = "deepseek/deepseek-v4-pro"
+_DEFAULT_MODEL = model_profile("prompt_optimizer").model
 _SCORE_AXES = ("clarity", "specificity", "structure", "constraints", "examples", "output_format")
 
 
@@ -129,6 +130,7 @@ class PromptOptimizerTool(BaseTool):
             )
             response = client.chat.completions.create(
                 model=_DEFAULT_MODEL,
+                extra_body=openrouter_extra_body("prompt_optimizer"),
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},

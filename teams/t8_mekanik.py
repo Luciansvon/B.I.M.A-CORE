@@ -9,6 +9,7 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import FileReadTool
 from config import mekanik_llm, OUTPUT_DIR, BASE_DIR
+from core.model_router import DAILY_MODEL
 from tools.strix_scanner import StrixScannerTool
 from core.public_errors import public_failure
 
@@ -197,7 +198,7 @@ KEMBALIKAN HANYA kode Python yang sudah diperbaiki, tanpa penjelasan, tanpa mark
                                     "Content-Type": "application/json"
                                 },
                                 json={
-                                    "model": "deepseek/deepseek-v4-flash",
+                                    "model": DAILY_MODEL,
                                     "messages": [{"role": "user", "content": fix_prompt}],
                                     "max_tokens": 2000
                                 },

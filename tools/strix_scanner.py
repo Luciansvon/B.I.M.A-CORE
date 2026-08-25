@@ -15,6 +15,7 @@ from typing import Any
 from crewai.tools import BaseTool
 
 from config import BASE_DIR, OUTPUT_DIR
+from core.model_router import SECURITY_MODEL, crewai_model_id
 
 STRIX_PACKAGE = "strix-agent==1.1.0"
 STRIX_IMAGE = "ghcr.io/usestrix/strix-sandbox:1.0.0"
@@ -208,7 +209,7 @@ def _child_env(home: Path, key: str) -> dict[str, str]:
         "TMPDIR": str(home / "tmp"),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "NO_COLOR": "1",
-        "STRIX_LLM": os.getenv("STRIX_LLM", "openrouter/openai/gpt-5.4"),
+        "STRIX_LLM": os.getenv("STRIX_LLM", crewai_model_id(SECURITY_MODEL)),
         "LLM_API_KEY": key,
         "STRIX_IMAGE": STRIX_IMAGE,
         "STRIX_RUNTIME_BACKEND": "docker",

@@ -10,6 +10,7 @@ from crewai.tools import BaseTool
 from crewai_tools import FileReadTool
 from config import visual_llm, OUTPUT_DIR, VISUAL_MODEL_NAME
 from core.path_security import resolve_allowed_path
+from core.model_router import openrouter_extra_body
 from tools.slide_generator import SlideGeneratorTool
 
 # ============================================================
@@ -23,6 +24,7 @@ def _gemini_vision(image_b64: str, content_type: str, prompt: str, max_tokens: i
     )
     result = client.chat.completions.create(
         model=VISUAL_MODEL_NAME,
+        extra_body=openrouter_extra_body("visual"),
         messages=[{
             "role": "user",
             "content": [
@@ -402,6 +404,7 @@ class AudioTranscriber(BaseTool):
 
             result = client.chat.completions.create(
                 model=VISUAL_MODEL_NAME,
+                extra_body=openrouter_extra_body("visual"),
                 messages=[{
                     "role": "user",
                     "content": [
@@ -671,6 +674,7 @@ class ImageAnalyzerTool(BaseTool):
             
             result = client.chat.completions.create(
                 model=VISUAL_MODEL_NAME,
+                extra_body=openrouter_extra_body("visual"),
                 messages=[{
                     "role": "user",
                     "content": [
@@ -745,6 +749,7 @@ class ImageToCodeTool(BaseTool):
             
             result = client.chat.completions.create(
                 model=VISUAL_MODEL_NAME,
+                extra_body=openrouter_extra_body("visual"),
                 messages=[{
                     "role": "user",
                     "content": [

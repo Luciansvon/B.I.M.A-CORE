@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.langgraph_nodes.state import BimaState, get_current_upstream_text, notify_progress
-from core.langgraph_nodes.llm_config import get_langchain_llm
+from core.langgraph_nodes.llm_config import seniman_llm
 from core.langgraph_nodes.html_assets import (
     build_html_skeleton,
     detect_template,
@@ -20,9 +20,6 @@ logger = logging.getLogger('bima_core')
 
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
-
-seniman_llm = get_langchain_llm("deepseek/deepseek-v4-flash")
-
 
 from teams.t7_html_templates import render_template
 import json
