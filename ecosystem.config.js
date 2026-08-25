@@ -35,8 +35,15 @@ module.exports = {
         TOKENIZERS_PARALLELISM: "false",
         OMP_NUM_THREADS: "2",
         MKL_NUM_THREADS: "2",
-        // RAG reranker multilingual (bge-reranker-v2-m3) — path lokal biar ga re-download flaky
-        RERANKER_MODEL: "/home/bima_lucian/models/bge-reranker-v2-m3",
+        // Daily runtime tidak memakai text-to-speech; STT tetap aktif.
+        ENABLE_TTS: "false",
+        // Arsip pakai embedding cloud agar model 8B tidak tinggal di RAM WSL.
+        EMBEDDING_BACKEND_ARSIP: "cloud",
+        EMBEDDING_MODEL_ARSIP: "qwen/qwen3-embedding-8b",
+        EMBEDDING_DIM_ARSIP: "1024",
+        EMBED_BATCH_SIZE: "64",
+        // Hybrid vector + BM25 tetap aktif; CrossEncoder lokal dimatikan.
+        RERANKER_ENABLED: "false",
         // STT large-v3-turbo (akurasi ID jauh > small), CPU int8 biar aman VRAM 4GB
         STT_MODEL_SIZE: "/home/bima_lucian/models/faster-whisper-large-v3-turbo",
         STT_COMPUTE_TYPE: "int8",
@@ -47,7 +54,7 @@ module.exports = {
       out_file: "./logs/output.log",
       merge_logs: true,
       autorestart: true,
-      max_memory_restart: "3G",          // Auto restart kalau RAM bocor
+      max_memory_restart: "2G",          // Guardrail target RAM Anisa 1-2 GB
       restart_delay: 5000,               // Tunggu 5 detik sebelum restart
       exp_backoff_restart_delay: 1000,   // Exponential backoff kalau crash loop
     },

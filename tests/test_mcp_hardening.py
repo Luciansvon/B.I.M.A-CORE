@@ -28,9 +28,9 @@ def test_active_mcp_packages_are_pinned_and_sqlite_is_disabled() -> None:
     servers = {server["name"]: server for server in _mcp_config()["servers"]}
 
     assert servers["sqlite"]["enabled"] is False
-    assert servers["fetch"]["args"][:2] == ["--from", "mcp-server-fetch==2026.7.10"]
-    assert servers["time"]["args"][:2] == ["--from", "mcp-server-time==2026.7.10"]
-    assert servers["git"]["args"][:2] == ["--from", "mcp-server-git==2026.7.10"]
+    assert servers["fetch"]["args"][:2] == ["--from", "mcp-server-fetch==2026.8.18"]
+    assert servers["time"]["args"][:2] == ["--from", "mcp-server-time==2026.8.18"]
+    assert servers["git"]["args"][:2] == ["--from", "mcp-server-git==2026.8.18"]
     assert servers["markitdown"]["args"][:2] == ["--from", "markitdown-mcp==0.0.1a4"]
     assert servers["sequential_thinking"]["args"][1].endswith("@2026.7.4")
     assert servers["memory_anthropic"]["args"][1].endswith("@2026.7.4")

@@ -34,7 +34,7 @@ def test_browser_and_voice_are_independent_uv_projects() -> None:
     browser = _project(PROJECT_ROOT / "services" / "browser" / "pyproject.toml")
     voice = _project(PROJECT_ROOT / "services" / "voice" / "pyproject.toml")
 
-    assert browser["project"]["dependencies"] == ["browser-use==0.13.3"]
+    assert browser["project"]["dependencies"] == ["browser-use==0.13.8"]
     assert "f5-tts==1.1.21" in voice["project"]["dependencies"]
     assert "torch" in voice["tool"]["uv"]["sources"]
 
@@ -43,6 +43,12 @@ def test_each_runtime_has_its_own_lockfile() -> None:
     assert (PROJECT_ROOT / "uv.lock").is_file()
     assert (PROJECT_ROOT / "services" / "browser" / "uv.lock").is_file()
     assert (PROJECT_ROOT / "services" / "voice" / "uv.lock").is_file()
+
+
+def test_pm2_explicitly_disables_tts() -> None:
+    ecosystem = (PROJECT_ROOT / "ecosystem.config.js").read_text(encoding="utf-8")
+
+    assert 'ENABLE_TTS: "false"' in ecosystem
 
 
 def test_ci_installs_only_locked_ci_group() -> None:
