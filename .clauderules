@@ -1,5 +1,0 @@
-# .clauderules
-
-> **Dipindahkan.** Semua aturan di file ini (SGA plan+tasklist, pencatatan error, simplicity first, surgical changes, keamanan kredensial) sudah digabung ke [`CLAUDE.md`](CLAUDE.md) — bagian "Alur Kerja Wajib (Operating Workflow)" dan "Aturan Coding Proyek".
->
-> Baris lama yang menyuruh jalankan `python c:\Users\shint\OneDrive\Dokumen\update_ideas.py` dan cek `applied_ideas.md` **dihapus** — path itu tidak terjangkau dari WSL (`/mnt/c/Users/shint/OneDrive/Dokumen/` tidak ditemukan), jadi tiap task selalu gagal mencoba menjalankannya. Kalau Bima mau fitur ini aktif lagi, kasih tau lokasi file yang benar dan bisa diakses dari WSL.
