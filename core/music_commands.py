@@ -12,7 +12,7 @@ import logging
 
 import discord
 
-from core.music_player import get_player, MusicPlayer
+from core.music_player import get_player, MusicLoadError, MusicPlayer
 
 logger = logging.getLogger("bima_core")
 
@@ -91,9 +91,13 @@ async def _cmd_play(message: discord.Message, player: MusicPlayer, args: str, us
     pending = await message.reply(f"🔍 Cari `{args[:80]}`...")
     try:
         first, count = await player.enqueue(args, requester=message.author.display_name)
-    except Exception as e:
-        logger.error(f"[MUSIC] enqueue error: {e}", exc_info=True)
-        await pending.edit(content=f"❌ Gagal cari/load: `{e}`")
+    except MusicLoadError as error:
+        logger.warning("[MUSIC] enqueue ditolak source: %s", type(error).__name__)
+        await pending.edit(content=f"❌ {error}")
+        return
+    except Exception as error:
+        logger.error("[MUSIC] enqueue error: %s", type(error).__name__, exc_info=True)
+        await pending.edit(content="❌ Gagal cari/load audio. Coba lagi atau pakai URL lain.")
         return
 
     if not first or count == 0:
@@ -163,10 +167,9 @@ async def _cmd_np(message: discord.Message, player: MusicPlayer):
 
 
 async def _cmd_leave(message: discord.Message, player: MusicPlayer):
-    if not player.voice_client or not player.voice_client.is_connected():
+    if not await player.disconnect():
         await message.reply("Anisa gak lagi di voice channel.")
         return
-    await player.disconnect()
     await message.reply("👋 Keluar voice channel.")
 
 

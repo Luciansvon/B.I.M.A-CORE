@@ -52,7 +52,7 @@ dependencies = [
   "faster-whisper==1.2.1",
   "edge-tts==7.2.8",
   "sherlock-project==0.16.0",
-  "yt-dlp==2026.7.4",
+  "yt-dlp==2026.8.19",
   "PyNaCl==1.6.2",
   "davey==0.1.6",
   "headroom==0.2.0",
