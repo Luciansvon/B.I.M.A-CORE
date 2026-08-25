@@ -5,6 +5,8 @@ from langchain_core.messages import AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
 from teams.t3_arsip import VaultSaveTool, arsip_agent
 from crewai import Task, Crew
+from config import arsip_llm, arsip_heavy_llm
+from core.model_router import clone_agent_with_llm, select_profile
 
 logger = logging.getLogger('bima_core')
 
@@ -68,6 +70,13 @@ Tugasmu:
 2. Jika diminta mencari: gunakan VaultSearchTool.
 3. Jika diminta update indeks: gunakan VaultIndexTool."""
 
+    profile = select_profile("arsip", user_request)
+    request_agent = clone_agent_with_llm(
+        arsip_agent,
+        arsip_heavy_llm if profile == "heavy" else arsip_llm,
+    )
+    logger.info("[MODEL_ROUTER] team=arsip profile=%s", profile)
+
     task = Task(
         description=f"""{realtime_context}
 
@@ -76,11 +85,11 @@ Bima minta: '{user_request}'
 
 Berikan jawaban yang ramah dan konfirmasi aksi yang sudah dilakukan.""",
         expected_output="Konfirmasi aksi penyimpanan atau hasil pencarian dari vault.",
-        agent=arsip_agent
+        agent=request_agent
     )
 
     crew = Crew(
-        agents=[arsip_agent],
+        agents=[request_agent],
         tasks=[task],
         verbose=True
     )

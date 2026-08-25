@@ -21,6 +21,7 @@ MARKETPLACE_PATTERN = re.compile(
 )
 MAX_STEPS = 20
 STEP_TIMEOUT = 60
+DEFAULT_BROWSER_MODEL = "google/gemini-3.7-flash"
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("bima_core.browser_worker")
@@ -33,9 +34,9 @@ def _enabled(name: str, default: str = "0") -> bool:
 def _pick_model(task: str) -> tuple[str, str]:
     if MARKETPLACE_PATTERN.search(task):
         return os.environ.get(
-            "BROWSER_USE_MODEL_MARKETPLACE", "google/gemini-3.5-flash"
+            "BROWSER_USE_MODEL_MARKETPLACE", DEFAULT_BROWSER_MODEL
         ), "marketplace"
-    return os.environ.get("BROWSER_USE_MODEL", "google/gemini-3.5-flash"), "default"
+    return os.environ.get("BROWSER_USE_MODEL", DEFAULT_BROWSER_MODEL), "default"
 
 
 def _step_callback():

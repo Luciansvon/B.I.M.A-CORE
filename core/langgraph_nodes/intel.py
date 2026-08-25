@@ -3,7 +3,7 @@ import logging
 import re
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
-from core.langgraph_nodes.llm_config import default_llm
+from core.langgraph_nodes.llm_config import intel_llm
 from teams.t5_intel import SmartSearchTool
 from tools.browser_use_tool import BrowserUseTool
 from tools.last30days_tool import Last30DaysResearchTool
@@ -225,7 +225,7 @@ async def intel_node(state: BimaState) -> dict:
                 f"Data:\n{body}"
             )
             final_response = await asyncio.to_thread(
-                default_llm.invoke,
+                intel_llm.invoke,
                 [SystemMessage(content=sys_prompt), HumanMessage(content=user_request)]
             )
             temp_data = dict(state.get("temp_data", {}))
@@ -256,7 +256,7 @@ Tugasmu: Ekstrak topik/kata kunci pencarian utama (1-3 kata bersih tanpa embel-e
 HANYA TULIS TOPIK UTAMANYA SAJA."""
         
         topic_response = await asyncio.to_thread(
-            default_llm.invoke, [HumanMessage(content=prompt_topic)]
+            intel_llm.invoke, [HumanMessage(content=prompt_topic)]
         )
         extracted_topic = topic_response.content.strip().strip("'\"")
         logger.info(f"[LANGGRAPH INTEL] Menjalankan riset last30days untuk topik: '{extracted_topic}'")
@@ -280,7 +280,7 @@ Data Riset:
 {compact_md}"""
                 
                 final_response = await asyncio.to_thread(
-                    default_llm.invoke,
+                    intel_llm.invoke,
                     [SystemMessage(content=system_prompt), HumanMessage(content=user_request)]
                 )
                 
@@ -320,7 +320,7 @@ Tugasmu: rumuskan 1 kata kunci pencarian Google yang paling tepat.
 HANYA TULIS KATA KUNCINYA SAJA."""
 
     keyword_response = await asyncio.to_thread(
-        default_llm.invoke, [HumanMessage(content=prompt_search)]
+        intel_llm.invoke, [HumanMessage(content=prompt_search)]
     )
     keyword = keyword_response.content.strip()
 
@@ -345,7 +345,7 @@ Data Mentah:
 Jawab dengan gaya asisten (Anisa) yang profesional namun hangat."""
 
     final_response = await asyncio.to_thread(
-        default_llm.invoke,
+        intel_llm.invoke,
         [SystemMessage(content=system_prompt), HumanMessage(content=user_request)]
     )
 

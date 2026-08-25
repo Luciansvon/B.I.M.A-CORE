@@ -6,6 +6,8 @@ from langchain_core.messages import AIMessage
 from core.langgraph_nodes.state import BimaState, notify_progress
 from teams.t8_mekanik import mekanik_agent
 from crewai import Task, Crew
+from config import mekanik_heavy_llm, mekanik_llm
+from core.model_router import clone_agent_with_llm, select_profile
 
 logger = logging.getLogger('bima_core')
 
@@ -25,6 +27,13 @@ async def mekanik_node(state: BimaState) -> dict:
     data_context = f"\n\n=== DATA/KODE DARI TIM SEBELUMNYA ===\n{prev_data}\n=== AKHIR DATA ===" if prev_data else ""
 
     logger.info("[LANGGRAPH MEKANIK] Memproses permintaan coding/debug...")
+
+    profile = select_profile("mekanik", user_request)
+    request_agent = clone_agent_with_llm(
+        mekanik_agent,
+        mekanik_heavy_llm if profile == "heavy" else mekanik_llm,
+    )
+    logger.info("[MODEL_ROUTER] team=mekanik profile=%s", profile)
 
     task = Task(
         description=f"""{realtime_context}{data_context}
@@ -50,11 +59,11 @@ async def mekanik_node(state: BimaState) -> dict:
 
         WAJIB: Jangan menyerah sebelum 5x percobaan!""",
         expected_output="Hasil eksekusi kode beserta status berhasil/gagal dan path file jika disimpan.",
-        agent=mekanik_agent
+        agent=request_agent
     )
 
     crew = Crew(
-        agents=[mekanik_agent],
+        agents=[request_agent],
         tasks=[task],
         verbose=True
     )

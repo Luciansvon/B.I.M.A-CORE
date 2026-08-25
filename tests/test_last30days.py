@@ -53,7 +53,7 @@ async def test_intel_node_last30days_routing():
     )
     
     # Mocking:
-    # 1. default_llm.invoke untuk mengekstrak topik & merangkum
+    # 1. intel_llm.invoke untuk mengekstrak topik & merangkum
     mock_llm_response_topic = AIMessage(content="Next.js")
     mock_llm_response_summary = AIMessage(content="Analisis: Komunitas sangat senang dengan Next.js.")
     
@@ -63,7 +63,7 @@ async def test_intel_node_last30days_routing():
     mock_tool_run_result = f"SUCCESS|{dummy_html_file}|# Next.js\n- Sentimen: Positif"
     
     try:
-        with patch("core.langgraph_nodes.intel.default_llm") as mock_llm:
+        with patch("core.langgraph_nodes.intel.intel_llm") as mock_llm:
             # Set mock responses for invoke calls
             mock_llm.invoke.side_effect = [mock_llm_response_topic, mock_llm_response_summary]
             

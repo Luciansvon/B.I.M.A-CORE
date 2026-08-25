@@ -10,7 +10,7 @@ from pathlib import Path
 from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import SerperDevTool
-from config import intel_llm  # reuse LLM intel; ganti ke saham_llm kalau nanti dibuat
+from config import saham_llm
 from core.api_retry import call_with_retry
 
 logger = logging.getLogger('bima_core')
@@ -381,7 +381,7 @@ saham_agent = Agent(
     6. Output rapi: gabungkan semua hasil tool, kasih ringkasan eksekutif di akhir.
 
     Karakter: objektif, data-driven, tapi hangat. Hindari hype. Sebut risiko dengan jujur.""",
-    llm=intel_llm,
+    llm=saham_llm,
     tools=[
         StockQuoteTool(),
         TechnicalAnalysisTool(),

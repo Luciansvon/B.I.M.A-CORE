@@ -19,8 +19,10 @@ from langchain_core.messages import AIMessage
 
 from core import canvas_session
 from core.langgraph_nodes.state import BimaState, notify_progress
+from core.model_router import model_profile, openrouter_extra_body
 
 logger = logging.getLogger("bima_core")
+CANVAS_MODEL = model_profile("canvas").model
 
 _FINALIZE_PATTERNS = re.compile(
     r"\b(selesai|udah\s+(final|cukup|beres)|done|final(?:isasi|kan)?|kelar|fix|udah\s+oke)\b",
@@ -75,7 +77,8 @@ ATURAN:
     client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
     try:
         r = client.chat.completions.create(
-            model="deepseek/deepseek-v4-flash",
+            model=CANVAS_MODEL,
+            extra_body=openrouter_extra_body("canvas"),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Topik: {topic or user_request}\n\nRequest: {user_request}"},
@@ -128,7 +131,8 @@ ATURAN:
 
     try:
         r = client.chat.completions.create(
-            model="deepseek/deepseek-v4-flash",
+            model=CANVAS_MODEL,
+            extra_body=openrouter_extra_body("canvas"),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},

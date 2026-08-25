@@ -113,6 +113,15 @@ def test_command_is_pinned_and_uses_full_local_scope():
     ]
 
 
+def test_strix_default_model_is_current_security_profile(tmp_path, monkeypatch):
+    module = _module()
+    monkeypatch.delenv("STRIX_LLM", raising=False)
+
+    environment = module._child_env(tmp_path, "test-key")
+
+    assert environment["STRIX_LLM"] == "openrouter/openai/gpt-5.6-luna-pro"
+
+
 def test_findings_exit_sanitizes_key_and_removes_temporary_home(
     tmp_path, monkeypatch
 ):

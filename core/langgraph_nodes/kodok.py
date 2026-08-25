@@ -7,6 +7,8 @@ from langchain_core.messages import AIMessage
 
 from core.langgraph_nodes.state import BimaState, notify_progress
 from teams.t10_kodok import kodok_agent
+from config import kodok_heavy_llm, kodok_llm
+from core.model_router import clone_agent_with_llm, select_profile
 
 logger = logging.getLogger("bima_core")
 
@@ -19,6 +21,13 @@ async def kodok_node(state: BimaState) -> dict:
     realtime_context = state.get("realtime_context", "")
 
     logger.info("[LANGGRAPH KODOK] Memproses permintaan code understanding...")
+
+    profile = select_profile("kodok", user_request)
+    request_agent = clone_agent_with_llm(
+        kodok_agent,
+        kodok_heavy_llm if profile == "heavy" else kodok_llm,
+    )
+    logger.info("[MODEL_ROUTER] team=kodok profile=%s", profile)
 
     task = Task(
         description=f"""{realtime_context}
@@ -38,10 +47,10 @@ async def kodok_node(state: BimaState) -> dict:
 
         Output: jawaban informatif, max 1500 kata.""",
         expected_output="Penjelasan codebase yang akurat (didukung output tool), pakai Bahasa Indonesia casual.",
-        agent=kodok_agent,
+        agent=request_agent,
     )
 
-    crew = Crew(agents=[kodok_agent], tasks=[task], verbose=True)
+    crew = Crew(agents=[request_agent], tasks=[task], verbose=True)
     hasil_raw = await asyncio.to_thread(crew.kickoff)
     hasil_str = str(hasil_raw)
 

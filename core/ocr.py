@@ -59,6 +59,7 @@ def extract_text_vlm(image_bytes: bytes) -> str:
     from openai import OpenAI
 
     from config import VISUAL_MODEL_NAME
+    from core.model_router import openrouter_extra_body
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
@@ -69,6 +70,7 @@ def extract_text_vlm(image_bytes: bytes) -> str:
     client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
     resp = client.chat.completions.create(
         model=VISUAL_MODEL_NAME,
+        extra_body=openrouter_extra_body("visual"),
         messages=[{
             "role": "user",
             "content": [

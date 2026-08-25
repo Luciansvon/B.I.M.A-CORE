@@ -29,6 +29,7 @@ import numpy as np
 import supervision as sv
 
 from config import VISUAL_MODEL_NAME
+from core.model_router import model_profile, openrouter_extra_body
 from core.qc_ground_truth import (
     build_page_ground_truth,
     extract_pdf_page_text as _extract_pdf_page_text,  # re-export: dipakai tests
@@ -107,7 +108,7 @@ OUTPUT_DIR = Path(__file__).parent.parent / "outputs"
 # Bisa di-override via env QC_MODEL (misal model grounding kayak qwen3-vl)
 # tanpa ganggu konsumen VISUAL_MODEL_NAME lain (ocr.py, visual_llm config).
 QC_MODEL = os.environ.get("QC_MODEL", "").strip() or VISUAL_MODEL_NAME
-QC_CONSOLIDATOR_MODEL = "deepseek/deepseek-v4-flash"  # Note Taker model: sangat cepat dan pintar merangkum text JSON
+QC_CONSOLIDATOR_MODEL = model_profile("qc_consolidator").model
 MAX_PAGES = int(os.environ.get("QC_MAX_PAGES", "30"))
 TARGET_WIDTH_PX = int(os.environ.get("QC_TARGET_WIDTH_PX", "2048"))
 MAX_FILE_MB = int(os.environ.get("QC_MAX_FILE_MB", "20"))
@@ -901,6 +902,7 @@ async def review_diff_from_bytes(
     def _call_vision():
         return client.chat.completions.create(
             model=QC_MODEL,
+            extra_body=openrouter_extra_body("visual", primary_model=QC_MODEL),
             messages=[{"role": "user", "content": content_parts}],
             max_tokens=3000,
             response_format={"type": "json_object"},
@@ -1054,6 +1056,7 @@ async def _call_page_checker(
     def _call_vision():
         return client.chat.completions.create(
             model=QC_MODEL,
+            extra_body=openrouter_extra_body("visual", primary_model=QC_MODEL),
             messages=[{"role": "user", "content": content_parts}],
             max_tokens=1500,
             response_format={"type": "json_object"},

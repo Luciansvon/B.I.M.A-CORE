@@ -10,10 +10,11 @@ import time
 from pathlib import Path
 
 from crewai.tools import BaseTool
+from core.model_router import IMAGE_MODEL
 
 logger = logging.getLogger("bima_core")
 
-_MODEL = os.environ.get("IMAGE_GEN_MODEL", "google/gemini-3.1-flash-image-preview").strip()
+_MODEL = os.environ.get("IMAGE_GEN_MODEL", IMAGE_MODEL).strip()
 _OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 _OUTPUT_DIR.mkdir(exist_ok=True)
 

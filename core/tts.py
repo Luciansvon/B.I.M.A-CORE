@@ -247,10 +247,10 @@ async def generate_opener(reply_text: str) -> str:
         "Output HANYA opener-nya, satu baris, tanpa kutip atau prefix."
     )
     try:
-        from core.langgraph_nodes.llm_config import get_langchain_llm
+        from core.langgraph_nodes.llm_config import get_team_langchain_llm
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        llm = get_langchain_llm("deepseek/deepseek-v4-flash")
+        llm = get_team_langchain_llm("tts_opener")
         resp = await asyncio.to_thread(
             llm.invoke,
             [SystemMessage(content=sys_prompt), HumanMessage(content=f"Reply: {context}")],

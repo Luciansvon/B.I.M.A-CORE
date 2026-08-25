@@ -5,6 +5,7 @@ from memory.memory_engine import (
     add_session, add_fact, get_full_context, get_recent_context, get_all_facts
 )
 from config import manager_llm
+from core.model_router import DAILY_MODEL, HEAVY_MODEL, MODEL_INPUT_COST_PER_M
 
 # ============================================================
 # Tools Memory
@@ -57,14 +58,14 @@ class CostOptimizerTool(BaseTool):
             tokens = length / 4
             
             if diff == 'tinggi' or tokens > 10000:
-                model = "deepseek-v4-pro"
-                cost_per_m = 1.10
+                model = HEAVY_MODEL
+                cost_per_m = MODEL_INPUT_COST_PER_M[HEAVY_MODEL]
             elif diff == 'sedang':
-                model = "deepseek-v4-flash"
-                cost_per_m = 0.28
+                model = DAILY_MODEL
+                cost_per_m = MODEL_INPUT_COST_PER_M[DAILY_MODEL]
             else:
-                model = "deepseek-v4-flash"
-                cost_per_m = 0.28
+                model = DAILY_MODEL
+                cost_per_m = MODEL_INPUT_COST_PER_M[DAILY_MODEL]
                 
             cost = (tokens / 1_000_000) * cost_per_m
             
