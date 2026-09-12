@@ -1,10 +1,13 @@
 package com.bimacore.mobile.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bimacore.mobile.data.AiProviderClient
 import com.bimacore.mobile.data.CloudSyncAdapter
 import com.bimacore.mobile.data.FileManager
 import com.bimacore.mobile.data.MemoryStore
+import com.bimacore.mobile.data.SecureApiKeyStore
 import com.bimacore.mobile.model.ChatMessage
 import com.bimacore.mobile.model.FileActionCard
 import com.bimacore.mobile.model.RouteStatus
@@ -12,20 +15,21 @@ import com.bimacore.mobile.model.RouteType
 import com.bimacore.mobile.model.SenderType
 import com.bimacore.mobile.router.NineRouterEngine
 import com.bimacore.mobile.router.RouteRequest
+import com.bimacore.mobile.router.RouteResponse
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.UUID
 
-class MainViewModel(
-    appFilesDir: File = File(System.getProperty("java.io.tmpdir"), "bima_core_mobile")
-) : ViewModel() {
+class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val memoryStore = MemoryStore(appFilesDir)
+    private val memoryStore = MemoryStore(application.filesDir)
     private val fileManager = FileManager()
     private val syncAdapter = CloudSyncAdapter(memoryStore)
+    private val secretStore = SecureApiKeyStore(application)
+    private val aiProviderClient = AiProviderClient(secretStore)
+
     val routerEngine = NineRouterEngine(memoryStore, fileManager, syncAdapter)
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -39,21 +43,25 @@ class MainViewModel(
 
     init {
         _routeStatuses.value = routerEngine.getRouteStatuses()
-        // Sapaan awal dari Anisa
-        addAnisaMessage("Halo Mas Bima! ✨ Senang bisa menemani hari ini. Server 9-Router di HP sudah aktif siaga, dan ingatan kita tersambung aman ke laptop. Ada yang mau kita kerjakan?")
+        addAnisaMessage("Halo Mas Bima! ✨ 9-Router lokal siap. AI online aktif saat kredensial provider sudah tersimpan aman.")
     }
 
-    fun getApiKey(provider: String = "openrouter"): String {
-        return memoryStore.getFact("api_key_$provider") ?: ""
+    fun getCredentialMasked(provider: String): String {
+        val secret = secretStore.get(provider) ?: return ""
+        return maskSecret(secret)
     }
 
-    fun saveApiKey(provider: String, key: String) {
-        val trimmed = key.trim()
-        if (trimmed.isNotBlank()) {
-            memoryStore.setFact("api_key_$provider", trimmed)
-            val masked = if (trimmed.length > 8) trimmed.take(4) + "..." + trimmed.takeLast(4) else "***"
-            addAnisaMessage("🔑 Kunci API $provider berhasil disimpan ($masked)! Sekarang Anisa sudah bisa menggunakan otak AI online secara langsung. ✨")
+    fun saveCredential(provider: String, secret: String): Boolean {
+        val normalizedProvider = provider.trim().lowercase()
+        val trimmed = secret.trim()
+        if (normalizedProvider !in SUPPORTED_PROVIDERS || trimmed.length < MIN_SECRET_LENGTH) {
+            addAnisaMessage("⚠️ Kredensial $normalizedProvider tidak valid dan tidak disimpan.")
+            return false
         }
+
+        secretStore.put(normalizedProvider, trimmed)
+        addAnisaMessage("🔐 Kredensial $normalizedProvider tersimpan terenkripsi (${maskSecret(trimmed)}).")
+        return true
     }
 
     fun sendMessage(userText: String) {
@@ -66,62 +74,57 @@ class MainViewModel(
         )
         _messages.value = _messages.value + userMessage
 
-        val trimmed = userText.trim()
-        if (trimmed.startsWith("sk-or-v1-") || trimmed.startsWith("AIzaSy") ||
-            trimmed.contains("kunci api", ignoreCase = true) || trimmed.contains("apikey", ignoreCase = true)) {
-            val keyCandidate = when {
-                trimmed.startsWith("sk-or-v1-") || trimmed.startsWith("AIzaSy") -> trimmed
-                trimmed.contains(":") -> trimmed.substringAfter(":").trim()
-                else -> trimmed
-            }
-            if (keyCandidate.length > 10) {
-                val provider = if (keyCandidate.startsWith("AIzaSy")) "gemini" else "openrouter"
-                saveApiKey(provider, keyCandidate)
-                return
-            }
-        }
-
         viewModelScope.launch {
-            val response = routerEngine.dispatch(userText)
-            val anisaMessage = ChatMessage(
+            val routeType = routerEngine.detectRoute(userText)
+            val response = if (routeType in ONLINE_AI_ROUTES && aiProviderClient.hasAnyKey()) {
+                aiProviderClient.generate(routeType, userText).fold(
+                    onSuccess = { text -> RouteResponse(textResponse = text, routeUsed = routeType) },
+                    onFailure = { error ->
+                        val local = routerEngine.dispatch(userText, routeType)
+                        local.copy(
+                            textResponse = "⚠️ AI online gagal: ${error.message ?: "error tidak diketahui"}\n\n${local.textResponse}"
+                        )
+                    }
+                )
+            } else {
+                routerEngine.dispatch(userText, routeType)
+            }
+
+            _messages.value = _messages.value + ChatMessage(
                 id = UUID.randomUUID().toString(),
                 sender = SenderType.ANISA,
                 text = response.textResponse,
                 actionCard = response.actionCard,
                 routeSource = response.routeUsed
             )
-            _messages.value = _messages.value + anisaMessage
         }
     }
 
     fun executeRouteDirectly(routeType: RouteType, customPrompt: String) {
         viewModelScope.launch {
             val response = routerEngine.executeDirect(routeType, RouteRequest(prompt = customPrompt))
-            val anisaMessage = ChatMessage(
+            _messages.value = _messages.value + ChatMessage(
                 id = UUID.randomUUID().toString(),
                 sender = SenderType.ANISA,
                 text = response.textResponse,
                 actionCard = response.actionCard,
                 routeSource = response.routeUsed
             )
-            _messages.value = _messages.value + anisaMessage
         }
     }
 
     fun confirmActionCard(card: FileActionCard) {
         viewModelScope.launch {
-            val confirmedCard = card.copy(isConfirmed = true)
             val response = routerEngine.executeDirect(
                 RouteType.FILE_MANAGER,
-                RouteRequest(prompt = "Konfirmasi Aksi", actionCard = confirmedCard)
+                RouteRequest(prompt = "Konfirmasi Aksi", actionCard = card.copy(isConfirmed = true))
             )
-            val anisaMessage = ChatMessage(
+            _messages.value = _messages.value + ChatMessage(
                 id = UUID.randomUUID().toString(),
                 sender = SenderType.ANISA,
                 text = response.textResponse,
                 routeSource = RouteType.FILE_MANAGER
             )
-            _messages.value = _messages.value + anisaMessage
         }
     }
 
@@ -137,12 +140,28 @@ class MainViewModel(
         }
     }
 
+    private fun maskSecret(secret: String): String = when {
+        secret.length <= 8 -> "••••••••"
+        else -> "${secret.take(4)}••••${secret.takeLast(4)}"
+    }
+
     private fun addAnisaMessage(text: String) {
-        val msg = ChatMessage(
+        _messages.value = _messages.value + ChatMessage(
             id = UUID.randomUUID().toString(),
             sender = SenderType.ANISA,
             text = text
         )
-        _messages.value = _messages.value + msg
+    }
+
+    private companion object {
+        const val MIN_SECRET_LENGTH = 16
+        val SUPPORTED_PROVIDERS = setOf("openrouter", "gemini")
+        val ONLINE_AI_ROUTES = setOf(
+            RouteType.ANISA_MANAGER,
+            RouteType.WEB_INTEL,
+            RouteType.LIFESTYLE,
+            RouteType.DESIGN_ART,
+            RouteType.MARKET_PULSE
+        )
     }
 }

@@ -9,9 +9,7 @@ import com.bimacore.mobile.router.AgentRoute
 import com.bimacore.mobile.router.RouteRequest
 import com.bimacore.mobile.router.RouteResponse
 
-/**
- * Jalur 1: Anisa Manager (Pusat Komando & Percakapan Utama)
- */
+/** Jalur 1: Anisa Manager. */
 class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
     override val routeType = RouteType.ANISA_MANAGER
 
@@ -21,22 +19,20 @@ class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
 
         val reply = when {
             prompt.contains("halo", ignoreCase = true) || prompt.contains("hai", ignoreCase = true) ->
-                "Halo $nama! ✨ Senang sekali bisa mendampingi Mas Bima hari ini. Semua 9-Router di HP dalam kondisi aktif dan siaga. Ada yang mau kita kerjakan atau diskusikan?"
+                "Halo $nama! ✨ Sembilan rute lokal sudah terdaftar. Fitur online hanya berjalan jika provider dan kredensialnya tersedia."
 
             prompt.contains("siapa kamu", ignoreCase = true) || prompt.contains("anisa", ignoreCase = true) ->
-                "Saya Anisa, asisten pribadi Mas Bima di BIMA CORE Mobile ✨. Saya bertugas mengkoordinasikan tugas harian, merapikan berkas di HP, dan menjaga ingatan kita agar selalu nyambung ke laptop."
+                "Saya Anisa, asisten di BIMA CORE Mobile. Saya mengatur rute lokal dan memakai provider AI online jika sudah dikonfigurasi."
 
             else ->
-                "Saya mengerti, $nama. Saya siap membantu menindaklanjuti hal ini. Jika Mas Bima butuh saya merapikan berkas di HP, mencatat ide baru, atau menyinkronkan data ke laptop, tinggal beri tahu saya ya! ✨"
+                "Saya mengerti, $nama. Mode lokal aktif. Untuk jawaban AI yang lebih luas, simpan kredensial provider dari menu pengaturan."
         }
 
         return RouteResponse(textResponse = reply, routeUsed = routeType)
     }
 }
 
-/**
- * Jalur 2: Pengelola Berkas HP (Aman dengan Safety Gate)
- */
+/** Jalur 2: Pengelola Berkas HP dengan Safety Gate. */
 class FileManagerRoute(
     private val fileManager: FileManager
 ) : AgentRoute {
@@ -46,7 +42,6 @@ class FileManagerRoute(
         val prompt = request.prompt
         val targetPath = request.targetPath ?: "Download/Sampah"
 
-        // Jika request membawa kartu aksi yang sudah dikonfirmasi
         if (request.actionCard != null && request.actionCard.isConfirmed) {
             val result = fileManager.deleteFileSafely(request.actionCard)
             return if (result.isSuccess) {
@@ -63,8 +58,11 @@ class FileManagerRoute(
             }
         }
 
-        // Jika ada permintaan hapus/bersihkan berkas baru
-        if (prompt.contains("hapus", ignoreCase = true) || prompt.contains("bersih", ignoreCase = true) || prompt.contains("rapikan", ignoreCase = true)) {
+        if (
+            prompt.contains("hapus", ignoreCase = true) ||
+            prompt.contains("bersih", ignoreCase = true) ||
+            prompt.contains("rapikan", ignoreCase = true)
+        ) {
             val card = FileActionCard(
                 title = "Konfirmasi Kelola Berkas",
                 description = "Pembersihan berkas pada folder '$targetPath' siap diproses.",
@@ -73,22 +71,20 @@ class FileManagerRoute(
                 isConfirmed = false
             )
             return RouteResponse(
-                textResponse = "Saya menemukan berkas yang bisa dirapikan di '$targetPath'. Demi keamanan data Mas Bima, silakan periksa dan setujui kartu aksi berikut:",
+                textResponse = "Permintaan pembersihan '$targetPath' membutuhkan konfirmasi eksplisit sebelum eksekusi.",
                 routeUsed = routeType,
                 actionCard = card
             )
         }
 
         return RouteResponse(
-            textResponse = "Folder '$targetPath' siap dikelola. Mas Bima dapat meminta saya membaca, menyalin, atau merapikan berkas di dalamnya.",
+            textResponse = "File manager lokal aktif. Akses folder eksternal luas tidak diberikan otomatis; gunakan lokasi yang memang dapat diakses aplikasi.",
             routeUsed = routeType
         )
     }
 }
 
-/**
- * Jalur 3: Sync Memori ke Laptop
- */
+/** Jalur 3: Sync Memori ke Laptop. */
 class MemorySyncRoute(
     private val memoryStore: MemoryStore,
     private val syncAdapter: CloudSyncAdapter
@@ -100,101 +96,114 @@ class MemorySyncRoute(
         val factsSummary = memoryStore.getFullContextSummary()
 
         val text = buildString {
-            append("🔄 **Status Sinkronisasi Memori ke Laptop:**\n")
+            append("🔄 **Status Sinkronisasi Memori:**\n")
             append("${syncResult.message}\n\n")
-            append("📖 **Ingatan Aktif Saat Ini:**\n")
+            append("📖 **Ingatan Lokal Saat Ini:**\n")
             append(factsSummary)
         }
 
-        return RouteResponse(textResponse = text, routeUsed = routeType)
+        return RouteResponse(
+            textResponse = text,
+            routeUsed = routeType,
+            isSuccess = syncResult.isSuccess
+        )
     }
 }
 
-/**
- * Jalur 4: Intel & Pencari Fakta Web
- */
+/** Jalur 4: Intel & Pencari Fakta Web. */
 class WebIntelRoute : AgentRoute {
     override val routeType = RouteType.WEB_INTEL
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "🌐 [Pencari Intel Web]: Informasi terkini untuk '${request.prompt}' berhasil dipindai secara hemat kuota. Data siap disajikan secara ringkas dan padat fakta.",
-            routeUsed = routeType
+            textResponse = "🌐 Pencarian web belum dijalankan dalam mode lokal. Konfigurasikan provider AI agar rute ini dapat mengambil data online secara nyata.",
+            routeUsed = routeType,
+            isSuccess = false
         )
     }
 }
 
-/**
- * Jalur 5: Perangkum & Catatan Cepat
- */
+/** Jalur 5: Perangkum & Catatan Cepat. */
 class SummarizerRoute(private val memoryStore: MemoryStore) : AgentRoute {
     override val routeType = RouteType.SUMMARIZER
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
-        val noteContent = request.prompt.replace("catat ide", "", ignoreCase = true).trim()
-        if (noteContent.isNotEmpty()) {
-            memoryStore.setFact("ide_terbaru_${System.currentTimeMillis() % 10000}", noteContent)
+        val prompt = request.prompt.trim()
+        val isReadRequest = prompt.contains("tampilkan", ignoreCase = true) ||
+            prompt.contains("ringkasan", ignoreCase = true) ||
+            prompt.contains("lihat", ignoreCase = true)
+
+        if (isReadRequest) {
+            return RouteResponse(
+                textResponse = "📝 **Ringkasan Memori Lokal:**\n\n${memoryStore.getFullContextSummary()}",
+                routeUsed = routeType
+            )
         }
 
+        val noteContent = prompt.replace("catat ide", "", ignoreCase = true).trim()
+        if (noteContent.isEmpty()) {
+            return RouteResponse(
+                textResponse = "📝 Tidak ada isi catatan yang diberikan.",
+                routeUsed = routeType,
+                isSuccess = false
+            )
+        }
+
+        memoryStore.setFact("ide_terbaru_${System.currentTimeMillis() % 10000}", noteContent)
         return RouteResponse(
-            textResponse = "📝 **Catatan Berhasil Disimpan ke Memori!**\n\n\"$noteContent\"\n\nIde ini sudah otomatis masuk ke antrean sinkronisasi laptop Mas Bima.",
+            textResponse = "📝 Catatan tersimpan ke memori lokal:\n\n\"$noteContent\"",
             routeUsed = routeType
         )
     }
 }
 
-/**
- * Jalur 6: Gaya Hidup & Pengingat Rutinitas
- */
+/** Jalur 6: Gaya Hidup & Pengingat Rutinitas. */
 class LifestyleRoute : AgentRoute {
     override val routeType = RouteType.LIFESTYLE
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "☀️ [Pengingat Gaya Hidup]: Cuaca hari ini terpantau bersahabat. Jangan lupa minum air putih dan istirahat sejenak di sela aktivitas kerja ya, Mas Bima! ✨",
-            routeUsed = routeType
+            textResponse = "☀️ Data cuaca atau kondisi terbaru belum diambil dalam mode lokal. Aktifkan provider AI online untuk informasi real-time.",
+            routeUsed = routeType,
+            isSuccess = false
         )
     }
 }
 
-/**
- * Jalur 7: Inspirasi Desain & Seni
- */
+/** Jalur 7: Inspirasi Desain & Seni. */
 class DesignArtRoute : AgentRoute {
     override val routeType = RouteType.DESIGN_ART
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "🎨 [Inspirasi Desain]: Konsep ruang minimalis Japandi dan pencahayaan alami sangat cocok dipadukan dengan aksen kayu jati matte untuk kesan hangat dan luas.",
+            textResponse = "🎨 Mode desain lokal siap untuk ide dasar. Provider AI online dapat dipakai untuk respons yang lebih kontekstual.",
             routeUsed = routeType
         )
     }
 }
 
-/**
- * Jalur 8: Jembatan Remote Laptop
- */
+/** Jalur 8: Jembatan Remote Laptop. */
 class LaptopBridgeRoute : AgentRoute {
     override val routeType = RouteType.LAPTOP_BRIDGE
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "💻 [Jembatan Laptop]: Permintaan tugas komputasi berat telah dikemas dan dikirim ke server laptop di rumah. Hasilnya akan otomatis disinkronkan kembali ke HP Mas Bima.",
-            routeUsed = routeType
+            textResponse = "💻 Jembatan laptop belum dikonfigurasi pada build ini. Tidak ada tugas yang dikirim ke perangkat lain.",
+            routeUsed = routeType,
+            isSuccess = false
         )
     }
 }
 
-/**
- * Jalur 9: Pantauan Bisnis & Pasar
- */
+/** Jalur 9: Pantauan Bisnis & Pasar. */
 class MarketPulseRoute : AgentRoute {
     override val routeType = RouteType.MARKET_PULSE
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "📈 [Pantauan Pasar Ringkas]: Indeks pasar saham bergerak stabil hari ini. Informasi tren disajikan dalam format teks ringan tanpa membebani memori HP Mas Bima.",
-            routeUsed = routeType
+            textResponse = "📈 Data pasar real-time belum diambil dalam mode lokal. Aktifkan provider AI online untuk pencarian terbaru.",
+            routeUsed = routeType,
+            isSuccess = false
         )
     }
 }

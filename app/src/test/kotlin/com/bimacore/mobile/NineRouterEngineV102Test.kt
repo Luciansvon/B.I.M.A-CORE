@@ -3,7 +3,6 @@ package com.bimacore.mobile
 import com.bimacore.mobile.data.CloudSyncAdapter
 import com.bimacore.mobile.data.FileManager
 import com.bimacore.mobile.data.MemoryStore
-import com.bimacore.mobile.model.FileActionCard
 import com.bimacore.mobile.model.RouteType
 import com.bimacore.mobile.router.NineRouterEngine
 import com.bimacore.mobile.router.RouteRequest
@@ -14,34 +13,31 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
-class NineRouterEngineTest {
+class NineRouterEngineV102Test {
 
     @get:Rule
     val tempFolder = TemporaryFolder()
 
     private lateinit var memoryStore: MemoryStore
-    private lateinit var fileManager: FileManager
-    private lateinit var syncAdapter: CloudSyncAdapter
     private lateinit var routerEngine: NineRouterEngine
 
     @Before
     fun setUp() {
-        val rootDir = tempFolder.newFolder("bima_test_store")
-        memoryStore = MemoryStore(rootDir)
-        fileManager = FileManager()
-        syncAdapter = CloudSyncAdapter(memoryStore)
-        routerEngine = NineRouterEngine(memoryStore, fileManager, syncAdapter)
+        memoryStore = MemoryStore(tempFolder.newFolder("bima_test_store"))
+        val fileManager = FileManager()
+        routerEngine = NineRouterEngine(memoryStore, fileManager, CloudSyncAdapter(memoryStore))
     }
 
     @Test
-    fun testAllNineRoutesAreActive() {
+    fun allNineRoutesAreRegisteredWithoutFakeLatency() {
         val statuses = routerEngine.getRouteStatuses()
-        assertEquals("Harus ada tepat 9 jalur rute agen", 9, statuses.size)
-        assertTrue("Semua 9 rute harus berstatus aktif", statuses.all { it.isActive })
+        assertEquals(9, statuses.size)
+        assertTrue(statuses.all { it.isActive })
+        assertTrue(statuses.all { it.latencyMs == 0L })
     }
 
     @Test
-    fun testRouteIntentDetection() {
+    fun routeIntentDetectionWorks() {
         assertEquals(RouteType.FILE_MANAGER, routerEngine.detectRoute("tolong bersihkan berkas unduhan"))
         assertEquals(RouteType.MEMORY_SYNC, routerEngine.detectRoute("sinkronkan memori ke laptop"))
         assertEquals(RouteType.SUMMARIZER, routerEngine.detectRoute("catat ide baru untuk proyek meja"))
@@ -54,28 +50,37 @@ class NineRouterEngineTest {
     }
 
     @Test
-    fun testDispatchToAnisaManager() = runBlocking {
-        val response = routerEngine.dispatch("Halo Anisa")
-        assertEquals(RouteType.ANISA_MANAGER, response.routeUsed)
-        assertTrue(response.textResponse.contains("Halo", ignoreCase = true))
-        assertTrue(response.isSuccess)
-    }
-
-    @Test
-    fun testDispatchToFileManagerWithSafetyGate() = runBlocking {
+    fun fileCleanupStillRequiresConfirmation() = runBlocking {
         val response = routerEngine.dispatch("tolong rapikan berkas di folder Download")
         assertEquals(RouteType.FILE_MANAGER, response.routeUsed)
-        assertNotNull("Harus menghasilkan kartu konfirmasi berkas", response.actionCard)
+        assertNotNull(response.actionCard)
         assertEquals("CLEAN", response.actionCard?.actionType)
-        assertFalse("Kartu baru tidak boleh otomatis terkonfirmasi", response.actionCard!!.isConfirmed)
+        assertFalse(response.actionCard!!.isConfirmed)
     }
 
     @Test
-    fun testDirectExecutionOfMemorySync() = runBlocking {
+    fun memorySyncDoesNotFakeRemoteSuccess() = runBlocking {
         memoryStore.setFact("proyek_aktif", "Kursi Japandi")
         val response = routerEngine.executeDirect(RouteType.MEMORY_SYNC, RouteRequest(prompt = "Sync"))
         assertEquals(RouteType.MEMORY_SYNC, response.routeUsed)
-        assertTrue(response.textResponse.contains("Sinkronisasi berhasil"))
+        assertFalse(response.isSuccess)
+        assertTrue(response.textResponse.contains("belum dikonfigurasi", ignoreCase = true))
         assertTrue(response.textResponse.contains("Kursi Japandi"))
+    }
+
+    @Test
+    fun offlineWebRouteDoesNotFakeSearch() = runBlocking {
+        val response = routerEngine.dispatch("cari berita terbaru")
+        assertEquals(RouteType.WEB_INTEL, response.routeUsed)
+        assertFalse(response.isSuccess)
+        assertTrue(response.textResponse.contains("belum dijalankan", ignoreCase = true))
+    }
+
+    @Test
+    fun offlineLaptopBridgeDoesNotFakeDelivery() = runBlocking {
+        val response = routerEngine.dispatch("jalankan tugas berat di server laptop")
+        assertEquals(RouteType.LAPTOP_BRIDGE, response.routeUsed)
+        assertFalse(response.isSuccess)
+        assertTrue(response.textResponse.contains("belum dikonfigurasi", ignoreCase = true))
     }
 }

@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bimacore.mobile.model.RouteType
@@ -44,9 +45,9 @@ class MainActivity : ComponentActivity() {
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val coroutineScope = rememberCoroutineScope()
 
-                var showApiKeyDialog by remember { mutableStateOf(false) }
-                var openRouterKeyInput by remember { mutableStateOf(viewModel.getApiKey("openrouter")) }
-                var geminiKeyInput by remember { mutableStateOf(viewModel.getApiKey("gemini")) }
+                var showCredentialDialog by remember { mutableStateOf(false) }
+                var openRouterInput by remember { mutableStateOf("") }
+                var geminiInput by remember { mutableStateOf("") }
 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -66,9 +67,9 @@ class MainActivity : ComponentActivity() {
                                     )
                                     "NEW_CHAT" -> viewModel.sendMessage("Halo Anisa, kita mulai sesi obrolan baru ya!")
                                     "API_KEY" -> {
-                                        openRouterKeyInput = viewModel.getApiKey("openrouter")
-                                        geminiKeyInput = viewModel.getApiKey("gemini")
-                                        showApiKeyDialog = true
+                                        openRouterInput = ""
+                                        geminiInput = ""
+                                        showCredentialDialog = true
                                     }
                                 }
                             },
@@ -80,35 +81,41 @@ class MainActivity : ComponentActivity() {
                 ) {
                     ChatScreen(
                         messages = messages,
-                        onSendMessage = { text -> viewModel.sendMessage(text) },
-                        onConfirmAction = { card -> viewModel.confirmActionCard(card) },
+                        onSendMessage = viewModel::sendMessage,
+                        onConfirmAction = viewModel::confirmActionCard,
                         onOpenDrawer = {
                             coroutineScope.launch { drawerState.open() }
                         }
                     )
 
-                    if (showApiKeyDialog) {
+                    if (showCredentialDialog) {
                         AlertDialog(
-                            onDismissRequest = { showApiKeyDialog = false },
-                            title = { Text("Pengaturan Kunci API") },
+                            onDismissRequest = { showCredentialDialog = false },
+                            title = { Text("Pengaturan Provider AI") },
                             text = {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text("Masukkan kunci API agar Anisa bisa berpikir menggunakan AI online secara langsung:")
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Kredensial disimpan terenkripsi oleh Android Keystore.")
+                                    Text(
+                                        "OpenRouter: ${viewModel.getCredentialMasked("openrouter").ifBlank { "belum disimpan" }}"
+                                    )
                                     OutlinedTextField(
-                                        value = openRouterKeyInput,
-                                        onValueChange = { openRouterKeyInput = it },
-                                        label = { Text("OpenRouter API Key") },
-                                        placeholder = { Text("sk-or-v1-...") },
+                                        value = openRouterInput,
+                                        onValueChange = { openRouterInput = it },
+                                        label = { Text("Kredensial OpenRouter baru") },
+                                        placeholder = { Text("Kosongkan jika tidak ingin mengganti") },
+                                        visualTransformation = PasswordVisualTransformation(),
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth()
                                     )
+                                    Text(
+                                        "Gemini: ${viewModel.getCredentialMasked("gemini").ifBlank { "belum disimpan" }}"
+                                    )
                                     OutlinedTextField(
-                                        value = geminiKeyInput,
-                                        onValueChange = { geminiKeyInput = it },
-                                        label = { Text("Google Gemini API Key") },
-                                        placeholder = { Text("AIzaSy...") },
+                                        value = geminiInput,
+                                        onValueChange = { geminiInput = it },
+                                        label = { Text("Kredensial Gemini baru") },
+                                        placeholder = { Text("Kosongkan jika tidak ingin mengganti") },
+                                        visualTransformation = PasswordVisualTransformation(),
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -117,20 +124,28 @@ class MainActivity : ComponentActivity() {
                             confirmButton = {
                                 Button(
                                     onClick = {
-                                        if (openRouterKeyInput.isNotBlank()) {
-                                            viewModel.saveApiKey("openrouter", openRouterKeyInput)
+                                        if (openRouterInput.isNotBlank()) {
+                                            viewModel.saveCredential("openrouter", openRouterInput)
                                         }
-                                        if (geminiKeyInput.isNotBlank()) {
-                                            viewModel.saveApiKey("gemini", geminiKeyInput)
+                                        if (geminiInput.isNotBlank()) {
+                                            viewModel.saveCredential("gemini", geminiInput)
                                         }
-                                        showApiKeyDialog = false
+                                        openRouterInput = ""
+                                        geminiInput = ""
+                                        showCredentialDialog = false
                                     }
                                 ) {
                                     Text("Simpan")
                                 }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showApiKeyDialog = false }) {
+                                TextButton(
+                                    onClick = {
+                                        openRouterInput = ""
+                                        geminiInput = ""
+                                        showCredentialDialog = false
+                                    }
+                                ) {
                                     Text("Batal")
                                 }
                             }

@@ -113,6 +113,26 @@ Progress callback tidak disimpan di checkpoint. Callback berada di registry pros
 - Approval menyimpan draf publish per `req_id`, terpisah dari wrapper tampilan Discord. Revisi hanya berlaku untuk `THREADS_POST`/`THREADS_REPLY`; approve ditahan selama revisi diproses, preview lama ditolak, dan seluruh state/timer dibersihkan pada approve, reject, gagal kirim, atau timeout.
 - Timeout tanpa revisi masih dapat melewati pemeriksaan auto-post `SAFE` yang exact. Timeout dengan revisi aktif atau belum disetujui selalu fail-closed dan tidak boleh mempublikasikan draf awal.
 
+## Android Mobile Boundary
+
+`app/` adalah client Android mandiri untuk BIMA CORE Mobile. Runtime Android tidak dianggap setara dengan server Python utama dan tidak boleh mengklaim aksi remote berhasil tanpa transport yang benar-benar tersedia.
+
+```text
+Compose UI
+  → MainViewModel
+    → NineRouterEngine (lokal)
+    → AiProviderClient (online, opsional)
+      → OpenRouter
+      → Gemini
+```
+
+- Memori lokal Android disimpan di `application.filesDir`, bukan cache sementara.
+- Kredensial provider dienkripsi dengan AES-GCM memakai key non-exportable dari Android Keystore; ciphertext/IV berada di private SharedPreferences dan backup aplikasi dinonaktifkan.
+- Rute `WEB_INTEL`, `LIFESTYLE`, dan `MARKET_PULSE` memakai provider online bila tersedia; OpenRouter menggunakan plugin web dan Gemini memakai Google Search grounding. Tanpa provider, fallback lokal harus menyatakan bahwa data real-time belum diambil.
+- `MEMORY_SYNC` dan `LAPTOP_BRIDGE` belum memiliki transport produksi pada v1.0.2 dan wajib fail-closed tanpa klaim sinkronisasi/pengiriman palsu.
+- Aplikasi tidak meminta `MANAGE_EXTERNAL_STORAGE`; operasi file hanya boleh bekerja pada path yang memang dapat diakses aplikasi dan tidak boleh menimpa destination secara diam-diam.
+- APK production harus dibangun melalui workflow signed release dengan Android keystore persisten. `assembleDebug` tidak boleh dipublikasikan sebagai release.
+
 ## Error Handling
 
 - `make_resilient()` memberi timeout dan retry terbatas pada node LangGraph, lalu mengembalikan pesan gagal yang aman.

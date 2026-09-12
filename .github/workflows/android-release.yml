@@ -1,0 +1,116 @@
+name: Android Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "app/build.gradle.kts"
+      - "app/src/main/**"
+      - "app/src/test/**"
+      - ".github/workflows/android-release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      KEYSTORE_B64: ${{ secrets.BIMA_ANDROID_KEYSTORE_BASE64 }}
+      BIMA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.BIMA_ANDROID_KEYSTORE_PASSWORD }}
+      BIMA_ANDROID_KEY_ALIAS: ${{ secrets.BIMA_ANDROID_KEY_ALIAS }}
+      BIMA_ANDROID_KEY_PASSWORD: ${{ secrets.BIMA_ANDROID_KEY_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install stable Android SDK 36
+        run: sdkmanager "platforms;android-36" "platform-tools"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Validate signing configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64" || { echo "Missing BIMA_ANDROID_KEYSTORE_BASE64"; exit 1; }
+          test -n "$BIMA_ANDROID_KEYSTORE_PASSWORD" || { echo "Missing BIMA_ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+          test -n "$BIMA_ANDROID_KEY_ALIAS" || { echo "Missing BIMA_ANDROID_KEY_ALIAS"; exit 1; }
+          test -n "$BIMA_ANDROID_KEY_PASSWORD" || { echo "Missing BIMA_ANDROID_KEY_PASSWORD"; exit 1; }
+
+      - name: Restore release keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE_PATH="$RUNNER_TEMP/bima-core-release.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          echo "BIMA_ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+      - name: Test lint and build signed release
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon clean testDebugUnitTest lintRelease assembleRelease
+
+      - name: Verify APK signature and checksum
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$VERSION"
+          TAG="v$VERSION"
+          APK_NAME="bima-core-mobile-$TAG.apk"
+
+          cp "$APK" "$APK_NAME"
+          sha256sum "$APK_NAME" > SHA256SUMS.txt
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.package.outputs.tag }}"
+          APK_NAME="${{ steps.package.outputs.apk_name }}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it."
+            exit 1
+          fi
+
+          gh release create "$TAG" \
+            "$APK_NAME" \
+            SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title "BIMA CORE Mobile $TAG" \
+            --generate-notes
