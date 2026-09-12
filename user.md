@@ -22,6 +22,6 @@
 - **Keputusan Sinkronisasi Memori**: Disetujui oleh Bima menggunakan metode online (brankas online / cloud sync ringan) agar data tetap tersinkron kapan pun meski laptop mati.
 - **Server 9 Router di HP**: Sistem "9 Router" memiliki server lokal yang tertanam langsung di HP (server pengatur rute yang mengelola 9 jalur/peran kemampuan agen).
 - **Tampilan Antarmuka (UI)**:
-  - **Layar Utama**: Fokus 100% pada ruang obrolan (Chat-First) yang bersih, luas, dan imersif (seperti aplikasi AI modern: ChatGPT / Claude / Gemini).
-  - **Bilah Samping (*Sidebar* / Laci Menu)**: Semua fitur teknis dan pendukung (Status Server 9-Router, Akses Kelola Berkas HP, Status Sinkronisasi Laptop, Catatan Ide, dan Riwayat Obrolan) ditempatkan rapi di dalam laci menu samping.
+  - **Layar Utama**: Fokus 100% pada ruang obrolan (Chat-First) yang bersih, luas, dan imersif (seperti aplikasi AI modern: ChatGPT / Claude / Gemini). Menghilangkan widget atau kotak yang tidak perlu dari layar utama agar pengalaman mengobrol dengan Anisa nyaman dan leluasa.
+  - **Bilah Samping (*Sidebar* / Laci Menu)**: Semua fitur teknis dan pendukung (Status Server 9-Router, Akses Kelola Berkas HP, Status Sinkronisasi Laptop, Catatan Ide, dan Riwayat Obrolan) ditempatkan rapi di dalam laci menu samping yang bisa digeser atau dibuka lewat ikon menu di pojok kiri atas.
 - **Status Rilis**: Rilis **v1.0.0** telah resmi dibangun, diverifikasi 100% lulus uji unit, dan resmi dipublikasikan ke GitHub Releases (`https://github.com/Luciansvon/B.I.M.A-CORE/releases/tag/v1.0.0`) beserta berkas APK siap pasang `bima-core-mobile-v1.0.0.apk`.
