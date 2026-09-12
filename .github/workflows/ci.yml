@@ -31,8 +31,35 @@ jobs:
         run: python -m pip install uv==0.11.28
 
       - name: Sync locked CI dependencies
-        run: |
-          uv sync --locked --only-group ci
+        run: uv sync --locked --only-group ci
 
-      - name: Run tests
+      - name: Run Python tests
         run: .venv/bin/python -m pytest -q --no-header
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 37
+        run: yes | sdkmanager "platforms;android-37" "platform-tools"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify Android app
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
