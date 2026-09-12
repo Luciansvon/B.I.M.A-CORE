@@ -17,7 +17,7 @@ val hasReleaseSigning = listOf(
 
 android {
     namespace = "com.bimacore.mobile"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.bimacore.mobile"
