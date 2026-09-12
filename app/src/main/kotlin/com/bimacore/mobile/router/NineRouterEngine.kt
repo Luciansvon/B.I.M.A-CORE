@@ -7,11 +7,6 @@ import com.bimacore.mobile.model.RouteStatus
 import com.bimacore.mobile.model.RouteType
 import com.bimacore.mobile.router.routes.*
 
-/**
- * Server Mini Lokal: NineRouterEngine.
- * Berjalan langsung di dalam HP Mas Bima sebagai pengatur rute cerdas (Router)
- * yang mendistribusikan setiap permintaan pengguna ke salah satu dari 9 Jalur Kemampuan.
- */
 class NineRouterEngine(
     private val memoryStore: MemoryStore,
     private val fileManager: FileManager,
@@ -41,7 +36,7 @@ class NineRouterEngine(
             RouteStatus(
                 type = type,
                 isActive = routes.containsKey(type),
-                latencyMs = (5L..15L).random()
+                latencyMs = 0L
             )
         }
     }
@@ -49,8 +44,7 @@ class NineRouterEngine(
     suspend fun dispatch(prompt: String, explicitRoute: RouteType? = null): RouteResponse {
         val targetRouteType = explicitRoute ?: detectRoute(prompt)
         val route = routes[targetRouteType] ?: routes[RouteType.ANISA_MANAGER]!!
-        val request = RouteRequest(prompt = prompt)
-        return route.execute(request)
+        return route.execute(RouteRequest(prompt = prompt))
     }
 
     suspend fun executeDirect(routeType: RouteType, request: RouteRequest): RouteResponse {
@@ -62,19 +56,23 @@ class NineRouterEngine(
         val lower = prompt.lowercase().trim()
         return when {
             lower.contains("berkas") || lower.contains("file") || lower.contains("folder") ||
-            lower.contains("hapus") || lower.contains("rapikan") || lower.contains("pindah") ->
+                lower.contains("hapus") || lower.contains("rapikan") || lower.contains("pindah") ->
                 RouteType.FILE_MANAGER
 
-            lower.contains("koding") || lower.contains("compile") || lower.contains("tugas berat") || lower.contains("server laptop") || lower.contains("remote") ->
+            lower.contains("koding") || lower.contains("compile") || lower.contains("tugas berat") ||
+                lower.contains("server laptop") || lower.contains("remote") ->
                 RouteType.LAPTOP_BRIDGE
 
-            lower.contains("sync") || lower.contains("sinkron") || lower.contains("ingatan") || (lower.contains("laptop") && (lower.contains("memori") || lower.contains("data") || lower.contains("brankas"))) ->
+            lower.contains("sync") || lower.contains("sinkron") || lower.contains("ingatan") ||
+                (lower.contains("laptop") && (lower.contains("memori") || lower.contains("data") || lower.contains("brankas"))) ->
                 RouteType.MEMORY_SYNC
 
-            lower.contains("desain") || lower.contains("furnitur") || lower.contains("ruang") || lower.contains("warna") || lower.contains("estetik") ->
+            lower.contains("desain") || lower.contains("furnitur") || lower.contains("ruang") ||
+                lower.contains("warna") || lower.contains("estetik") ->
                 RouteType.DESIGN_ART
 
-            lower.contains("catat") || lower.contains("ide") || lower.contains("rangkum") || lower.contains("memo") || lower.contains("ringkas") ->
+            lower.contains("catat") || lower.contains("ide") || lower.contains("rangkum") ||
+                lower.contains("memo") || lower.contains("ringkas") ->
                 RouteType.SUMMARIZER
 
             lower.contains("cari") || lower.contains("berita") || lower.contains("info terbaru") || lower.contains("web") ->
@@ -86,8 +84,7 @@ class NineRouterEngine(
             lower.contains("saham") || lower.contains("harga") || lower.contains("pasar") || lower.contains("investasi") ->
                 RouteType.MARKET_PULSE
 
-            else ->
-                RouteType.ANISA_MANAGER
+            else -> RouteType.ANISA_MANAGER
         }
     }
 }
