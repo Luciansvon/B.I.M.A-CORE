@@ -74,9 +74,10 @@ class FileManager(private val safetyGate: UserSafetyGate = UserSafetyGate()) {
                 if (!file.exists()) {
                     "Berkas '${file.name}' sudah tidak ada."
                 } else {
-                    val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
+                    val wasDirectory = file.isDirectory
+                    val deleted = if (wasDirectory) file.deleteRecursively() else file.delete()
                     if (!deleted) error("Gagal menghapus '${file.name}'")
-                    if (file.isDirectory) {
+                    if (wasDirectory) {
                         "Folder '${file.name}' berhasil dibersihkan dengan aman."
                     } else {
                         "Berkas '${file.name}' berhasil dihapus dengan aman."
