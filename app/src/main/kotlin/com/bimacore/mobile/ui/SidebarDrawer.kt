@@ -156,6 +156,16 @@ fun SidebarDrawerContent(
             )
 
             SidebarMenuItem(
+                icon = Icons.Default.Key,
+                label = "Kunci API",
+                subtitle = "Atur kunci OpenRouter / Gemini",
+                onClick = {
+                    onSelectAction("API_KEY")
+                    onCloseDrawer()
+                }
+            )
+
+            SidebarMenuItem(
                 icon = Icons.Default.NoteAlt,
                 label = "Catatan & Memori",
                 subtitle = "Lihat fakta & ide tersimpan",
