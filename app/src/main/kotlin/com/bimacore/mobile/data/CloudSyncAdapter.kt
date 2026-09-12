@@ -1,12 +1,10 @@
 package com.bimacore.mobile.data
 
 import com.bimacore.mobile.model.MemoryFact
-import kotlinx.coroutines.delay
 
 /**
- * Adapter Sinkronisasi Awan (Cloud Sync Adapter).
- * Menghubungkan ingatan jangka panjang di HP ke brankas online
- * agar laptop Mas Bima dapat membaca memori yang sama.
+ * Boundary untuk sinkronisasi memori ke laptop.
+ * v1.0.2 tidak mengklaim sinkron berhasil sebelum transport remote benar-benar dikonfigurasi.
  */
 class CloudSyncAdapter(private val memoryStore: MemoryStore) {
 
@@ -18,17 +16,12 @@ class CloudSyncAdapter(private val memoryStore: MemoryStore) {
     )
 
     suspend fun syncWithLaptopVault(): SyncResult {
-        // Simulasi pengiriman paket ingatan ringkas (format JSON terenkripsi ringan)
-        delay(400) // Latensi jaringan minimalis
-        val facts = memoryStore.getAllFacts()
         return SyncResult(
-            isSuccess = true,
-            syncedFactsCount = facts.size,
-            message = "Sinkronisasi berhasil: ${facts.size} fakta ingatan tersambung dengan laptop Mas Bima."
+            isSuccess = false,
+            syncedFactsCount = 0,
+            message = "Sync laptop belum dikonfigurasi pada build ini. Tidak ada data yang dikirim."
         )
     }
 
-    fun getSyncPayload(): List<MemoryFact> {
-        return memoryStore.getAllFacts()
-    }
+    fun getSyncPayload(): List<MemoryFact> = memoryStore.getAllFacts()
 }
