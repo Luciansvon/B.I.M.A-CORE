@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import signal
 import subprocess
 
 from crewai.tools import BaseTool
@@ -28,9 +29,9 @@ def _browser_worker_python() -> Path:
 
 def _worker_timeout() -> int:
     try:
-        return max(30, int(os.environ.get("BROWSER_WORKER_TIMEOUT", "900")))
+        return max(30, int(os.environ.get("BROWSER_WORKER_TIMEOUT", "1260")))
     except ValueError:
-        return 900
+        return 1260
 
 
 def _parse_worker_response(stdout: str) -> dict:
@@ -38,6 +39,28 @@ def _parse_worker_response(stdout: str) -> dict:
     if not lines:
         raise ValueError("worker tidak mengembalikan output")
     return json.loads(lines[-1])
+
+
+def _signal_worker_group(worker: subprocess.Popen[str], sig: signal.Signals) -> None:
+    try:
+        os.killpg(worker.pid, sig)
+    except ProcessLookupError:
+        return
+    except OSError:
+        logger.exception("browser worker process-group signal gagal")
+
+
+def _terminate_worker_group(worker: subprocess.Popen[str]) -> None:
+    _signal_worker_group(worker, signal.SIGTERM)
+    try:
+        worker.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        logger.warning("browser worker masih hidup setelah SIGTERM; kirim SIGKILL")
+        _signal_worker_group(worker, signal.SIGKILL)
+        try:
+            worker.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.error("browser worker process group tetap hidup setelah SIGKILL")
 
 
 class BrowserUseTool(BaseTool):
@@ -54,40 +77,50 @@ class BrowserUseTool(BaseTool):
 
         worker_python = _browser_worker_python()
         if not worker_python.is_file():
-            return f"FAILED|browser worker env belum siap: {worker_python}"
+            return "FAILED|browser worker env belum siap"
         if not _WORKER_PATH.is_file():
-            return f"FAILED|browser worker script gak ada: {_WORKER_PATH}"
+            return "FAILED|browser worker script gak ada"
 
         payload = json.dumps({"task": task}, ensure_ascii=False)
+        timeout = _worker_timeout()
+        worker: subprocess.Popen[str] | None = None
         try:
-            completed = subprocess.run(
+            worker = subprocess.Popen(
                 [str(worker_python), str(_WORKER_PATH)],
-                input=payload,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                capture_output=True,
                 cwd=str(_PROJECT_ROOT),
                 env=os.environ.copy(),
-                timeout=_worker_timeout(),
-                check=False,
+                start_new_session=True,
             )
+            stdout, stderr = worker.communicate(payload, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return f"FAILED|browser worker timeout >{_worker_timeout()}s"
-        except OSError as exc:
+            logger.error("browser worker timeout >%ss", timeout)
+            if worker is not None:
+                _terminate_worker_group(worker)
+            return f"FAILED|browser worker timeout >{timeout}s"
+        except OSError:
             logger.exception("browser worker spawn error")
-            return f"FAILED|browser worker spawn: {exc}"
+            if worker is not None:
+                _terminate_worker_group(worker)
+            return "FAILED|browser worker gagal dijalankan"
 
-        if completed.returncode != 0:
-            error = (completed.stderr or completed.stdout or "unknown error")[-500:].strip()
-            return f"FAILED|browser worker exit={completed.returncode}: {error}"
+        if worker.returncode != 0:
+            error = (stderr or stdout or "unknown error")[-500:].strip()
+            logger.error("browser worker exit=%s: %s", worker.returncode, error)
+            return "FAILED|browser worker gagal"
 
         try:
-            response = _parse_worker_response(completed.stdout)
+            response = _parse_worker_response(stdout)
         except (ValueError, json.JSONDecodeError) as exc:
             logger.warning("browser worker output invalid: %s", exc)
-            return f"FAILED|browser worker output invalid: {exc}"
+            return "FAILED|browser worker output invalid"
 
         if not response.get("ok"):
-            return f"FAILED|{response.get('error') or 'browser worker gagal'}"
+            logger.warning("browser worker gagal: %s", response.get("error"))
+            return "FAILED|browser worker gagal"
 
         result = str(response.get("result") or "").strip()
         if not result:

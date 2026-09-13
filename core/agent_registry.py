@@ -5,7 +5,6 @@ AGENT_REGISTRY: dict[str, str] = {
     "mekanik": "teams.t8_mekanik:mekanik_agent",
     "arsip": "teams.t3_arsip:arsip_agent",
     "visual": "teams.t2_visual:visual_agent",
-    "manager": "teams.t1_manager:manager_agent",
     "seniman": "teams.t7_seniman:seniman_agent",
     "admin": "teams.t4_admin:admin_agent",
     "lifestyle": "teams.t6_lifestyle:lifestyle_agent",

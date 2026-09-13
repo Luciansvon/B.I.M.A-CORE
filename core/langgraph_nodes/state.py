@@ -23,10 +23,23 @@ def unregister_progress_callback(thread_id: str) -> None:
         _progress_callbacks.pop(thread_id, None)
 
 
-def _derive_thread_id_from_state(state) -> str:
-    user_id = state.get("discord_user_id") or "anon"
-    channel = state.get("source_channel") or "unknown"
-    return f"{user_id}_{channel}"
+def build_thread_id(
+    user_id: str = "",
+    source_channel: str = "",
+    conversation_id: str = "",
+) -> str:
+    user = user_id or "anon"
+    channel = source_channel or "unknown"
+    conversation = conversation_id or channel
+    return f"{channel}:{user}:{conversation}"
+
+
+def _derive_thread_id_from_state(state: "BimaState") -> str:
+    return build_thread_id(
+        state.get("discord_user_id", ""),
+        state.get("source_channel", ""),
+        state.get("conversation_id", ""),
+    )
 
 # Ini adalah "Otak Pusat" atau papan tulis bersama untuk agen-agen kita.
 # Setiap kali agen bekerja, mereka akan membaca dan memperbarui State ini.
@@ -70,9 +83,34 @@ class BimaState(TypedDict):
     # WA 100MB lega — kalau Discord trigger video, redirect user ke WA).
     source_channel: NotRequired[str]
 
+    # ID chat/channel nyata untuk isolasi checkpoint dan progress callback.
+    conversation_id: NotRequired[str]
+
     # T1-E: Conversation summary — diisi context_summarizer_node kalau messages > threshold.
     # Manager + agen pakai field ini untuk konteks panjang tanpa harus parse semua history.
     conversation_summary: NotRequired[str]
+
+
+_UPSTREAM_TEAMS = {
+    "seniman": frozenset({"intel", "arsip"}),
+    "admin": frozenset({"intel", "arsip", "seniman"}),
+}
+
+
+def get_current_upstream_text(
+    state: BimaState,
+    target_team: str,
+    max_chars: int = 2500,
+) -> str:
+    allowed = _UPSTREAM_TEAMS.get(target_team, frozenset())
+    if not allowed.intersection(state.get("active_teams", [])):
+        return ""
+
+    messages = state.get("messages", []) or []
+    if not messages:
+        return ""
+    last = messages[-1]
+    return (getattr(last, "content", "") or str(last))[:max_chars].strip()
 
 
 async def notify_progress(state: BimaState, message: str) -> None:

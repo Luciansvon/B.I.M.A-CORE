@@ -1,11 +1,15 @@
 import os
+import logging
+from pathlib import Path
 import httpx
 from crewai import Agent
 from crewai.tools import BaseTool
 from crewai_tools import SerperDevTool
 from config import lifestyle_llm
+from core.public_errors import public_failure
 
 search_tool = SerperDevTool()
+logger = logging.getLogger("bima_core")
 
 # ============================================================
 # Tool 1: YouTube Search
@@ -69,8 +73,9 @@ class YouTubeSearchTool(BaseTool):
             try:
                 result = search_tool.run(f"{query} site:youtube.com")
                 return f"=== YouTube (via Google): '{query}' ===\n\n{result}"
-            except:
-                return f"Gagal cari YouTube: {e}"
+            except Exception:
+                logger.exception("[LIFESTYLE] YouTube search dan fallback gagal")
+                return public_failure("Gagal cari YouTube")
 
 # ============================================================
 # Tool 2: Cuaca Kota
@@ -111,7 +116,8 @@ class CuacaTool(BaseTool):
                 f"📋 Prakiraan:\n" + "\n".join(forecast_lines)
             )
         except Exception as e:
-            return f"Gagal cek cuaca: {e}"
+            logger.exception("[LIFESTYLE] Gagal cek cuaca")
+            return public_failure("Gagal cek cuaca")
 
 # ============================================================
 # Tool 3: Schedule Manager
@@ -122,41 +128,77 @@ class ScheduleManagerTool(BaseTool):
     Input format: 'action|data'
     - 'add|2026-05-01 19:00, Meeting dengan Client' (untuk menambah jadwal)
     - 'list|' (untuk melihat semua jadwal)
-    - 'clear|' (untuk menghapus semua jadwal)"""
+    - 'delete|meeting client' (hapus SATU jadwal yang match unik + approval)
+    - 'clear|' (hapus SEMUA jadwal + approval eksplisit; jangan untuk hapus satu item)"""
 
     def _run(self, command: str) -> str:
-        import json, os
-        schedule_file = os.path.join(os.path.dirname(__file__), "../vault_index/schedule.json")
-        os.makedirs(os.path.dirname(schedule_file), exist_ok=True)
+        import json
+
+        schedule_file = Path(__file__).resolve().parent.parent / "vault_index" / "schedule.json"
+        schedule_file.parent.mkdir(parents=True, exist_ok=True)
         
         try:
-            if os.path.exists(schedule_file):
-                with open(schedule_file, "r") as f:
+            if schedule_file.exists():
+                with schedule_file.open("r", encoding="utf-8") as f:
                     agenda = json.load(f)
             else:
                 agenda = []
+            if not isinstance(agenda, list):
+                raise ValueError("Format schedule bukan list")
                 
             parts = command.split("|", 1)
-            action = parts[0].strip()
+            action = parts[0].strip().lower()
+            data = parts[1].strip() if len(parts) == 2 else ""
+
+            if action in {"add", "delete"} and not data:
+                return "Format salah. Data jadwal wajib diisi setelah tanda '|'."
+
+            def save(items: list[str]) -> None:
+                with schedule_file.open("w", encoding="utf-8") as f:
+                    json.dump(items, f, ensure_ascii=False, indent=2)
             
             if action == "add":
-                data = parts[1].strip()
                 agenda.append(data)
-                with open(schedule_file, "w") as f:
-                    json.dump(agenda, f)
+                save(agenda)
                 return f"✅ Jadwal berhasil ditambahkan: {data}"
             elif action == "list":
                 if not agenda:
                     return "📅 Jadwal kosong."
                 return "📅 Jadwal Bima:\n" + "\n".join([f"- {item}" for item in agenda])
+            elif action == "delete":
+                matches = [item for item in agenda if data.casefold() in str(item).casefold()]
+                if not matches:
+                    return f"Jadwal dengan kata kunci '{data}' tidak ditemukan."
+                if len(matches) > 1:
+                    candidates = "\n".join(f"- {item}" for item in matches)
+                    return (
+                        "Ditemukan lebih dari satu jadwal. Pakai kata kunci lebih spesifik:\n"
+                        f"{candidates}"
+                    )
+                from core.permission_gate import check_permission_sync
+                target = matches[0]
+                if not check_permission_sync(
+                    "Hapus Satu Jadwal",
+                    f"Menghapus jadwal: {target}",
+                ):
+                    return "❌ Penghapusan jadwal ditolak oleh Bima."
+                agenda.remove(target)
+                save(agenda)
+                return f"✅ Jadwal berhasil dihapus: {target}"
             elif action == "clear":
-                with open(schedule_file, "w") as f:
-                    json.dump([], f)
+                from core.permission_gate import check_permission_sync
+                if not check_permission_sync(
+                    "Hapus Semua Jadwal",
+                    f"Menghapus seluruh {len(agenda)} jadwal.",
+                ):
+                    return "❌ Penghapusan semua jadwal ditolak oleh Bima."
+                save([])
                 return "✅ Semua jadwal berhasil dihapus."
             else:
-                return "Format salah. Gunakan 'add|tanggal, kegiatan' atau 'list|'"
+                return "Format salah. Gunakan add|data, list|, delete|query, atau clear|."
         except Exception as e:
-            return f"Error akses jadwal: {e}"
+            logger.exception("[LIFESTYLE] Gagal akses jadwal")
+            return public_failure("Gagal akses jadwal")
 
 # ============================================================
 # Tool 4: Maps Distance
@@ -199,7 +241,8 @@ class MapsDistanceTool(BaseTool):
                 return f"🗺️ Rute: {asal} ➔ {tujuan}\n📏 Jarak: {dist_km:.1f} km\n⏱️ Estimasi: {hours} jam {mins} menit (driving)"
             return "Gagal mencari rute."
         except Exception as e:
-            return f"Error maps: {e}"
+            logger.exception("[LIFESTYLE] Gagal menghitung rute")
+            return public_failure("Gagal menghitung rute")
 
 # ============================================================
 # Lifestyle Agent — VERSI OVERHAUL

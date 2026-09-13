@@ -31,7 +31,8 @@ class SherlockTool(BaseTool):
     )
 
     def _run(self, username: str) -> str:
-        username = (username or "").strip().split()[0] if username else ""
+        raw_username = (username or "").strip()
+        username = raw_username.split()[0] if raw_username else ""
         username = re.sub(r"[^A-Za-z0-9._-]", "", username)[:40]
         if not username:
             return "FAILED|Username kosong / cuma karakter terlarang"

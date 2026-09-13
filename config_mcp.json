@@ -28,14 +28,14 @@
     },
     {
       "name": "sequential_thinking",
-      "description": "Anthropic Sequential Thinking — structured reasoning chain.",
-      "enabled": true,
+      "description": "Sequential Thinking — DISABLED karena CrewAI manager lama sudah dihapus dan tidak ada consumer runtime.",
+      "enabled": false,
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@2026.7.4"],
       "env": {},
       "tools": null,
-      "attach_to": ["manager"],
+      "attach_to": [],
       "requires_bin": "npx"
     },
     {
@@ -50,10 +50,9 @@
       },
       "tools": null,
       "tool_allowlist_by_agent": {
-        "manager": ["read_graph", "search_nodes", "open_nodes"],
         "arsip": ["create_entities", "create_relations", "add_observations", "read_graph", "search_nodes", "open_nodes"]
       },
-      "attach_to": ["arsip", "manager"],
+      "attach_to": ["arsip"],
       "requires_bin": "npx"
     },
     {
@@ -65,7 +64,7 @@
       "args": ["--from", "mcp-server-time==2026.8.18", "mcp-server-time"],
       "env": {},
       "tools": null,
-      "attach_to": ["manager", "saham", "lifestyle"],
+      "attach_to": ["saham", "lifestyle"],
       "requires_bin": "uvx"
     },
     {
@@ -105,6 +104,18 @@
       "attach_to": ["kodok"],
       "requires_bin": "uvx",
       "_note": "Mekanik di-skip karena udah punya GitAutomationTool (status/commit/push) di t8_mekanik.py. Git MCP cuma buat kodok diagnostic history."
+    },
+    {
+      "name": "context7",
+      "description": "Upstash Context7 — resolve-library-id + get-library-docs, fetch dokumentasi library eksternal versi terbaru (anti-halusinasi API outdated). Jalan tanpa API key (rate limit lebih rendah); kalau mau naikin limit, tambah CONTEXT7_API_KEY manual ke blok env di sini + .env (skema `_expand_vars` di mcp_client_manager.py gak fallback ke kosong kalau var gak di-set, jadi jangan pakai `${VAR}` di sini sebelum key-nya beneran ada di .env).",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "env": {},
+      "tools": null,
+      "attach_to": ["kodok", "mekanik"],
+      "requires_bin": "npx"
     },
     {
       "name": "sqlite",

@@ -22,3 +22,18 @@ def test_codebase_visualizer():
     # Clean up
     if out_path.exists():
         out_path.unlink()
+
+
+def test_codebase_visualizer_rejects_path_outside_workspace(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text(
+        "SECRET = 'do-not-read'",
+        encoding="utf-8",
+    )
+
+    result = CodebaseVisualizerTool()._run(str(outside))
+
+    assert result == "FAILED|Direktori tidak diizinkan."

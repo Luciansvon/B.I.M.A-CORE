@@ -2,6 +2,8 @@ import logging
 from pathlib import Path
 from crewai.tools import BaseTool
 from config import OUTPUT_DIR
+from core.path_security import resolve_allowed_path
+from core.public_errors import public_failure
 from teams.t4_admin.styles import STYLES, DEFAULT_STYLE_NAME
 from teams.t4_admin.chart_utils import render_chart
 
@@ -34,14 +36,20 @@ class DataAnalysisTool(BaseTool):
             style_name = parts[4].strip().lower() if len(parts) > 4 else DEFAULT_STYLE_NAME
             chart_style = STYLES.get(style_name, STYLES[DEFAULT_STYLE_NAME])
 
-            p = Path(filepath)
-            if not p.exists():
-                fallback_path = OUTPUT_DIR / p.name
-                if fallback_path.exists():
-                    p = fallback_path
-                    filepath = str(p)
-                else:
-                    return f"FAILED|File tidak ditemukan: {filepath}"
+            raw_path = Path(filepath)
+            candidate = raw_path
+            if not raw_path.is_absolute():
+                candidate = OUTPUT_DIR / raw_path.name
+            try:
+                p = resolve_allowed_path(
+                    candidate,
+                    (OUTPUT_DIR,),
+                    base_dir=OUTPUT_DIR.parent,
+                    allowed_suffixes={".csv", ".xlsx", ".xls"},
+                )
+            except ValueError:
+                return "FAILED|Path tidak diizinkan"
+            filepath = str(p)
 
             try:
                 if p.suffix == '.csv':
@@ -51,7 +59,8 @@ class DataAnalysisTool(BaseTool):
                 else:
                     return "FAILED|Format file harus CSV atau Excel."
             except Exception as read_err:
-                return f"FAILED|Gagal baca file: {read_err}"
+                logger.exception("[ADMIN] Gagal baca file data")
+                return public_failure("Gagal baca file")
 
             if chart_type == 'pie':
                 col_label = parts[2].strip()
@@ -86,7 +95,8 @@ class DataAnalysisTool(BaseTool):
             return f"SUCCESS|{chart_filepath}|\nStatistik:\n{stats}\n\nGrafik {chart_type} ({chart_style['label']}) disimpan di {chart_filepath}"
 
         except ImportError as e:
-            return f"FAILED|Library kurang: {e}. Jalankan: pip install pandas matplotlib openpyxl"
+            logger.exception("[ADMIN] Library data analysis tidak tersedia")
+            return public_failure("Library data analysis tidak tersedia")
         except Exception as e:
             logger.error(f"[ADMIN] DataAnalysis error: {e}", exc_info=True)
-            return f"FAILED|Gagal analisis data: {e}"
+            return public_failure("Gagal analisis data")

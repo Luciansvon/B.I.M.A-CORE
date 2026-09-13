@@ -7,6 +7,8 @@ import tempfile
 from datetime import datetime
 from crewai.tools import BaseTool
 from config import OUTPUT_DIR
+from core.path_security import safe_output_path
+from core.public_errors import public_failure
 from teams.t4_admin.styles import resolve_style, _hex_from_rgb
 
 logger = logging.getLogger('bima_core')
@@ -105,7 +107,8 @@ class ExcelGeneratorTool(BaseTool):
         try:
             data = json.loads(input_json)
         except json.JSONDecodeError as e:
-            return f"FAILED|JSON tidak valid: {e}"
+            logger.warning("[ADMIN] JSON Excel tidak valid: %s", e)
+            return public_failure("JSON tidak valid")
 
         style = resolve_style(data)
         header_hex = _hex_from_rgb(style["table_header_rgb"])
@@ -115,14 +118,22 @@ class ExcelGeneratorTool(BaseTool):
         doc_title = data.get("title") or data.get("filename", "Dokumen")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{data.get('filename', 'laporan')}_{timestamp}.xlsx"
-        filepath = OUTPUT_DIR / filename
+        filepath = safe_output_path(
+            OUTPUT_DIR,
+            data.get("filename"),
+            default_stem="laporan",
+            suffix=".xlsx",
+            timestamp=timestamp,
+        )
+        filename = filepath.name
 
         commands = []
 
         # === SUMMARY SHEET — sheet pertama sebagai ringkasan ===
-        commands.append({"command": "add", "parent": "/", "type": "sheet", "props": {"name": "Ringkasan"}})
-        commands.append({"command": "remove", "path": "/Sheet1"})
+        # Rename Sheet1 default alih-alih add+remove -- kombinasi add-sheet-baru-lalu-remove-Sheet1
+        # bikin OfficeCLI salah hitung kolom untuk semua penulisan cell sesudahnya (offset ke kanan,
+        # makin parah per sheet tambahan), walau OfficeCLI sendiri lapor sukses di posisi yang benar.
+        commands.append({"command": "set", "path": "/Sheet1", "props": {"name": "Ringkasan"}})
         merge_cols = max(len(sheets_data), 1, 4)
         commands.append({
             "command": "add", "parent": "/Ringkasan", "type": "cell",
@@ -141,10 +152,8 @@ class ExcelGeneratorTool(BaseTool):
                               "props": {"ref": f"A{i}", "value": k, "bold": "true"}})
             commands.append({"command": "add", "parent": "/Ringkasan", "type": "cell",
                               "props": {"ref": f"B{i}", "value": v}})
-        commands.append({"command": "add", "parent": "/Ringkasan", "type": "column",
-                          "props": {"name": "A", "width": "22"}})
-        commands.append({"command": "add", "parent": "/Ringkasan", "type": "column",
-                          "props": {"name": "B", "width": "42"}})
+        commands.append({"command": "set", "path": "/Ringkasan/col[A]", "props": {"width": "22"}})
+        commands.append({"command": "set", "path": "/Ringkasan/col[B]", "props": {"width": "42"}})
 
         for chart in data.get("charts", []) or []:
             commands.append(_chart_command("/Ringkasan", chart))
@@ -218,8 +227,8 @@ class ExcelGeneratorTool(BaseTool):
 
             for col_idx, header in enumerate(headers, 1):
                 width = _col_width(header, rows, col_idx - 1)
-                commands.append({"command": "add", "parent": f"/{sheet_name}", "type": "column",
-                                  "props": {"name": _col_letter(col_idx), "width": str(width)}})
+                commands.append({"command": "set", "path": f"/{sheet_name}/col[{_col_letter(col_idx)}]",
+                                  "props": {"width": str(width)}})
 
             if headers:
                 freeze_ref = f"A{hdr_row + 1}"
@@ -257,12 +266,9 @@ class ExcelGeneratorTool(BaseTool):
                 if ref_url:
                     url_props["link"] = ref_url
                 commands.append({"command": "add", "parent": "/Referensi", "type": "cell", "props": url_props})
-            commands.append({"command": "add", "parent": "/Referensi", "type": "column",
-                              "props": {"name": "A", "width": "6"}})
-            commands.append({"command": "add", "parent": "/Referensi", "type": "column",
-                              "props": {"name": "B", "width": "60"}})
-            commands.append({"command": "add", "parent": "/Referensi", "type": "column",
-                              "props": {"name": "C", "width": "50"}})
+            commands.append({"command": "set", "path": "/Referensi/col[A]", "props": {"width": "6"}})
+            commands.append({"command": "set", "path": "/Referensi/col[B]", "props": {"width": "60"}})
+            commands.append({"command": "set", "path": "/Referensi/col[C]", "props": {"width": "50"}})
             commands.append({"command": "set", "path": "/Referensi", "props": {"freeze": "A2"}})
 
         batch_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8")
@@ -300,7 +306,7 @@ class ExcelGeneratorTool(BaseTool):
             return "FAILED|OfficeCLI timeout — dokumen terlalu besar atau proses macet."
         except Exception as e:
             logger.error(f"[ADMIN] ExcelGenerator (OfficeCLI) error: {e}", exc_info=True)
-            return f"FAILED|{e}"
+            return public_failure("Gagal membuat Excel")
         finally:
             os.unlink(batch_tmp.name) if os.path.exists(batch_tmp.name) else None
             subprocess.run([officecli, "close", str(filepath)], capture_output=True, text=True, timeout=15)

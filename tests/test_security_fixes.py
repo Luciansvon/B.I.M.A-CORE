@@ -36,6 +36,20 @@ def test_wa_bridge_empty_token_fallback():
         assert res.status_code == 401
         assert "Token tidak valid" in res.json()["detail"]
 
+
+def test_wa_bridge_rejects_missing_sender_id() -> None:
+    from core.wa_server import app as wa_app
+
+    client = TestClient(wa_app)
+    with patch("core.wa_server._WA_TOKEN", "test-token-rahasia"):
+        response = client.post(
+            "/chat",
+            json={"message": "hello", "token": "test-token-rahasia"},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Sender ID wajib diisi"}
+
 # --- Test Dashboard Server ---
 def test_dashboard_outputs_auth():
     from core.dashboard_server import app as dash_app

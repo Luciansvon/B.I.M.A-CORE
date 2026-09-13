@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from crewai.tools import BaseTool
 from config import OUTPUT_DIR
+from core.path_security import safe_output_path
+from core.public_errors import public_failure
 from teams.t4_admin.styles import resolve_style, _hex_from_rgb, DEFAULT_STYLE_NAME
 from teams.t4_admin.chart_utils import render_chart
 
@@ -108,7 +110,8 @@ class WordGeneratorTool(BaseTool):
             try:
                 data = json.loads(input_json)
             except json.JSONDecodeError as e:
-                return f"FAILED|JSON tidak valid: {e}"
+                logger.warning("[ADMIN] JSON Word tidak valid: %s", e)
+                return public_failure("JSON tidak valid")
 
             style_name = data.get("style", DEFAULT_STYLE_NAME)
             style = resolve_style(data)
@@ -176,13 +179,6 @@ class WordGeneratorTool(BaseTool):
                 sectPr.append(pgNumType)
 
             # === PAGE NUMBERS DI FOOTER ===
-            footer = section_doc.footer
-            footer_para = footer.paragraphs[0]
-            footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            footer_run = footer_para.add_run()
-            footer_run.font.size = Pt(9)
-            footer_run.font.color.rgb = RGBColor(0x90, 0x90, 0x90)
-
             # Tambah field PAGE dan NUMPAGES via XML
             def _add_fld(para, instr):
                 from docx.oxml import OxmlElement as _OE
@@ -198,15 +194,31 @@ class WordGeneratorTool(BaseTool):
                 e = _OE('w:r')
                 e.append(fldChar_e)
                 para._p.extend([r, p, e])
-            footer_para.add_run(f"{data.get('author', 'B.I.M.A Core')}  |  halaman ")
-            _add_fld(footer_para, ' PAGE ')
-            footer_para.add_run(" dari ")
-            _add_fld(footer_para, ' NUMPAGES ')
 
-            # === Set front matter to Roman numerals ===
+            def _populate_footer(footer_obj):
+                """Isi footer dengan 'Author | halaman PAGE dari NUMPAGES' (rata tengah)."""
+                fp = footer_obj.paragraphs[0]
+                fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for _r in list(fp.runs):  # bersihkan kalau ada run lama
+                    _r._r.getparent().remove(_r._r)
+                base = fp.add_run(f"{data.get('author', 'B.I.M.A Core')}  |  halaman ")
+                base.font.size = Pt(9)
+                base.font.color.rgb = RGBColor(0x90, 0x90, 0x90)
+                _add_fld(fp, ' PAGE ')
+                mid = fp.add_run(" dari ")
+                mid.font.size = Pt(9)
+                mid.font.color.rgb = RGBColor(0x90, 0x90, 0x90)
+                _add_fld(fp, ' NUMPAGES ')
+
+            _populate_footer(section_doc.footer)
+
+            # === Penomoran halaman body = Arab mulai 1 ===
+            # PENTING (OOXML): sectPr level-body (doc.sections[0]._sectPr) mengatur section
+            # TERAKHIR = body. Front matter diatur oleh sectPr yang di-embed di paragraf
+            # section-break di bawah. Jangan tertukar: body=decimal, front matter=lowerRoman.
             is_akademik = (style_name == 'akademik')
             if is_akademik:
-                _set_page_num_format(section_doc, fmt='lowerRoman', start=1)
+                _set_page_num_format(section_doc, fmt='decimal', start=1)
 
             # Title
             title_para = doc.add_paragraph()
@@ -295,11 +307,13 @@ class WordGeneratorTool(BaseTool):
                         if lvl == 1:
                             toc_run.font.bold = True
 
-            # === SECTION BREAK: Roman → Arabic page numbering ===
+            # === SECTION BREAK: front matter (Roman) → body (Arab) ===
             if is_akademik:
                 from docx.oxml import OxmlElement as _OE_sb
                 from docx.oxml.ns import qn as _qn_sb
-                # Add section break (new page) before body content
+                # Add section break (new page) before body content.
+                # sectPr yang di-embed di paragraf ini mengatur section SEBELUMNYA (front matter),
+                # jadi di sinilah penomoran Romawi kecil (i, ii, iii) diterapkan.
                 body_break_para = doc.add_paragraph()
                 pPr = body_break_para._p.get_or_add_pPr()
                 sectPr = _OE_sb('w:sectPr')
@@ -313,12 +327,17 @@ class WordGeneratorTool(BaseTool):
                 pgMar.set(_qn_sb('w:left'), str(int(margins_cm.get('left', 2.54) * 567)))
                 pgMar.set(_qn_sb('w:right'), str(int(margins_cm.get('right', 2.54) * 567)))
                 sectPr.append(pgMar)
-                # Set Arabic numbering starting from 1
+                # Front matter = angka Romawi kecil mulai i
                 pgNumType = _OE_sb('w:pgNumType')
-                pgNumType.set(_qn_sb('w:fmt'), 'decimal')
+                pgNumType.set(_qn_sb('w:fmt'), 'lowerRoman')
                 pgNumType.set(_qn_sb('w:start'), '1')
                 sectPr.append(pgNumType)
                 pPr.append(sectPr)
+                # Footer body sudah terisi; front matter (section 0 sekarang) footernya
+                # masih kosong & linked -- putus link + isi sendiri supaya nomor Romawi tampil.
+                _front_footer = doc.sections[0].footer
+                _front_footer.is_linked_to_previous = False
+                _populate_footer(_front_footer)
             else:
                 if data.get("toc") and sections:
                     doc.add_page_break()
@@ -369,6 +388,9 @@ class WordGeneratorTool(BaseTool):
                     if img_path.exists() and img_path.is_file():
                         try:
                             doc.add_picture(str(img_path), width=Inches(5.5))
+                            # Style Normal pakai line_spacing EKSAK (Pt); tanpa reset ini
+                            # Word/LibreOffice meng-clip gambar setinggi 1 baris jadi sliver tipis.
+                            doc.paragraphs[-1].paragraph_format.line_spacing = 1.0
                         except Exception as img_err:
                             logger.warning(f"[ADMIN] Gagal embed image {img_path}: {img_err}")
 
@@ -377,6 +399,8 @@ class WordGeneratorTool(BaseTool):
                     try:
                         chart_path = render_chart(chart, style)
                         doc.add_picture(chart_path, width=Inches(6))
+                        # Reset line spacing paragraf gambar -- cegah clip oleh exact line spacing.
+                        doc.paragraphs[-1].paragraph_format.line_spacing = 1.0
                     except Exception as chart_err:
                         logger.warning(f"[ADMIN] Gagal render chart Word: {chart_err}")
 
@@ -388,6 +412,12 @@ class WordGeneratorTool(BaseTool):
                 # Key Values (untuk surat izin, detail rapi dengan titik dua sejajar)
                 if section.get("key_values") and isinstance(section["key_values"], dict):
                     kv_table = doc.add_table(rows=len(section["key_values"]), cols=3)
+                    kv_table.autofit = False  # wajib false -- kalau True, Word abaikan lebar kolom di bawah dan kolom nilai jadi melebar
+                    # Set lebar lewat tblGrid (table.columns), bukan cell.width -- cell.width cuma ubah tcW
+                    # cell itu sendiri, sedangkan Word pakai tblGrid sebagai acuan layout fixed-width.
+                    kv_table.columns[0].width = Inches(1.5)
+                    kv_table.columns[1].width = Inches(0.2)
+                    kv_table.columns[2].width = Inches(4.0)
                     for idx, (k, v) in enumerate(section["key_values"].items()):
                         row = kv_table.rows[idx].cells
                         row[0].text = str(k)
@@ -395,6 +425,7 @@ class WordGeneratorTool(BaseTool):
                         row[1].text = ":"
                         row[1].width = Inches(0.2)
                         row[2].text = str(v)
+                        row[2].width = Inches(4.0)
                         for cell in row:
                             set_cell_margins(cell, top=20, bottom=20, left=40, right=40)
                     doc.add_paragraph()
@@ -462,11 +493,17 @@ class WordGeneratorTool(BaseTool):
                         add_hyperlink(p, ref_url, ref_url, color_hex=accent_hex)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{data.get('filename', 'dokumen')}_{timestamp}.docx"
-            filepath = OUTPUT_DIR / filename
+            filepath = safe_output_path(
+                OUTPUT_DIR,
+                data.get("filename"),
+                default_stem="dokumen",
+                suffix=".docx",
+                timestamp=timestamp,
+            )
+            filename = filepath.name
             doc.save(filepath)
 
             return f"SUCCESS|{filepath}|Word ({style['label']}) berhasil dibuat: {filename}"
         except Exception as e:
             logger.error(f"[ADMIN] WordGenerator error: {e}", exc_info=True)
-            return f"FAILED|{e}"
+            return public_failure("Gagal membuat Word")

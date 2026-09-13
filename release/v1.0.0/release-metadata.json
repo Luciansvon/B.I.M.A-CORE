@@ -1,0 +1,26 @@
+{
+  "release": "v1.0.0",
+  "name": "v1.0.0 — BIMA CORE Mobile (Anisa Agent Harness)",
+  "repository": "https://github.com/Luciansvon/B.I.M.A-CORE",
+  "releaseUrl": "https://github.com/Luciansvon/B.I.M.A-CORE/releases/tag/v1.0.0",
+  "publishedAt": "2026-09-13T03:56:24+07:00",
+  "author": "Luciansvon",
+  "assets": [
+    {
+      "name": "bima-core-mobile-v1.0.0.apk",
+      "sizeBytes": 18744306,
+      "sha256": "EB80AD7320D2DDE1425C43F12A69FA44623A60E43A818EA39072156363FC6F9C",
+      "contentType": "application/vnd.android.package-archive"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "contentType": "text/plain"
+    }
+  ],
+  "compliance": {
+    "devInfraStandards": true,
+    "immutableEvidence": true,
+    "automatedTestsPass": "8/8",
+    "resultReport": ".artifacts/result.json"
+  }
+}

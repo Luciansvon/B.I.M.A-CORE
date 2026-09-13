@@ -27,3 +27,5 @@
   - Bima menegaskan bahwa aplikasi mobile Android (Anisa di HP) WAJIB memiliki akses penuh ke seluruh file penyimpanan HP (bukan cuma folder cache aplikasi). Anisa harus bisa jelajah folder (Download, Dokumen, dll.), baca file, dan kelola file di seluruh memori HP lewat izin All Files Access (MANAGE_EXTERNAL_STORAGE).
   - Bima memantau aktivitas dan kegagalan bot langsung dari aplikasi Discord ANISA APP (misal kegagalan pembuatan gambar).
   - Seluruh model gambar dan pencarian web dialihkan agar terpusat ke 9Router lokal miliknya.
+  - Bima meminta agar prompt optimizer / pembuat prompt tidak dibuat kaku atau serba hard-coded. Harus fleksibel dengan variasi dinamis (suasana, sudut pandang, pencahayaan, detail) agar hasil generate tidak monoton dan tidak selalu sama setiap saat.
+

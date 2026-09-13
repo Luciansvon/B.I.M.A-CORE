@@ -30,6 +30,7 @@ app = FastAPI(title="B.I.M.A WA Bridge")
 
 class ChatRequest(BaseModel):
     message: str
+    sender_id: str = ""
     token: str = ""
     attachment_paths: list[str] = []
 
@@ -52,6 +53,10 @@ async def chat(req: ChatRequest):
 
     if req.token != _WA_TOKEN:
         raise HTTPException(status_code=401, detail="Token tidak valid")
+
+    sender_id = req.sender_id.strip()
+    if not sender_id:
+        return JSONResponse({"error": "Sender ID wajib diisi"}, status_code=400)
 
     message = req.message.strip()
     # Voice-only flow: message boleh kosong asal ada audio attachment (bakal di-transcribe)
@@ -83,7 +88,7 @@ async def chat(req: ChatRequest):
 
         from core.utils import get_waktu, extract_output_files
         from core.langgraph_engine import run_langgraph_engine
-        from teams.t1_manager import simpan_sesi
+        from memory.memory_engine import add_session
         from core.event_bus import emit
 
         waktu = get_waktu()
@@ -125,12 +130,14 @@ Gunakan info waktu ini saat menjawab.
             konteks_waktu=konteks_waktu,
             attachment_paths=other_paths,
             progress_callback=None,
+            discord_user_id=sender_id,
             source_channel="whatsapp",
+            conversation_id=sender_id,
         )
 
         # Simpan sesi
         try:
-            simpan_sesi(perintah, hasil)
+            add_session(perintah, hasil)
         except Exception as e:
             logger.warning(f"[WA-BRIDGE] Gagal simpan sesi: {e}")
 

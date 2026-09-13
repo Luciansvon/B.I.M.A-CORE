@@ -137,7 +137,7 @@ function GuildApp() {
     const lvl = m.state === 'error' ? 'ERR' : (m.state === 'talking' ? 'OK' : 'INFO');
     setLogs(prev => [...prev, {
       lvl,
-      text: `<span class="agent-name">${a.name}</span> → ${m.state}`,
+      text: `[${a.name}] → ${m.state}`,
       time: fmtTime(),
     }].slice(-200));
     if (m.state === 'error') {
@@ -181,7 +181,7 @@ function GuildApp() {
         const pid = BACKEND_TO_PIXEL[ev.agent] || ev.agent;
         const a = AGENTS.find(x => x.id === pid);
         return { lvl: ev.state === 'error' ? 'ERR' : 'INFO',
-          text: `<span class="agent-name">${a?.name || ev.agent}</span> → ${ev.state}`, time: t };
+          text: `[${a?.name || ev.agent}] → ${ev.state}`, time: t };
       }
       if (ev.type === 'command_progress')
         return { lvl: 'INFO', text: `[progress] ${String(ev.message||'').slice(0, 120)}`, time: t };
@@ -230,7 +230,7 @@ function GuildApp() {
                 addBurst(agentPos[id]?.x || a.x, agentPos[id]?.y || a.y, sig?.aura, 'crit');
                 addFloating(agentPos[id]?.x || a.x, agentPos[id]?.y || a.y, '✓ DONE!', '#7fd88c');
                 addToast('loot', 'QUEST COMPLETE', `${a.name} selesai quest`, '✓');
-                addLog({ lvl: 'OK', text: `<span class="agent-name">${a.name}</span> completed quest · loot drop`, time: fmtTime() });
+                addLog({ lvl: 'OK', text: `[${a.name}] completed quest · loot drop`, time: fmtTime() });
                 sayBubble(id, '✓ Selesai, Lord!', 4500);
               }
             }
@@ -324,7 +324,7 @@ function GuildApp() {
       setMoods(m => ({ ...m, [agent.id]: { ...m[agent.id], mood: Math.min(100, m[agent.id].mood + 30), energy: 100 } }));
       addFloating(pos.x, pos.y, '☾ Rested!', '#7fd88c');
       addBurst(pos.x, pos.y, '#7fd88c', 'heart');
-      addLog({ lvl: 'OK', text: `<span class="agent-name">${agent.name}</span> rested · MP refilled`, time: fmtTime() });
+      addLog({ lvl: 'OK', text: `[${agent.name}] rested · MP refilled`, time: fmtTime() });
       sayBubble(agent.id, '☾ Mantap, MP penuh', 3500);
       return;
     }
@@ -332,7 +332,7 @@ function GuildApp() {
       setMoods(m => ({ ...m, [agent.id]: { ...m[agent.id], mood: Math.min(100, m[agent.id].mood + 20) } }));
       addFloating(pos.x, pos.y, '◇ +Elixir!', '#fcd34d');
       addBurst(pos.x, pos.y, '#fcd34d', 'loot');
-      addLog({ lvl: 'LOOT', text: `<span class="agent-name">${agent.name}</span> received Token Elixir`, time: fmtTime() });
+      addLog({ lvl: 'LOOT', text: `[${agent.name}] received Token Elixir`, time: fmtTime() });
       sayBubble(agent.id, 'Wuih, terima kasih Lord ◇', 3500);
       return;
     }
@@ -342,7 +342,7 @@ function GuildApp() {
     addFloating(pos.x, pos.y, `▸ ${action.label}`, sig?.aura);
     addBurst(pos.x, pos.y, sig?.aura, 'spark');
     addToast('loot', 'QUEST ASSIGNED', `${agent.name} · ${action.label}`, action.icon || '✦');
-    addLog({ lvl: 'INFO', text: `<span class="agent-name">${agent.name}</span> menerima quest: ${action.label}`, time: fmtTime() });
+    addLog({ lvl: 'INFO', text: `[${agent.name}] menerima quest: ${action.label}`, time: fmtTime() });
     sayBubble(agent.id, `Siap! ${action.label}`, 4000);
   }
 

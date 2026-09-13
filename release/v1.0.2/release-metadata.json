@@ -1,0 +1,21 @@
+﻿{
+    "release":  "v1.0.2",
+    "name":  "BIMA CORE Mobile v1.0.2 (9-Router Laptop Bridge \u0026 Typing Indicator)",
+    "date":  "2026-09-13T08:50:00+07:00",
+    "project":  "BIMA_CORE",
+    "artifacts":  [
+                      {
+                          "name":  "bima-core-mobile-v1.0.2.apk",
+                          "path":  "release/v1.0.2/bima-core-mobile-v1.0.2.apk",
+                          "size_bytes":  18817263,
+                          "sha256":  "B38A8EBE9817150776D0962251D5637BB2A2FE550AA30648A019029E985310B6"
+                      }
+                  ],
+    "verification":  {
+                         "unit_tests":  "8/8 PASS",
+                         "emulator_test":  "MuMu Player (SM-S916U) PASS",
+                         "server_bridge":  "POST http://10.0.2.2:8000/trigger/chat PASS",
+                         "typing_indicator":  "AgentThinkingBubble PASS",
+                         "verified_by":  "DEV-INFRA Standards"
+                     }
+}

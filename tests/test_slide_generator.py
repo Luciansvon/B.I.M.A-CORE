@@ -1,100 +1,156 @@
 import os
-import pytest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
-from tools.slide_generator import SlideGeneratorTool, extract_pdf_page_to_png
+
+import fitz
+import pytest
+
+from tools import slide_generator
+from tools.slide_generator import (
+    SlideGeneratorInput,
+    SlideGeneratorTool,
+    extract_pdf_page_to_png,
+)
+
 
 @pytest.fixture
-def dummy_marp_content():
+def dummy_marp_content() -> str:
     return """---
 marp: true
-theme: default
-class: lead
 ---
 # Meja Kayu Scandinavian
-Desain premium berbahan oak alami.
 ---
 ## Detail Material
 - Oak solid wood
-- Finishing natural oil varnish
-- Dimensi: 120 x 60 x 75 cm
 """
 
-def test_slide_generator_pdf(dummy_marp_content):
-    tool = SlideGeneratorTool()
-    res = tool._run(markdown_content=dummy_marp_content, output_format="pdf", theme_style="Scandinavian", bypass_preview=True)
-    
-    assert res.startswith("SUCCESS|")
-    parts = res.split("|")
-    out_path = Path(parts[1])
-    assert out_path.exists()
-    assert out_path.suffix == ".pdf"
-    
-    # Clean up
-    if out_path.exists():
-        out_path.unlink()
 
-def test_slide_generator_pptx(dummy_marp_content):
-    tool = SlideGeneratorTool()
-    res = tool._run(markdown_content=dummy_marp_content, output_format="pptx", theme_style="Scandinavian", bypass_preview=True)
-    
-    assert res.startswith("SUCCESS|")
-    parts = res.split("|")
-    out_path = Path(parts[1])
-    assert out_path.exists()
-    assert out_path.suffix == ".pptx"
-    
-    # Clean up
-    if out_path.exists():
-        out_path.unlink()
+def test_public_schema_has_no_preview_bypass() -> None:
+    assert "bypass_preview" not in SlideGeneratorInput.model_fields
 
-def test_slide_generator_png(dummy_marp_content):
-    tool = SlideGeneratorTool()
-    res = tool._run(markdown_content=dummy_marp_content, output_format="png", theme_style="Scandinavian", bypass_preview=True)
-    
-    assert res.startswith("SUCCESS|")
-    parts = res.split("|")
-    png_paths = parts[1].split(",")
-    assert len(png_paths) > 0
-    for path_str in png_paths:
-        p = Path(path_str)
-        assert p.exists()
-        assert p.suffix == ".png"
-        p.unlink()
 
-def test_extract_pdf_page(dummy_marp_content):
-    # Buat PDF dummy dulu menggunakan slide generator
+def test_pdf_always_requires_preview_approval(
+    dummy_marp_content: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tool = SlideGeneratorTool()
-    res = tool._run(markdown_content=dummy_marp_content, output_format="pdf", bypass_preview=True)
-    pdf_path = res.split("|")[1]
-    
-    # Lakukan ekstraksi halaman 1
-    ext_res = extract_pdf_page_to_png(pdf_path, page_num=1)
-    
-    assert ext_res.startswith("SUCCESS|")
-    ext_path = Path(ext_res.split("|")[1])
-    assert ext_path.exists()
-    assert ext_path.suffix == ".png"
-    
-    # Clean up
-    if Path(pdf_path).exists():
-        Path(pdf_path).unlink()
-    if ext_path.exists():
-        ext_path.unlink()
+    preview = tmp_path / "preview.001.png"
+    final_pdf = tmp_path / "final.pdf"
+    calls: list[str] = []
 
-def test_slide_generator_preview_approval(dummy_marp_content):
-    tool = SlideGeneratorTool()
-    with patch("core.permission_gate.check_permission_sync", return_value=True) as mock_gate:
-        res = tool._run(markdown_content=dummy_marp_content, output_format="pdf", theme_style="Scandinavian", bypass_preview=False)
-        assert res.startswith("SUCCESS|")
-        mock_gate.assert_called_once()
-        out_path = Path(res.split("|")[1])
-        if out_path.exists():
-            out_path.unlink()
+    def fake_compile(markdown: str, output_format: str, theme: str) -> str:
+        calls.append(output_format)
+        if output_format == "png":
+            preview.write_bytes(b"png")
+            return f"SUCCESS|{preview}|preview"
+        final_pdf.write_bytes(b"pdf")
+        return f"SUCCESS|{final_pdf}|final"
 
-def test_slide_generator_preview_denial(dummy_marp_content):
+    monkeypatch.setattr(tool, "_compile", fake_compile, raising=False)
+    with patch("core.permission_gate.check_permission_sync", return_value=True) as gate:
+        result = tool._run(dummy_marp_content, "pdf", "Scandinavian")
+
+    assert result.startswith(f"SUCCESS|{final_pdf}")
+    assert calls == ["png", "pdf"]
+    assert not preview.exists()
+    gate.assert_called_once()
+
+
+def test_preview_denial_never_compiles_final(
+    dummy_marp_content: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tool = SlideGeneratorTool()
-    with patch("core.permission_gate.check_permission_sync", return_value=False) as mock_gate:
-        res = tool._run(markdown_content=dummy_marp_content, output_format="pdf", theme_style="Scandinavian", bypass_preview=False)
-        assert res == "FAILED|Persetujuan draf preview slide ditolak oleh Bima."
-        mock_gate.assert_called_once()
+    preview = tmp_path / "preview.001.png"
+    calls: list[str] = []
+
+    def fake_compile(markdown: str, output_format: str, theme: str) -> str:
+        calls.append(output_format)
+        preview.write_bytes(b"png")
+        return f"SUCCESS|{preview}|preview"
+
+    monkeypatch.setattr(tool, "_compile", fake_compile, raising=False)
+    with patch("core.permission_gate.check_permission_sync", return_value=False):
+        result = tool._run(dummy_marp_content, "pdf", "Scandinavian")
+
+    assert result == "FAILED|Persetujuan draf preview slide ditolak oleh Bima."
+    assert calls == ["png"]
+    assert not preview.exists()
+
+
+def test_png_compiles_once_without_recursive_preview(
+    dummy_marp_content: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = SlideGeneratorTool()
+    calls: list[str] = []
+
+    def fake_compile(markdown: str, output_format: str, theme: str) -> str:
+        calls.append(output_format)
+        return "SUCCESS|preview.png|png"
+
+    monkeypatch.setattr(tool, "_compile", fake_compile, raising=False)
+
+    assert tool._run(dummy_marp_content, "png") == "SUCCESS|preview.png|png"
+    assert calls == ["png"]
+
+
+def test_find_chrome_prefers_linux_puppeteer_over_windows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chrome = tmp_path / ".cache" / "puppeteer" / "chrome" / "linux-1" / "chrome"
+    chrome.parent.mkdir(parents=True)
+    chrome.write_text("#!/bin/sh\n", encoding="utf-8")
+    chrome.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CHROME_PATH", raising=False)
+    monkeypatch.setattr(slide_generator.shutil, "which", lambda _: None)
+
+    assert slide_generator._find_chrome() == chrome
+
+
+def test_compiler_passes_resolved_chrome_path(
+    dummy_marp_content: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chrome = tmp_path / "chrome"
+    chrome.write_text("#!/bin/sh\n", encoding="utf-8")
+    chrome.chmod(0o755)
+    captured_env: dict[str, str] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        captured_env.update(kwargs["env"])
+        out_path = Path(cmd[cmd.index("-o") + 1])
+        out_path.write_bytes(b"pdf")
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(slide_generator, "_OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(slide_generator, "_find_chrome", lambda: chrome)
+    monkeypatch.setattr(slide_generator.subprocess, "run", fake_run)
+
+    result = SlideGeneratorTool()._compile(dummy_marp_content, "pdf", "default")
+
+    assert result.startswith("SUCCESS|")
+    assert captured_env["CHROME_PATH"] == str(chrome)
+
+
+def test_extract_pdf_page_uses_real_temporary_pdf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), "BIMA")
+    document.save(pdf_path)
+    document.close()
+    monkeypatch.setattr(slide_generator, "_OUTPUT_DIR", tmp_path)
+
+    result = extract_pdf_page_to_png(str(pdf_path), page_num=1)
+
+    assert result.startswith("SUCCESS|")
+    assert Path(result.split("|")[1]).exists()

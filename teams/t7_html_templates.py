@@ -2,6 +2,8 @@ import json
 import base64
 from pathlib import Path
 from datetime import datetime
+from config import OUTPUT_DIR
+from core.path_security import resolve_allowed_path
 
 def generate_chart_js(chart, chart_id, palette, template_type):
     c_type = chart.get("type", "bar")
@@ -218,11 +220,19 @@ def render_template(data: dict) -> str:
             img_path = Path(sec["image_path"])
             if img_path.exists():
                 try:
+                    img_path = resolve_allowed_path(
+                        img_path,
+                        (OUTPUT_DIR,),
+                        base_dir=OUTPUT_DIR.parent,
+                        allowed_suffixes={
+                            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+                        },
+                    )
                     ext = img_path.suffix.lower().replace('.', '')
                     if ext == 'jpg': ext = 'jpeg'
                     b64 = base64.b64encode(img_path.read_bytes()).decode('utf-8')
                     sections_html += f'<div class="img-container"><img src="data:image/{ext};base64,{b64}" alt="Image"></div>'
-                except Exception:
+                except (OSError, ValueError):
                     pass
                     
         if sec.get("charts"):

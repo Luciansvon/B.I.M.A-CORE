@@ -1,0 +1,54 @@
+﻿{
+  "project": "BIMA CORE Mobile (Anisa)",
+  "repository": "Luciansvon/B.I.M.A-CORE",
+  "version": "1.0.1",
+  "timestamp": "2026-09-13T04:10:00+07:00",
+  "environment": {
+    "os": "Windows 11",
+    "jdk": "Microsoft JDK 17.0.20.8",
+    "gradle": "9.6.1",
+    "androidCompileSdk": 37,
+    "androidTargetSdk": 36,
+    "androidMinSdk": 26
+  },
+  "build": {
+    "status": "PASS",
+    "target": "assembleDebug",
+    "artifactPath": "release/v1.0.1/bima-core-mobile-v1.0.1.apk",
+    "sizeBytes": 18760694,
+    "sha256": "690D58BEEB266034EE23CBF19D4F8CD22F050D7E494969A2513F8D63DB9D7C10"
+  },
+  "tests": {
+    "status": "PASS",
+    "target": "testDebugUnitTest",
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "reportPath": "app/build/reports/tests/testDebugUnitTest/index.html"
+  },
+  "liveEmulatorVerification": {
+    "emulator": "MuMu Player 12 (SM-S916U)",
+    "adbPort": 16384,
+    "package": "com.bimacore.mobile",
+    "status": "PASS",
+    "checks": [
+      "Instalasi APK streaming berhasil (Success)",
+      "Peluncuran MainActivity mulus",
+      "Menu Kunci API tampil di bilah samping (Sidebar Drawer)",
+      "Dialog Pengaturan Kunci API terbuka dengan benar",
+      "Penyimpanan kunci OpenRouter berhasil dan pre-filled saat dibuka ulang",
+      "Deteksi cerdas kunci API via kolom obrolan chat aktif"
+    ]
+  },
+  "featuresVerified": [
+    "9-Router Embedded Engine (9 rute mandiri aktif di HP)",
+    "User Safety Gate (proteksi berkas dari penghapusan sembarangan)",
+    "File Manager (baca, salin, pindah, hapus aman)",
+    "Memory Store (fakta jangka panjang Bima)",
+    "Cloud Sync Adapter (jembatan memori HP ke laptop)",
+    "Antarmuka Chat-First + Sidebar Drawer Material 3",
+    "Pengaturan Kunci API (OpenRouter & Gemini Key via Modal Dialog)",
+    "Deteksi Kunci API Otomatis via Kolom Chat"
+  ]
+}

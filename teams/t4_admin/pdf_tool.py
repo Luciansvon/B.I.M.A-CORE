@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from crewai.tools import BaseTool
 from config import OUTPUT_DIR
+from core.path_security import safe_output_path
+from core.public_errors import public_failure
 from teams.t4_admin.styles import STYLES, resolve_style, DEFAULT_STYLE_NAME
 from teams.t4_admin.chart_utils import render_chart
 
@@ -211,7 +213,8 @@ class PDFGeneratorTool(BaseTool):
             try:
                 data = json.loads(input_json)
             except json.JSONDecodeError as e:
-                return f"FAILED|JSON tidak valid: {e}"
+                logger.warning("[ADMIN] JSON PDF tidak valid: %s", e)
+                return public_failure("JSON tidak valid")
 
             style_name = data.get("style", DEFAULT_STYLE_NAME)
             style = resolve_style(data)
@@ -243,6 +246,8 @@ class PDFGeneratorTool(BaseTool):
             _title_rgb  = title_rgb
             _pdf_font   = pdf_font
             _body_start_page = [0]  # mutable agar bisa diupdate dari luar class
+            _page_phase = ["front"]  # front | body; mengikuti pagination aktual
+            _first_content_page = [0]  # halaman yang render judul besar -- header kecil di-skip di sini biar gak dobel
 
             def _to_roman_pdf(num):
                 vals = [(1000,'m'),(900,'cm'),(500,'d'),(400,'cd'),(100,'c'),
@@ -258,6 +263,9 @@ class PDFGeneratorTool(BaseTool):
                 def header(self):
                     # Hanya di halaman isi (bukan cover page 1)
                     if self.page_no() <= 1 and data.get("cover", True):
+                        return
+                    # Skip di halaman pertama konten -- judul besar sudah render di situ, jangan dobel
+                    if self.page_no() == _first_content_page[0]:
                         return
                     self.set_font(_pdf_font, "B", 8)
                     self.set_text_color(*_title_rgb)
@@ -275,10 +283,10 @@ class PDFGeneratorTool(BaseTool):
                     self.set_font(_pdf_font, "I", 8)
                     self.set_text_color(140, 140, 140)
                     pg = self.page_no()
-                    # Roman/Arabic split untuk style akademik
-                    if _body_start_page[0] > 0 and pg >= _body_start_page[0]:
+                    # Roman/Arabic split akademik mengikuti phase render aktual.
+                    if style_name == "akademik" and _page_phase[0] == "body":
                         page_str = str(pg - _body_start_page[0] + 1)
-                    elif _body_start_page[0] > 0:
+                    elif style_name == "akademik":
                         page_str = _to_roman_pdf(pg)
                     else:
                         page_str = str(pg)
@@ -370,7 +378,13 @@ class PDFGeneratorTool(BaseTool):
                     pdf.set_left_margin(old_l)
 
             # === HALAMAN ISI ===
+            _first_content_page[0] = pdf.page_no() + 1
             pdf.add_page()
+            sections = data.get("sections", [])
+            has_toc = bool(data.get("toc") and sections)
+            if style_name == "akademik" and not has_toc:
+                _body_start_page[0] = pdf.page_no()
+                _page_phase[0] = "body"
 
             # Header tipis di halaman isi
             pdf.set_font(pdf_font, "B", style["title_size"])
@@ -390,8 +404,7 @@ class PDFGeneratorTool(BaseTool):
             pdf.ln(8)
 
             # === Table of Contents (opsional, multi-level) ===
-            sections = data.get("sections", [])
-            if data.get("toc") and sections:
+            if has_toc:
                 pdf.set_font(pdf_font, "B", style["heading_size"] + 2)
                 pdf.set_text_color(*title_rgb)
                 pdf.cell(0, 10, "DAFTAR ISI", new_x="LMARGIN", new_y="NEXT", align="C")
@@ -405,16 +418,15 @@ class PDFGeneratorTool(BaseTool):
                             pdf.set_font(pdf_font, "B", style["body_size"])
                         else:
                             pdf.set_font(pdf_font, "", style["body_size"])
-                        pdf.cell(indent, 7, "")
+                        if indent:
+                            pdf.set_x(pdf.get_x() + indent)
                         pdf.cell(0, 7, self._safe_text(sec["heading"]),
                                  new_x="LMARGIN", new_y="NEXT")
                 pdf.ln(6)
                 pdf.add_page()
-
-            # === Mark body start page untuk Roman/Arabic split ===
-            is_akademik_pdf = (style_name == 'akademik')
-            if is_akademik_pdf:
-                _body_start_page[0] = pdf.page_no()
+                if style_name == "akademik":
+                    _body_start_page[0] = pdf.page_no()
+                    _page_phase[0] = "body"
 
             # === SECTIONS (multi-level heading) ===
             body_lh = round(style["body_size"] * line_spacing_mult * 0.39 + 5.5, 1)  # line height proporsional
@@ -504,7 +516,7 @@ class PDFGeneratorTool(BaseTool):
                     for item in section["list"]:
                         pdf.cell(8, 6, "")
                         pdf.cell(4, 6, "-")
-                        pdf.multi_cell(0, 6, self._safe_text(str(item)))
+                        pdf.multi_cell(0, 6, self._safe_text(str(item)), new_x="LMARGIN", new_y="NEXT")
                     pdf.ln(2)
 
                 # Key Values (untuk surat izin, detail rapi dengan titik dua sejajar)
@@ -514,7 +526,7 @@ class PDFGeneratorTool(BaseTool):
                     for k, v in section["key_values"].items():
                         pdf.cell(40, 6, self._safe_text(str(k)))
                         pdf.cell(5, 6, ":")
-                        pdf.multi_cell(0, 6, self._safe_text(str(v)))
+                        pdf.multi_cell(0, 6, self._safe_text(str(v)), new_x="LMARGIN", new_y="NEXT")
                     pdf.ln(2)
 
                 # Image embedding
@@ -568,7 +580,7 @@ class PDFGeneratorTool(BaseTool):
 
                     pdf.set_font(pdf_font, "", style["body_size"])
                     pdf.set_text_color(30, 30, 30)
-                    pdf.multi_cell(0, 6, self._safe_text(f"{idx}. {ref_text}"))
+                    pdf.multi_cell(0, 6, self._safe_text(f"{idx}. {ref_text}"), new_x="LMARGIN", new_y="NEXT")
 
                     if ref_url:
                         pdf.set_font(pdf_font, "U", style["body_size"] - 1)
@@ -581,8 +593,14 @@ class PDFGeneratorTool(BaseTool):
                     pdf.ln(2)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{data.get('filename', 'dokumen')}_{timestamp}.pdf"
-            filepath = OUTPUT_DIR / filename
+            filepath = safe_output_path(
+                OUTPUT_DIR,
+                data.get("filename"),
+                default_stem="dokumen",
+                suffix=".pdf",
+                timestamp=timestamp,
+            )
+            filename = filepath.name
             pdf.output(str(filepath))
 
             return f"SUCCESS|{filepath}|PDF ({style['label']}) berhasil dibuat: {filename}"
@@ -590,4 +608,4 @@ class PDFGeneratorTool(BaseTool):
             return "FAILED|fpdf2 belum terinstall. Jalankan: pip install fpdf2"
         except Exception as e:
             logger.error(f"[ADMIN] PDFGenerator error: {e}", exc_info=True)
-            return f"FAILED|{e}"
+            return public_failure("Gagal membuat PDF")

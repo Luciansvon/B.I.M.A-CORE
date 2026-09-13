@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
+from core.path_security import resolve_allowed_path
 
 logger = logging.getLogger("bima_core")
 
@@ -32,10 +33,17 @@ class CodebaseVisualizerTool(BaseTool):
 
     def _run(self, target_dir: str = ".") -> str:
         base_path = Path(__file__).resolve().parent.parent
-        scan_dir = (base_path / target_dir).resolve()
-        
-        if not scan_dir.exists():
-            return f"FAILED|Direktori {scan_dir} tidak ditemukan."
+        try:
+            scan_dir = resolve_allowed_path(
+                target_dir,
+                (base_path,),
+                base_dir=base_path,
+            )
+        except ValueError:
+            logger.warning("[CODE_VIS] Tolak target di luar workspace")
+            return "FAILED|Direktori tidak diizinkan."
+        if not scan_dir.is_dir():
+            return "FAILED|Direktori tidak ditemukan."
 
         logger.info(f"[CODE_VIS] Scanning directory: {scan_dir}")
         

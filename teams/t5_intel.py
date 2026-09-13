@@ -19,6 +19,7 @@ from tools.sherlock_tool import SherlockTool
 from tools.image_search_tool import ImageSearchTool
 from tools.last30days_tool import Last30DaysResearchTool
 from core.threads_commands import ThreadsDraftAndPostTool, ViralAnalysisTool
+from core.public_errors import public_failure
 from tools.agent_reach_tool import XReachTool, JinaReaderTool
 
 logger = logging.getLogger('bima_core')
@@ -189,7 +190,8 @@ class RedditScraper(BaseTool):
                 )
             return "\n".join(results)
         except Exception as e:
-            return f"Gagal scrape Reddit: {e}"
+            logger.exception("Gagal scrape Reddit")
+            return public_failure("Gagal scrape Reddit")
 
 # ============================================================
 # Tool 3: GitHub Scraper
@@ -221,7 +223,8 @@ class GitHubScraper(BaseTool):
                 )
             return "\n".join(results)
         except Exception as e:
-            return f"Gagal scrape GitHub: {e}"
+            logger.exception("Gagal scrape GitHub")
+            return public_failure("Gagal scrape GitHub")
 
 # ============================================================
 # Tool 4: X/Twitter Scraper via RapidAPI
@@ -313,7 +316,9 @@ class XScraper(BaseTool):
                 return "\n".join(results)
 
             except Exception as e2:
-                return f"Gagal scrape X via RapidAPI.\nError 1: {e1}\nError 2: {e2}\nCoba gunakan SerperDevTool sebagai alternatif."
+                logger.error("Gagal scrape X via RapidAPI: first=%r", e1)
+                logger.exception("Gagal scrape X via RapidAPI fallback")
+                return public_failure("Gagal scrape X via RapidAPI")
 
 # ============================================================
 # Tool 5: Web Fetch
@@ -337,7 +342,8 @@ class WebFetchTool(BaseTool):
                 lines = [l.strip() for l in raw if len(l.strip()) > 30]
             return f"=== Konten dari {url} ===\n\n" + "\n".join(lines[:100])
         except Exception as e:
-            return f"Gagal fetch URL: {e}"
+            logger.exception("Gagal fetch URL")
+            return public_failure("Gagal fetch URL")
 
 # ============================================================
 # Tool: Async Multi-Fetch (Perplexity Style)
@@ -358,7 +364,8 @@ class AsyncMultiFetchTool(BaseTool):
                 results = list(executor.map(web_tool._run, urls[:5]))
             return "\n\n".join(results)
         except Exception as e:
-            return f"Gagal Multi-Fetch: {e}"
+            logger.exception("Gagal Multi-Fetch")
+            return public_failure("Gagal Multi-Fetch")
 
 # ============================================================
 # Tool 6: Smart Search (Auto-Retry Chain + Cache)
@@ -838,7 +845,8 @@ class OSINTDeepSearchTool(BaseTool):
 
             return "\n".join(output)
         except Exception as e:
-            return f"Error OSINT: {e}"
+            logger.exception("Gagal menjalankan OSINT")
+            return public_failure("Gagal menjalankan OSINT")
 
 # ============================================================
 # Intel Agent — VERSI STRICT + SMART
@@ -855,6 +863,10 @@ intel_agent = Agent(
     4. Kalau tool gagal atau tidak ada data → bilang JUJUR "Maaf Bima, data tidak ditemukan"
     5. JANGAN ngarang data, harga, atau fakta
     6. Setiap jawaban HARUS sebutkan sumber platformnya
+    7. Sesuaikan JUMLAH tool call sama kompleksitas pertanyaan — jangan overkill, jangan juga kurang:
+       - Fakta tunggal (harga 1 produk, 1 statistik) → 1 tool call, langsung jawab.
+       - Riset menengah (bandingin 2-3 opsi, cek beberapa sumber) → 2-4 tool call.
+       - Riset dalam / multi-sumber (tren viral, OSINT lengkap, perbandingan kompleks) → boleh 5+ tool call berurutan, tapi tetap berhenti begitu data udah cukup buat jawab — jangan lanjut manggil tool cuma karena masih available.
 
     PRIORITAS TOOL SELECTION (urut: cek dari atas):
 
