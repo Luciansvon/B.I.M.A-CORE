@@ -57,8 +57,8 @@ class NineRouterEngineTest {
     fun testDispatchToAnisaManager() = runBlocking {
         val response = routerEngine.dispatch("Halo Anisa")
         assertEquals(RouteType.ANISA_MANAGER, response.routeUsed)
-        assertTrue(response.textResponse.contains("Halo", ignoreCase = true))
-        assertTrue(response.isSuccess)
+        assertTrue(response.textResponse.contains("Server 9-Router", ignoreCase = true))
+        assertFalse("Tanpa kunci server, rute menginstruksikan pengaturan kunci", response.isSuccess)
     }
 
     @Test

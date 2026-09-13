@@ -1,5 +1,6 @@
 package com.bimacore.mobile.ui
 
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +28,7 @@ import com.bimacore.mobile.ui.theme.*
 @Composable
 fun ChatScreen(
     messages: List<ChatMessage>,
+    isAgentThinking: Boolean = false,
     onSendMessage: (String) -> Unit,
     onConfirmAction: (FileActionCard) -> Unit,
     onOpenDrawer: () -> Unit
@@ -34,9 +36,10 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    LaunchedEffect(messages.size, isAgentThinking) {
+        val count = messages.size + if (isAgentThinking) 1 else 0
+        if (count > 0) {
+            listState.animateScrollToItem(count - 1)
         }
     }
 
@@ -169,6 +172,11 @@ fun ChatScreen(
                     onConfirmAction = onConfirmAction
                 )
             }
+            if (isAgentThinking) {
+                item(key = "agent_thinking_indicator") {
+                    AgentThinkingBubble()
+                }
+            }
         }
     }
 }
@@ -256,6 +264,101 @@ fun ChatMessageItem(
                     ) {
                         Text(text = "Setujui & Jalankan Aksi", fontSize = 12.sp)
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AgentThinkingBubble() {
+    val infiniteTransition = rememberInfiniteTransition(label = "thinking_dots")
+
+    val dot1Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 500, delayMillis = 0),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot1"
+    )
+    val dot2Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 500, delayMillis = 150),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot2"
+    )
+    val dot3Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 500, delayMillis = 300),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot3"
+    )
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 4.dp)
+        ) {
+            Text(
+                text = "Anisa ✨",
+                fontSize = 12.sp,
+                color = SoftGrayText
+            )
+        }
+
+        Surface(
+            color = DarkSlateCard,
+            shape = RoundedCornerShape(
+                topStart = 16.dp,
+                topEnd = 16.dp,
+                bottomStart = 4.dp,
+                bottomEnd = 16.dp
+            ),
+            modifier = Modifier.widthIn(max = 300.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Anisa sedang berpikir",
+                    color = PureWhiteText,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(WarmAmberAccent.copy(alpha = dot1Alpha))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(WarmAmberAccent.copy(alpha = dot2Alpha))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(WarmAmberAccent.copy(alpha = dot3Alpha))
+                    )
                 }
             }
         }

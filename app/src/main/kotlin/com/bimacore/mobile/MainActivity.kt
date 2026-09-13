@@ -40,13 +40,13 @@ class MainActivity : ComponentActivity() {
                 val viewModel: MainViewModel = viewModel()
                 val messages by viewModel.messages.collectAsState()
                 val routeStatuses by viewModel.routeStatuses.collectAsState()
+                val isAgentThinking by viewModel.isAgentThinking.collectAsState()
 
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val coroutineScope = rememberCoroutineScope()
 
                 var showApiKeyDialog by remember { mutableStateOf(false) }
-                var openRouterKeyInput by remember { mutableStateOf(viewModel.getApiKey("openrouter")) }
-                var geminiKeyInput by remember { mutableStateOf(viewModel.getApiKey("gemini")) }
+                var routerKeyInput by remember { mutableStateOf(viewModel.getApiKey("9router")) }
 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -66,8 +66,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                     "NEW_CHAT" -> viewModel.sendMessage("Halo Anisa, kita mulai sesi obrolan baru ya!")
                                     "API_KEY" -> {
-                                        openRouterKeyInput = viewModel.getApiKey("openrouter")
-                                        geminiKeyInput = viewModel.getApiKey("gemini")
+                                        routerKeyInput = viewModel.getApiKey("9router")
                                         showApiKeyDialog = true
                                     }
                                 }
@@ -80,6 +79,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     ChatScreen(
                         messages = messages,
+                        isAgentThinking = isAgentThinking,
                         onSendMessage = { text -> viewModel.sendMessage(text) },
                         onConfirmAction = { card -> viewModel.confirmActionCard(card) },
                         onOpenDrawer = {
@@ -90,26 +90,22 @@ class MainActivity : ComponentActivity() {
                     if (showApiKeyDialog) {
                         AlertDialog(
                             onDismissRequest = { showApiKeyDialog = false },
-                            title = { Text("Pengaturan Kunci API") },
+                            title = { Text("Kunci Server 9-Router") },
                             text = {
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text("Masukkan kunci API agar Anisa bisa berpikir menggunakan AI online secara langsung:")
-                                    OutlinedTextField(
-                                        value = openRouterKeyInput,
-                                        onValueChange = { openRouterKeyInput = it },
-                                        label = { Text("OpenRouter API Key") },
-                                        placeholder = { Text("sk-or-v1-...") },
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth()
+                                    Text(
+                                        "Masukkan DASHBOARD_API_TOKEN dari file .env di laptop " +
+                                        "agar Anisa bisa terhubung ke server BIMA CORE:"
                                     )
                                     OutlinedTextField(
-                                        value = geminiKeyInput,
-                                        onValueChange = { geminiKeyInput = it },
-                                        label = { Text("Google Gemini API Key") },
-                                        placeholder = { Text("AIzaSy...") },
-                                        singleLine = true,
+                                        value = routerKeyInput,
+                                        onValueChange = { routerKeyInput = it },
+                                        label = { Text("Kunci Server 9-Router") },
+                                        placeholder = { Text("Tempel token dari .env laptop...") },
+                                        singleLine = false,
+                                        maxLines = 3,
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                 }
@@ -117,16 +113,13 @@ class MainActivity : ComponentActivity() {
                             confirmButton = {
                                 Button(
                                     onClick = {
-                                        if (openRouterKeyInput.isNotBlank()) {
-                                            viewModel.saveApiKey("openrouter", openRouterKeyInput)
-                                        }
-                                        if (geminiKeyInput.isNotBlank()) {
-                                            viewModel.saveApiKey("gemini", geminiKeyInput)
+                                        if (routerKeyInput.isNotBlank()) {
+                                            viewModel.saveApiKey("9router", routerKeyInput)
                                         }
                                         showApiKeyDialog = false
                                     }
                                 ) {
-                                    Text("Simpan")
+                                    Text("Simpan & Sambungkan")
                                 }
                             },
                             dismissButton = {

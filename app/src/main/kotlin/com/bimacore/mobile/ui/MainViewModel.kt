@@ -37,13 +37,16 @@ class MainViewModel(
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
+    private val _isAgentThinking = MutableStateFlow(false)
+    val isAgentThinking: StateFlow<Boolean> = _isAgentThinking.asStateFlow()
+
     init {
         _routeStatuses.value = routerEngine.getRouteStatuses()
         // Sapaan awal dari Anisa
         addAnisaMessage("Halo Mas Bima! ✨ Senang bisa menemani hari ini. Server 9-Router di HP sudah aktif siaga, dan ingatan kita tersambung aman ke laptop. Ada yang mau kita kerjakan?")
     }
 
-    fun getApiKey(provider: String = "openrouter"): String {
+    fun getApiKey(provider: String = "9router"): String {
         return memoryStore.getFact("api_key_$provider") ?: ""
     }
 
@@ -52,7 +55,11 @@ class MainViewModel(
         if (trimmed.isNotBlank()) {
             memoryStore.setFact("api_key_$provider", trimmed)
             val masked = if (trimmed.length > 8) trimmed.take(4) + "..." + trimmed.takeLast(4) else "***"
-            addAnisaMessage("🔑 Kunci API $provider berhasil disimpan ($masked)! Sekarang Anisa sudah bisa menggunakan otak AI online secara langsung. ✨")
+            val providerLabel = when(provider) {
+                "9router" -> "Server 9-Router"
+                else -> provider
+            }
+            addAnisaMessage("🔑 Kunci $providerLabel berhasil disimpan ($masked)! Sekarang Anisa sudah tersambung ke server laptop. ✨")
         }
     }
 
@@ -66,45 +73,49 @@ class MainViewModel(
         )
         _messages.value = _messages.value + userMessage
 
+        // Deteksi jika user paste API key langsung ke chat
         val trimmed = userText.trim()
-        if (trimmed.startsWith("sk-or-v1-") || trimmed.startsWith("AIzaSy") ||
-            trimmed.contains("kunci api", ignoreCase = true) || trimmed.contains("apikey", ignoreCase = true)) {
-            val keyCandidate = when {
-                trimmed.startsWith("sk-or-v1-") || trimmed.startsWith("AIzaSy") -> trimmed
-                trimmed.contains(":") -> trimmed.substringAfter(":").trim()
-                else -> trimmed
-            }
-            if (keyCandidate.length > 10) {
-                val provider = if (keyCandidate.startsWith("AIzaSy")) "gemini" else "openrouter"
-                saveApiKey(provider, keyCandidate)
-                return
-            }
+        if (trimmed.length > 10 && (trimmed.startsWith("bma_") || trimmed.startsWith("eyJ") ||
+            trimmed.length in 32..200 && !trimmed.contains(" ") && trimmed.contains("-"))) {
+            // Kemungkinan besar DASHBOARD_API_TOKEN
+            saveApiKey("9router", trimmed)
+            return
         }
 
         viewModelScope.launch {
-            val response = routerEngine.dispatch(userText)
-            val anisaMessage = ChatMessage(
-                id = UUID.randomUUID().toString(),
-                sender = SenderType.ANISA,
-                text = response.textResponse,
-                actionCard = response.actionCard,
-                routeSource = response.routeUsed
-            )
-            _messages.value = _messages.value + anisaMessage
+            _isAgentThinking.value = true
+            try {
+                val response = routerEngine.dispatch(userText)
+                val anisaMessage = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    sender = SenderType.ANISA,
+                    text = response.textResponse,
+                    actionCard = response.actionCard,
+                    routeSource = response.routeUsed
+                )
+                _messages.value = _messages.value + anisaMessage
+            } finally {
+                _isAgentThinking.value = false
+            }
         }
     }
 
     fun executeRouteDirectly(routeType: RouteType, customPrompt: String) {
         viewModelScope.launch {
-            val response = routerEngine.executeDirect(routeType, RouteRequest(prompt = customPrompt))
-            val anisaMessage = ChatMessage(
-                id = UUID.randomUUID().toString(),
-                sender = SenderType.ANISA,
-                text = response.textResponse,
-                actionCard = response.actionCard,
-                routeSource = response.routeUsed
-            )
-            _messages.value = _messages.value + anisaMessage
+            _isAgentThinking.value = true
+            try {
+                val response = routerEngine.executeDirect(routeType, RouteRequest(prompt = customPrompt))
+                val anisaMessage = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    sender = SenderType.ANISA,
+                    text = response.textResponse,
+                    actionCard = response.actionCard,
+                    routeSource = response.routeUsed
+                )
+                _messages.value = _messages.value + anisaMessage
+            } finally {
+                _isAgentThinking.value = false
+            }
         }
     }
 

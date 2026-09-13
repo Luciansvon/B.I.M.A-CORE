@@ -158,7 +158,7 @@ fun SidebarDrawerContent(
             SidebarMenuItem(
                 icon = Icons.Default.Key,
                 label = "Kunci API",
-                subtitle = "Atur kunci OpenRouter / Gemini",
+                subtitle = "Kunci server 9-Router laptop",
                 onClick = {
                     onSelectAction("API_KEY")
                     onCloseDrawer()
@@ -188,7 +188,7 @@ fun SidebarDrawerContent(
             Spacer(modifier = Modifier.weight(1f))
 
             Text(
-                text = "B.I.M.A Core Mobile v1.0.0\nStandar B.I.M.A-DEV-INFRA",
+                text = "B.I.M.A Core Mobile v1.0.2\nStandar B.I.M.A-DEV-INFRA",
                 fontSize = 11.sp,
                 color = SoftGrayText,
                 lineHeight = 16.sp
