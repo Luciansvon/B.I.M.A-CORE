@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bimacore.mobile.model.RouteType
 import com.bimacore.mobile.ui.ChatScreen
@@ -42,11 +44,16 @@ class MainActivity : ComponentActivity() {
                 val routeStatuses by viewModel.routeStatuses.collectAsState()
                 val isAgentThinking by viewModel.isAgentThinking.collectAsState()
 
+                LaunchedEffect(Unit) {
+                    viewModel.initStorageContext(applicationContext.cacheDir, applicationContext.externalCacheDir)
+                }
+
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val coroutineScope = rememberCoroutineScope()
 
                 var showApiKeyDialog by remember { mutableStateOf(false) }
                 var routerKeyInput by remember { mutableStateOf(viewModel.getApiKey("9router")) }
+                var serverUrlInput by remember { mutableStateOf(viewModel.getServerUrl()) }
 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -57,7 +64,7 @@ class MainActivity : ComponentActivity() {
                                 when (action) {
                                     "FOLDER" -> viewModel.executeRouteDirectly(
                                         RouteType.FILE_MANAGER,
-                                        "Tolong periksa folder berkas di HP"
+                                        "Tolong periksa sampah berkas di HP"
                                     )
                                     "SYNC" -> viewModel.triggerSyncLaptop()
                                     "MEMO" -> viewModel.executeRouteDirectly(
@@ -67,6 +74,7 @@ class MainActivity : ComponentActivity() {
                                     "NEW_CHAT" -> viewModel.sendMessage("Halo Anisa, kita mulai sesi obrolan baru ya!")
                                     "API_KEY" -> {
                                         routerKeyInput = viewModel.getApiKey("9router")
+                                        serverUrlInput = viewModel.getServerUrl()
                                         showApiKeyDialog = true
                                     }
                                 }
@@ -90,22 +98,30 @@ class MainActivity : ComponentActivity() {
                     if (showApiKeyDialog) {
                         AlertDialog(
                             onDismissRequest = { showApiKeyDialog = false },
-                            title = { Text("Kunci Server 9-Router") },
+                            title = { Text("Setelan Server 9-Router") },
                             text = {
                                 Column(
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     Text(
-                                        "Masukkan DASHBOARD_API_TOKEN dari file .env di laptop " +
-                                        "agar Anisa bisa terhubung ke server BIMA CORE:"
+                                        "Hubungkan HP ke 9-Router di laptop tanpa Wi-Fi menggunakan URL Cloudflare Tunnel (atau IP lokal jika satu Wi-Fi):",
+                                        fontSize = 13.sp
+                                    )
+                                    OutlinedTextField(
+                                        value = serverUrlInput,
+                                        onValueChange = { serverUrlInput = it },
+                                        label = { Text("URL Server 9-Router") },
+                                        placeholder = { Text("https://...trycloudflare.com/v1") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
                                     )
                                     OutlinedTextField(
                                         value = routerKeyInput,
                                         onValueChange = { routerKeyInput = it },
-                                        label = { Text("Kunci Server 9-Router") },
-                                        placeholder = { Text("Tempel token dari .env laptop...") },
+                                        label = { Text("Kunci API 9-Router (sk-...)") },
+                                        placeholder = { Text("Tempel token API 9-Router...") },
                                         singleLine = false,
-                                        maxLines = 3,
+                                        maxLines = 2,
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                 }
@@ -113,9 +129,7 @@ class MainActivity : ComponentActivity() {
                             confirmButton = {
                                 Button(
                                     onClick = {
-                                        if (routerKeyInput.isNotBlank()) {
-                                            viewModel.saveApiKey("9router", routerKeyInput)
-                                        }
+                                        viewModel.saveServerConfig(serverUrlInput, routerKeyInput)
                                         showApiKeyDialog = false
                                     }
                                 ) {

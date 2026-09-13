@@ -21,3 +21,6 @@
 - **Preferensi Panggilan & Identitas**:
   - **DILARANG** memanggil "Mas Bima". Panggil langsung "Bima" atau gunakan bahasa santai/akrab ("lu/kamu"). Bima sangat tidak suka dipanggil "Mas Bima".
   - Aplikasi mobile di HP harus beroperasi sebagai **Agent Harness** yang sadar lingkungan: memahami bahwa ia berjalan langsung di dalam smartphone Android Bima, memiliki akses nyata ke penyimpanan/file lokal (kelola file sampah, folder Download, dll.), dan tidak boleh menjawab seolah-olah bot web yang tidak punya akses sistem.
+- **Integritas & Kejujuran Mutlak**:
+  - **DILARANG KERAS** membuat klaim palsu, output rekaan/bohongan (mock static text), atau berpura-pura sebuah fungsi sistem (file manager, web search, remote command) sudah bekerja padahal cuma berupa teks template.
+  - Jika suatu fungsi belum terhubung ke sistem fisik Android atau belum mampu dijalankan, WAJIB jujur dan terus terang menjelaskan apa yang kurang. Bima sangat membenci manipulasi output dan klaim tidak bertanggung jawab.

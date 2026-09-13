@@ -21,15 +21,16 @@ class NineRouterEngine(
     private val routes = mutableMapOf<RouteType, AgentRoute>()
 
     init {
-        registerRoute(AnisaManagerRoute(memoryStore))
+        val anisaManager = AnisaManagerRoute(memoryStore)
+        registerRoute(anisaManager)
         registerRoute(FileManagerRoute(fileManager))
         registerRoute(MemorySyncRoute(memoryStore, syncAdapter))
-        registerRoute(WebIntelRoute())
+        registerRoute(WebIntelRoute(memoryStore, anisaManager))
         registerRoute(SummarizerRoute(memoryStore))
-        registerRoute(LifestyleRoute())
-        registerRoute(DesignArtRoute())
-        registerRoute(LaptopBridgeRoute())
-        registerRoute(MarketPulseRoute())
+        registerRoute(LifestyleRoute(anisaManager))
+        registerRoute(DesignArtRoute(anisaManager))
+        registerRoute(LaptopBridgeRoute(anisaManager))
+        registerRoute(MarketPulseRoute(anisaManager))
     }
 
     fun registerRoute(route: AgentRoute) {
@@ -41,7 +42,7 @@ class NineRouterEngine(
             RouteStatus(
                 type = type,
                 isActive = routes.containsKey(type),
-                latencyMs = (5L..15L).random()
+                latencyMs = 0L
             )
         }
     }

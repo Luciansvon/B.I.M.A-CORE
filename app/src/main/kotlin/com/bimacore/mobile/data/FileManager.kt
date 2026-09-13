@@ -8,7 +8,42 @@ import java.io.File
  * Pengelola Berkas Android yang aman dan ramah pengguna.
  * Bekerja sama dengan UserSafetyGate untuk operasi berkas.
  */
-class FileManager(private val safetyGate: UserSafetyGate = UserSafetyGate()) {
+class FileManager(
+    private val safetyGate: UserSafetyGate = UserSafetyGate(),
+    var cacheDir: File? = null,
+    var externalCacheDir: File? = null
+) {
+
+    fun getFolderSize(dir: File?): Long {
+        if (dir == null || !dir.exists()) return 0L
+        if (!dir.isDirectory) return dir.length()
+        var size = 0L
+        dir.listFiles()?.forEach { file ->
+            size += if (file.isDirectory) getFolderSize(file) else file.length()
+        }
+        return size
+    }
+
+    fun getAppCacheSize(): Long {
+        var total = 0L
+        cacheDir?.let { total += getFolderSize(it) }
+        externalCacheDir?.let { total += getFolderSize(it) }
+        return total
+    }
+
+    fun clearAppCache(): Pair<Boolean, Long> {
+        val beforeSize = getAppCacheSize()
+        var freed = 0L
+        cacheDir?.listFiles()?.forEach {
+            freed += getFolderSize(it)
+            it.deleteRecursively()
+        }
+        externalCacheDir?.listFiles()?.forEach {
+            freed += getFolderSize(it)
+            it.deleteRecursively()
+        }
+        return Pair(true, if (freed > 0) freed else beforeSize)
+    }
 
     fun listDirectory(dirPath: String): List<FileItem> {
         val dir = File(dirPath)

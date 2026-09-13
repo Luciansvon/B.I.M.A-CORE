@@ -50,6 +50,28 @@ class MainViewModel(
         return memoryStore.getFact("api_key_$provider") ?: ""
     }
 
+    fun getServerUrl(): String {
+        return memoryStore.getFact("server_9router_url") ?: com.bimacore.mobile.router.routes.AnisaManagerRoute.DEFAULT_TUNNEL_URL
+    }
+
+    fun saveServerConfig(url: String, key: String) {
+        val trimmedUrl = url.trim()
+        val trimmedKey = key.trim()
+        if (trimmedUrl.isNotBlank()) {
+            memoryStore.setFact("server_9router_url", trimmedUrl)
+        }
+        if (trimmedKey.isNotBlank()) {
+            memoryStore.setFact("api_key_9router", trimmedKey)
+        }
+        val masked = if (trimmedKey.length > 8) trimmedKey.take(4) + "..." + trimmedKey.takeLast(4) else "***"
+        addAnisaMessage("⚙️ Setelan 9-Router tersimpan! Server: ${getServerUrl()} (Kunci: $masked). Sekarang Anisa siap melayani Bima tanpa batas jaringan. ✨")
+    }
+
+    fun initStorageContext(cache: File?, extCache: File?) {
+        fileManager.cacheDir = cache
+        fileManager.externalCacheDir = extCache
+    }
+
     fun saveApiKey(provider: String, key: String) {
         val trimmed = key.trim()
         if (trimmed.isNotBlank()) {
