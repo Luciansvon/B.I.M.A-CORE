@@ -43,7 +43,7 @@ class MainViewModel(
     init {
         _routeStatuses.value = routerEngine.getRouteStatuses()
         // Sapaan awal dari Anisa
-        addAnisaMessage("Halo Mas Bima! ✨ Senang bisa menemani hari ini. Server 9-Router di HP sudah aktif siaga, dan ingatan kita tersambung aman ke laptop. Ada yang mau kita kerjakan?")
+        addAnisaMessage("Halo Bima! ✨ Senang bisa menemani hari ini. Server 9-Router di HP sudah aktif siaga, dan ingatan kita tersambung aman ke laptop. Ada yang mau kita kerjakan?")
     }
 
     fun getApiKey(provider: String = "9router"): String {

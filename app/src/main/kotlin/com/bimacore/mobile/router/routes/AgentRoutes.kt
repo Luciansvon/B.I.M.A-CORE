@@ -39,7 +39,7 @@ class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         val prompt = request.prompt.trim()
-        val nama = memoryStore.getFact("nama_panggilan") ?: "Mas Bima"
+        val nama = memoryStore.getFact("nama_panggilan") ?: "Bima"
 
         // Ambil token API 9-Router (DASHBOARD_API_TOKEN server laptop)
         val routerKey = memoryStore.getFact("api_key_9router") ?: ""
@@ -78,8 +78,12 @@ class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
                 doOutput = true
             }
 
+            val harnessPrompt = """
+                [Konteks Agen: Kamu adalah Anisa, asisten AI pribadi yang beroperasi langsung di dalam aplikasi Android BIMA CORE (Agent Harness) milik Bima. Kamu memiliki akses nyata ke sistem HP (kelola berkas lokal, bersihkan sampah unduhan, sinkronisasi memori, dan kontrol perangkat). Dilarang mengklaim tidak memiliki akses ke HP atau menanyakan Android/iOS. Jangan memanggil 'Mas Bima', selalu panggil 'Bima'. Bicara santai, ringkas, dan solutif.]
+            """.trimIndent()
+
             val body = JSONObject().apply {
-                put("message", userPrompt)
+                put("message", "$harnessPrompt\n\nPesan dari Bima: $userPrompt")
                 put("include_screen", false)
             }.toString()
 
@@ -173,14 +177,14 @@ class FileManagerRoute(
                 isConfirmed = false
             )
             return RouteResponse(
-                textResponse = "Saya menemukan berkas yang bisa dirapikan di '$targetPath'. Demi keamanan data Mas Bima, silakan periksa dan setujui kartu aksi berikut:",
+                textResponse = "Saya menemukan berkas yang bisa dirapikan di '$targetPath'. Demi keamanan data Bima, silakan periksa dan setujui kartu aksi berikut:",
                 routeUsed = routeType,
                 actionCard = card
             )
         }
 
         return RouteResponse(
-            textResponse = "Folder '$targetPath' siap dikelola. Mas Bima dapat meminta saya membaca, menyalin, atau merapikan berkas di dalamnya.",
+            textResponse = "Folder '$targetPath' siap dikelola. Bima dapat meminta saya membaca, menyalin, atau merapikan berkas di dalamnya.",
             routeUsed = routeType
         )
     }
@@ -237,7 +241,7 @@ class SummarizerRoute(private val memoryStore: MemoryStore) : AgentRoute {
         }
 
         return RouteResponse(
-            textResponse = "📝 **Catatan Berhasil Disimpan ke Memori!**\n\n\"$noteContent\"\n\nIde ini sudah otomatis masuk ke antrean sinkronisasi laptop Mas Bima.",
+            textResponse = "📝 **Catatan Berhasil Disimpan ke Memori!**\n\n\"$noteContent\"\n\nIde ini sudah otomatis masuk ke antrean sinkronisasi laptop Bima.",
             routeUsed = routeType
         )
     }
@@ -251,7 +255,7 @@ class LifestyleRoute : AgentRoute {
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "☀️ [Pengingat Gaya Hidup]: Cuaca hari ini terpantau bersahabat. Jangan lupa minum air putih dan istirahat sejenak di sela aktivitas kerja ya, Mas Bima! ✨",
+            textResponse = "☀️ [Pengingat Gaya Hidup]: Cuaca hari ini terpantau bersahabat. Jangan lupa minum air putih dan istirahat sejenak di sela aktivitas kerja ya, Bima! ✨",
             routeUsed = routeType
         )
     }
@@ -279,7 +283,7 @@ class LaptopBridgeRoute : AgentRoute {
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "💻 [Jembatan Laptop]: Permintaan tugas komputasi berat telah dikemas dan dikirim ke server laptop di rumah. Hasilnya akan otomatis disinkronkan kembali ke HP Mas Bima.",
+            textResponse = "💻 [Jembatan Laptop]: Permintaan tugas komputasi berat telah dikemas dan dikirim ke server laptop di rumah. Hasilnya akan otomatis disinkronkan kembali ke HP Bima.",
             routeUsed = routeType
         )
     }
@@ -293,7 +297,7 @@ class MarketPulseRoute : AgentRoute {
 
     override suspend fun execute(request: RouteRequest): RouteResponse {
         return RouteResponse(
-            textResponse = "📈 [Pantauan Pasar Ringkas]: Indeks pasar saham bergerak stabil hari ini. Informasi tren disajikan dalam format teks ringan tanpa membebani memori HP Mas Bima.",
+            textResponse = "📈 [Pantauan Pasar Ringkas]: Indeks pasar saham bergerak stabil hari ini. Informasi tren disajikan dalam format teks ringan tanpa membebani memori HP Bima.",
             routeUsed = routeType
         )
     }

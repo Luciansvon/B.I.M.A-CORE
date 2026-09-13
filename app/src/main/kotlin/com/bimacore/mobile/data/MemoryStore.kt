@@ -51,14 +51,14 @@ class MemoryStore(private val storageDir: File) {
     private fun loadFacts() {
         if (!memoryFile.exists()) {
             // Berikan fakta bawaan untuk Bima
-            setFact("nama_panggilan", "Mas Bima")
-            setFact("gaya_komunikasi", "Bahasa Indonesia santun, ramah, dan ringkas")
+            setFact("nama_panggilan", "Bima")
+            setFact("gaya_komunikasi", "Bahasa Indonesia santai, ramah, dan ringkas")
             setFact("preferensi_desain", "Minimalis, Bento Grid, bersih, fokus obrolan")
             return
         }
 
         runCatching {
-            val content = memoryFile.readText()
+            val content = memoryFile.readText().removePrefix("\uFEFF")
             val list = json.decodeFromString<List<MemoryFact>>(content)
             factsMap.clear()
             list.forEach { factsMap[it.key] = it }

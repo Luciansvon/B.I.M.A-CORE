@@ -5,7 +5,7 @@ import com.bimacore.mobile.model.FileActionCard
 /**
  * Gerbang Keamanan Pengguna (User Safety Gate).
  * Memastikan tindakan destruktif (seperti hapus berkas) tidak dapat dieksekusi
- * secara sembarangan tanpa persetujuan eksplisit dari Mas Bima.
+ * secara sembarangan tanpa persetujuan eksplisit dari Bima.
  */
 class UserSafetyGate {
 
@@ -22,7 +22,7 @@ class UserSafetyGate {
                 return SafetyCheckResult.SafeToExecute
             }
             return SafetyCheckResult.RequiresConfirmation(
-                "Peringatan: Berkas '${card.filePath}' akan dihapus permanen. Tindakan ini memerlukan persetujuan Mas Bima."
+                "Peringatan: Berkas '${card.filePath}' akan dihapus permanen. Tindakan ini memerlukan persetujuan Bima."
             )
         }
 
@@ -31,7 +31,7 @@ class UserSafetyGate {
                 return SafetyCheckResult.SafeToExecute
             }
             return SafetyCheckResult.RequiresConfirmation(
-                "Peringatan: Pembersihan berkas sampah pada '${card.filePath}' memerlukan konfirmasi Mas Bima."
+                "Peringatan: Pembersihan berkas sampah pada '${card.filePath}' memerlukan konfirmasi Bima."
             )
         }
 

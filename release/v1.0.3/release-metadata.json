@@ -1,0 +1,21 @@
+﻿{
+    "release":  "v1.0.3",
+    "name":  "BIMA CORE Mobile v1.0.3 (Agent Harness Identity \u0026 Local File Cleaning)",
+    "date":  "2026-09-13T09:20:00+07:00",
+    "project":  "BIMA_CORE",
+    "artifacts":  [
+                      {
+                          "name":  "bima-core-mobile-v1.0.3.apk",
+                          "path":  "release/v1.0.3/bima-core-mobile-v1.0.3.apk",
+                          "size_bytes":  18760718,
+                          "sha256":  "E11E073C5B412ACDF8F74B27F309B9E33C2B8971A97BC296BAD6E4AB6BC34BB2"
+                      }
+                  ],
+    "verification":  {
+                         "unit_tests":  "8/8 PASS",
+                         "emulator_test":  "MuMu Player (SM-S916U) PASS",
+                         "clean_action_card":  "PASS (Berkas Sampah dibersihkan)",
+                         "agent_harness_chat":  "PASS (Sadar Agent Harness Android)",
+                         "verified_by":  "DEV-INFRA Standards"
+                     }
+}

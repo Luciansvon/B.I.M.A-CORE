@@ -188,7 +188,7 @@ fun SidebarDrawerContent(
             Spacer(modifier = Modifier.weight(1f))
 
             Text(
-                text = "B.I.M.A Core Mobile v1.0.2\nStandar B.I.M.A-DEV-INFRA",
+                text = "B.I.M.A Core Mobile v1.0.3\nStandar B.I.M.A-DEV-INFRA",
                 fontSize = 11.sp,
                 color = SoftGrayText,
                 lineHeight = 16.sp

@@ -1,28 +1,23 @@
-# Profil Pengguna: Bima (user.md)
+# Profil Pengguna: Bima
 
-## Karakteristik Pengguna
-- **Nama / Peran**: Bima — Solo Developer & Pemilik proyek BIMA_CORE.
-- **Bahasa Preferensi**: 100% Bahasa Indonesia santun, komunikatif, dan langsung ke intinya. Dilarang menggunakan bahasa asing tanpa penjelasan sederhana.
-- **Pemahaman Coding**: Tidak memahami konsep fundamental coding yang rumit. Penjelasan harus selalu menggunakan analogi sehari-hari yang praktis (misal: mesin mobil, pelayan restoran, buku kasir).
-- **Gaya Komunikasi**: Bersahabat, terstruktur, hangat, dan fokus pada *fitur apa yang bisa dilakukan* daripada *bagaimana kode berjalan di belakang layar*.
-- **Preferensi Riset**: Menyukai riset yang mendalam dengan banyak sumber tervalidasi silang.
-
-## Aturan Interaksi & Alur Kerja
-1. **Q&A Terlebih Dahulu**: Jangan menulis kode sebelum disetujui (acc) oleh Bima.
-2. **Jangan Asal Bertindak**: Saat Bima sedang bertanya/berdiskusi, fokus jawab dan diskusikan, jangan langsung eksekusi atau edit kode.
-3. **Jangan Auto Approve**: Rencana (plan) harus disetujui secara manual oleh Bima.
-4. **Jujur & Tidak Mengada-ada**: Jika ada keterbatasan teknis atau hardware (misalnya RAM HP, baterai, kompatibilitas OS Android), sampaikan apa adanya secara transparan.
-5. **Informasi Terupdate**: Berikan solusi arsitektur dan teknologi terbaru yang relevan dan praktis.
-
-## Preferensi Fitur BIMA CORE (Versi Android / Mobile)
-- **Bentuk Produk**: Aplikasi Android mandiri (APK mandiri), bukan sekadar bot chat atau halaman web biasa.
-- **Tugas Utama**:
-  1. Asisten pribadi sehari-hari.
-  2. Pengelola berkas HP: Membaca, mengubah isi berkas, menghapus, menyalin (copy), dan memindahkan (move) berkas di HP.
-- **Keputusan Sinkronisasi Memori**: Disetujui oleh Bima menggunakan metode online (brankas online / cloud sync ringan) agar data tetap tersinkron kapan pun meski laptop mati.
-- **Server 9 Router di HP**: Sistem "9 Router" memiliki server lokal yang tertanam langsung di HP (server pengatur rute yang mengelola 9 jalur/peran kemampuan agen).
-- **Tampilan Antarmuka (UI)**:
-  - **Layar Utama**: Fokus 100% pada ruang obrolan (Chat-First) yang bersih, luas, dan imersif (seperti aplikasi AI modern: ChatGPT / Claude / Gemini). Menghilangkan widget atau kotak yang tidak perlu dari layar utama agar pengalaman mengobrol dengan Anisa nyaman dan leluasa.
-  - **Bilah Samping (*Sidebar* / Laci Menu)**: Semua fitur teknis dan pendukung (Status Server 9-Router, Akses Kelola Berkas HP, Status Sinkronisasi Laptop, Catatan Ide, dan Riwayat Obrolan) ditempatkan rapi di dalam laci menu samping yang bisa digeser atau dibuka lewat ikon menu di pojok kiri atas.
-- **Status Rilis**: Rilis **v1.0.0** telah resmi dibangun, diverifikasi 100% lulus uji unit, dan resmi dipublikasikan ke GitHub Releases (`https://github.com/Luciansvon/B.I.M.A-CORE/releases/tag/v1.0.0`) beserta berkas APK siap pasang `bima-core-mobile-v1.0.0.apk`.
-- **Kebutuhan Pengaturan Kunci API & 9-Router Laptop**: Diperlukan pengaturan kunci akses dan alamat server 9-Router (BIMA CORE laptop port 8000 `/trigger/chat`) agar chat di HP langsung dijawab cerdas oleh 9 tim agen spesialis di laptop secara nyata.
+- **Nama**: Bima (User)
+- **Pemahaman Coding**: Tidak memahami dasar-dasar atau fundamental coding secara mendalam.
+- **Gaya Komunikasi**:
+  - Lebih menyukai penjelasan yang sederhana, langsung ke inti, dan menggunakan analogi sehari-hari jika membahas hal teknis.
+  - Menggunakan bahasa santai/gaul Indonesia (misal: "gua", "lu").
+  - Menolak penjelasan yang terlalu berbelit-belit atau penuh dengan istilah teknis pemrograman (seperti API, database, routing, dll.) tanpa penjelasan sederhana.
+- **Pendekatan Interaksi**:
+  - Selalu jelaskan langkah-langkah kerja dengan bahasa Indonesia yang santai, bersahabat, dan mudah dimengerti.
+  - Hindari istilah-istilah pemrograman yang rumit. Jika terpaksa menggunakan istilah teknis, berikan penjelasan sederhana atau gunakan analogi.
+- **Konteks Proyek Terkini**:
+  - Bima memindahkan proyek BIMA_CORE ke folder proyek Windows permanen (`C:\Users\shint\projects\BIMA_CORE`).
+  - Distro WSL sebelumnya sudah tidak aktif/dihapus, sehingga target operasional adalah membuat bot berjalan lancar di lingkungan Windows asli.
+  - Bima mengira istilah "bridge" adalah jembatan jaringan antara WSL dan Windows. Perlu dijelaskan dengan analogi bahwa jembatan yang dimaksud di proyek ini adalah penghubung WhatsApp ke otak bot, dan sifatnya opsional jika hanya memakai Discord.
+  - Model AI tidak lagi memakai model lama bawaan (seperti Qwen/Sonnet), melainkan sepenuhnya diarahkan ke kombinasi `Combowombo` yang sudah dibuat Bima di 9Router.
+  - Folder brankas catatan Obsidian (`BIMA_VAULT`) telah dipindahkan keluar dari OneDrive dan dimasukkan langsung ke dalam folder proyek (`C:\Users\shint\projects\BIMA_CORE\BIMA_VAULT\Penyimpanan`) agar kuota OneDrive tidak penuh.
+  - Bima menyetel model pencarian catatan (*embedding*) di 9Router memakai `openrouter/qwen/qwen3-embedding-8b`.
+  - Bima sempat mengira catatan berulang di log PM2 adalah tanda bot macet karena model pencarian belum terhubung. Perlu dijelaskan bahwa log berulang itu hanya detak jantung pemantau dan bot sedang dalam kondisi siaga menunggu pesan masuk.
+  - Bot sempat memunculkan error model karena setelan file rahasia (.env) terlambat dibaca saat program pertama kali dinyalakan. Setelah urutan pembacaan diperbaiki tepat di detik pertama, bot langsung terhubung ke setelan Combowombo 9Router dan sukses diajak ngobrol santai.
+- **Preferensi Panggilan & Identitas**:
+  - **DILARANG** memanggil "Mas Bima". Panggil langsung "Bima" atau gunakan bahasa santai/akrab ("lu/kamu"). Bima sangat tidak suka dipanggil "Mas Bima".
+  - Aplikasi mobile di HP harus beroperasi sebagai **Agent Harness** yang sadar lingkungan: memahami bahwa ia berjalan langsung di dalam smartphone Android Bima, memiliki akses nyata ke penyimpanan/file lokal (kelola file sampah, folder Download, dll.), dan tidak boleh menjawab seolah-olah bot web yang tidak punya akses sistem.

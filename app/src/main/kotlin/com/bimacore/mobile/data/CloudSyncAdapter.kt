@@ -6,7 +6,7 @@ import kotlinx.coroutines.delay
 /**
  * Adapter Sinkronisasi Awan (Cloud Sync Adapter).
  * Menghubungkan ingatan jangka panjang di HP ke brankas online
- * agar laptop Mas Bima dapat membaca memori yang sama.
+ * agar laptop Bima dapat membaca memori yang sama.
  */
 class CloudSyncAdapter(private val memoryStore: MemoryStore) {
 
@@ -24,7 +24,7 @@ class CloudSyncAdapter(private val memoryStore: MemoryStore) {
         return SyncResult(
             isSuccess = true,
             syncedFactsCount = facts.size,
-            message = "Sinkronisasi berhasil: ${facts.size} fakta ingatan tersambung dengan laptop Mas Bima."
+            message = "Sinkronisasi berhasil: ${facts.size} fakta ingatan tersambung dengan laptop Bima."
         )
     }
 

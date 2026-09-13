@@ -9,7 +9,7 @@ import com.bimacore.mobile.router.routes.*
 
 /**
  * Server Mini Lokal: NineRouterEngine.
- * Berjalan langsung di dalam HP Mas Bima sebagai pengatur rute cerdas (Router)
+ * Berjalan langsung di dalam HP Bima sebagai pengatur rute cerdas (Router)
  * yang mendistribusikan setiap permintaan pengguna ke salah satu dari 9 Jalur Kemampuan.
  */
 class NineRouterEngine(
@@ -62,7 +62,9 @@ class NineRouterEngine(
         val lower = prompt.lowercase().trim()
         return when {
             lower.contains("berkas") || lower.contains("file") || lower.contains("folder") ||
-            lower.contains("hapus") || lower.contains("rapikan") || lower.contains("pindah") ->
+            lower.contains("hapus") || lower.contains("rapikan") || lower.contains("pindah") ||
+            lower.contains("bersih") || lower.contains("sampah") || lower.contains("storage") ||
+            lower.contains("penyimpanan") ->
                 RouteType.FILE_MANAGER
 
             lower.contains("koding") || lower.contains("compile") || lower.contains("tugas berat") || lower.contains("server laptop") || lower.contains("remote") ->

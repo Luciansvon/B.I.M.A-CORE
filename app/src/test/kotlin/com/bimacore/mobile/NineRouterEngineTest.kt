@@ -43,6 +43,7 @@ class NineRouterEngineTest {
     @Test
     fun testRouteIntentDetection() {
         assertEquals(RouteType.FILE_MANAGER, routerEngine.detectRoute("tolong bersihkan berkas unduhan"))
+        assertEquals(RouteType.FILE_MANAGER, routerEngine.detectRoute("bisa bantu aku bersihin sampah di hp ku?"))
         assertEquals(RouteType.MEMORY_SYNC, routerEngine.detectRoute("sinkronkan memori ke laptop"))
         assertEquals(RouteType.SUMMARIZER, routerEngine.detectRoute("catat ide baru untuk proyek meja"))
         assertEquals(RouteType.WEB_INTEL, routerEngine.detectRoute("cari info berita teknologi terbaru"))
