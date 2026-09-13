@@ -54,9 +54,13 @@ async def run_task(task: str) -> dict:
     from browser_use import Agent, BrowserProfile
     from browser_use.llm.openai.chat import ChatOpenAI
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    api_key = (
+        os.environ.get("NINEROUTER_API_KEY")
+        or os.environ.get("ROUTER_API_KEY")
+        or os.environ.get("OPENROUTER_API_KEY")
+    )
     if not api_key:
-        return {"ok": False, "error": "OPENROUTER_API_KEY gak diset"}
+        return {"ok": False, "error": "Router API Key gak diset"}
 
     headed = _enabled("BROWSER_USE_HEADED")
     record = _enabled("BROWSER_USE_RECORD")
@@ -87,10 +91,16 @@ async def run_task(task: str) -> dict:
         MARKETPLACE_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
         profile_kwargs["user_data_dir"] = MARKETPLACE_PROFILE_DIR
 
+    base_url = (
+        os.environ.get("NINEROUTER_BASE_URL")
+        or os.environ.get("ROUTER_BASE_URL")
+        or os.environ.get("OPENROUTER_BASE_URL")
+        or "http://127.0.0.1:20128/v1"
+    )
     llm = ChatOpenAI(
         model=model_id,
         api_key=api_key,
-        base_url="https://openrouter.ai/api/v1",
+        base_url=base_url,
         temperature=0.1,
     )
     agent = Agent(

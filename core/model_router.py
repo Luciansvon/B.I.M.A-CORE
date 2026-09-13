@@ -6,17 +6,95 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any, Final
+from dotenv import load_dotenv
 
+load_dotenv()
 
-DAILY_MODEL: Final = "deepseek/deepseek-v4-flash-0731"
-HEAVY_MODEL: Final = "deepseek/deepseek-v4-pro-0813"
-VISUAL_MODEL: Final = "google/gemini-3.7-flash"
-VISUAL_FALLBACK_MODEL: Final = "google/gemini-3.1-flash-lite"
-INTEL_MODEL: Final = "qwen/qwen3.8-27b"
-ADMIN_HEAVY_MODEL: Final = "anthropic/claude-sonnet-5"
-THREADS_MODEL: Final = ADMIN_HEAVY_MODEL
-IMAGE_MODEL: Final = "google/gemini-3.1-flash-image"
-SECURITY_MODEL: Final = "openai/gpt-5.6-luna-pro"
+COMBO_MODEL_NAME: Final = os.environ.get("NINEROUTER_MODEL", "Combowombo")
+USE_9ROUTER: Final = True
+
+# Urutan model dalam kombinasi 9Router "Combowombo":
+COMBOWOMBO_MODELS: Final[tuple[str, ...]] = (
+    "ag/gemini-3.8-flash-high",
+    "openrouter/deepseek/deepseek-v4.1-flash",
+    "openrouter/z-ai/glm-5.3-flash",
+    "cx/gpt-5.6-luna",
+    "openrouter/openai/gpt-5.6-luna-pro:batch",
+    "openrouter/qwen/qwen3.8-flash",
+    "ag/claude-opus-4-6-thinking",
+    "openrouter/anthropic/claude-sonnet-5",
+    "openrouter/deepseek/deepseek-v4-flash-0731",
+    "openrouter/qwen/qwen3-embedding-8b",
+)
+
+# Model spesifik untuk masing-masing peran / tim:
+DAILY_MODEL: Final = (
+    "ag/gemini-3.8-flash-high"
+    if USE_9ROUTER
+    else os.environ.get("DAILY_MODEL", "deepseek/deepseek-v4-flash-0731")
+)
+HEAVY_MODEL: Final = (
+    "ag/claude-opus-4-6-thinking"
+    if USE_9ROUTER
+    else os.environ.get("HEAVY_MODEL", "deepseek/deepseek-v4-pro-0813")
+)
+VISUAL_MODEL: Final = (
+    "ag/gemini-3.8-flash-high"
+    if USE_9ROUTER
+    else "google/gemini-3.7-flash"
+)
+VISUAL_FALLBACK_MODEL: Final = (
+    COMBO_MODEL_NAME
+    if USE_9ROUTER
+    else "google/gemini-3.1-flash-lite"
+)
+INTEL_MODEL: Final = (
+    "ag/gemini-3.8-flash-high"
+    if USE_9ROUTER
+    else "qwen/qwen3.8-27b"
+)
+ADMIN_HEAVY_MODEL: Final = (
+    "ag/claude-opus-4-6-thinking"
+    if USE_9ROUTER
+    else "anthropic/claude-sonnet-5"
+)
+ADMIN_MODEL: Final = ADMIN_HEAVY_MODEL
+THREADS_MODEL: Final = (
+    "ag/gemini-3.8-flash-high"
+    if USE_9ROUTER
+    else "ag/gemini-3.8-flash-high"
+)
+IMAGE_MODEL: Final = (
+    "ag/gemini-3.1-flash-image"
+    if USE_9ROUTER
+    else "google/gemini-3.1-flash-image"
+)
+SECURITY_MODEL: Final = (
+    "ag/claude-opus-4-6-thinking"
+    if USE_9ROUTER
+    else "openai/gpt-5.6-luna-pro"
+)
+SAHAM_MODEL: Final = (
+    "openrouter/deepseek/deepseek-v4.1-flash"
+    if USE_9ROUTER
+    else HEAVY_MODEL
+)
+KODOK_MODEL: Final = (
+    "openrouter/deepseek/deepseek-v4.1-flash"
+    if USE_9ROUTER
+    else HEAVY_MODEL
+)
+ARSIP_MODEL: Final = (
+    "openrouter/deepseek/deepseek-v4-flash-0731"
+    if USE_9ROUTER
+    else DAILY_MODEL
+)
+LIFESTYLE_MODEL: Final = (
+    "openrouter/z-ai/glm-5.3-flash"
+    if USE_9ROUTER
+    else DAILY_MODEL
+)
+
 MODEL_INPUT_COST_PER_M: Final[dict[str, float]] = {
     DAILY_MODEL: 0.035,
     HEAVY_MODEL: 0.66,
@@ -30,41 +108,48 @@ class ModelProfile:
     reasoning_effort: str | None = None
 
 
-_DAILY = ModelProfile(DAILY_MODEL)
-_VISUAL = ModelProfile(VISUAL_MODEL, (VISUAL_FALLBACK_MODEL,))
-_INTEL = ModelProfile(INTEL_MODEL, (DAILY_MODEL,))
-_HEAVY = ModelProfile(HEAVY_MODEL, (DAILY_MODEL,))
+_COMBO_FALLBACK: Final[tuple[str, ...]] = (COMBO_MODEL_NAME,) if USE_9ROUTER else (DAILY_MODEL,)
+
+_DAILY = ModelProfile(DAILY_MODEL, _COMBO_FALLBACK)
+_VISUAL = ModelProfile(VISUAL_MODEL, _COMBO_FALLBACK)
+_INTEL = ModelProfile(INTEL_MODEL, ("openrouter/z-ai/glm-5.3-flash", COMBO_MODEL_NAME) if USE_9ROUTER else (DAILY_MODEL,))
+_ADMIN = ModelProfile(ADMIN_HEAVY_MODEL, _COMBO_FALLBACK)
+_HEAVY = ModelProfile(HEAVY_MODEL, _COMBO_FALLBACK)
 _HEAVY_REASONING = ModelProfile(
     HEAVY_MODEL,
-    (DAILY_MODEL,),
+    _COMBO_FALLBACK,
     reasoning_effort="high",
 )
+_SAHAM = ModelProfile(SAHAM_MODEL, (HEAVY_MODEL, COMBO_MODEL_NAME) if USE_9ROUTER else (DAILY_MODEL,))
+_KODOK = ModelProfile(KODOK_MODEL, (HEAVY_MODEL, COMBO_MODEL_NAME) if USE_9ROUTER else (DAILY_MODEL,))
+_ARSIP = ModelProfile(ARSIP_MODEL, _COMBO_FALLBACK)
+_LIFESTYLE = ModelProfile(LIFESTYLE_MODEL, (DAILY_MODEL, COMBO_MODEL_NAME) if USE_9ROUTER else (DAILY_MODEL,))
 
 
 TEAM_MODEL_PROFILES: Final[dict[str, dict[str, ModelProfile]]] = {
     "manager": {"standard": _DAILY},
     "visual": {"standard": _VISUAL},
-    "arsip": {"standard": _DAILY, "heavy": _INTEL},
+    "arsip": {"standard": _ARSIP, "heavy": _HEAVY},
     "admin": {
-        "standard": _DAILY,
+        "standard": _ADMIN,
         "heavy": ModelProfile(
             ADMIN_HEAVY_MODEL,
-            (DAILY_MODEL,),
+            _COMBO_FALLBACK,
             reasoning_effort="high",
         ),
     },
     "intel": {"standard": _INTEL},
-    "lifestyle": {"standard": _DAILY},
+    "lifestyle": {"standard": _LIFESTYLE},
     "seniman": {"standard": _VISUAL},
-    "mekanik": {"standard": _HEAVY, "heavy": _HEAVY_REASONING},
-    "saham": {"standard": _HEAVY},
-    "kodok": {"standard": _HEAVY, "heavy": _HEAVY_REASONING},
+    "mekanik": {"standard": _KODOK, "heavy": _HEAVY_REASONING},
+    "saham": {"standard": _SAHAM},
+    "kodok": {"standard": _KODOK, "heavy": _HEAVY_REASONING},
     "observer": {"standard": _VISUAL},
     "canvas": {"standard": _VISUAL},
     "qc_consolidator": {"standard": _DAILY},
     "tts_opener": {"standard": _DAILY},
     "prompt_optimizer": {"standard": _HEAVY},
-    "security": {"standard": ModelProfile(SECURITY_MODEL)},
+    "security": {"standard": ModelProfile(SECURITY_MODEL, _COMBO_FALLBACK)},
 }
 
 
@@ -117,7 +202,8 @@ def select_profile(team: str, user_text: str) -> str:
 
 
 def crewai_model_id(model: str) -> str:
-    return model if model.startswith("openrouter/") else f"openrouter/{model}"
+    clean_model = model.removeprefix("openai/")
+    return f"openai/{clean_model}"
 
 
 def openrouter_extra_body(
@@ -126,11 +212,8 @@ def openrouter_extra_body(
     *,
     primary_model: str | None = None,
 ) -> dict[str, list[str]]:
-    """Build OpenRouter fallback payload for direct OpenAI-compatible callers."""
-    selected = model_profile(team, profile)
-    if not selected.fallbacks:
-        return {}
-    return {"models": [primary_model or selected.model, *selected.fallbacks]}
+    """Di 9Router, routing dan fallback ditangani langsung oleh 9Router."""
+    return {}
 
 
 def clone_agent_with_llm(agent: Any, llm: Any) -> Any:
@@ -139,3 +222,23 @@ def clone_agent_with_llm(agent: Any, llm: Any) -> Any:
         update={"llm": llm, "tools": list(agent.tools)},
         deep=False,
     )
+
+
+def get_router_credentials() -> tuple[str, str]:
+    """Return (api_key, base_url) untuk 9Router."""
+    api_key = (
+        os.environ.get("NINEROUTER_API_KEY")
+        or os.environ.get("ROUTER_API_KEY")
+        or os.environ.get("OPENROUTER_API_KEY")
+        or ""
+    ).strip()
+
+    base_url = (
+        os.environ.get("NINEROUTER_BASE_URL")
+        or os.environ.get("ROUTER_BASE_URL")
+        or os.environ.get("OPENROUTER_BASE_URL")
+        or "http://127.0.0.1:20128/v1"
+    ).strip()
+
+    return api_key, base_url
+

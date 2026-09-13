@@ -44,3 +44,52 @@ async def test_revision_prompt_carries_minimal_edit_rule(monkeypatch):
     # Hasil diekstrak bersih dari tag <draft>...</draft>.
     assert result == "sore sore enaknya kopi susu sambil santai 🗿"
     assert "<draft>" not in result and "</draft>" not in result
+
+
+class _BrowsingFakeLLM:
+    def __init__(self):
+        self.captured: list[str] = []
+
+    def invoke(self, messages):
+        sys_content = messages[0].content
+        self.captured.append(sys_content)
+        if "Analisis apakah feedback" in sys_content:
+            return _FakeResp("berita baru hari ini")
+        return _FakeResp("<draft>post baru</draft>")
+
+
+@pytest.mark.asyncio
+async def test_revision_new_search_replaces_old_context(monkeypatch):
+    fake = _BrowsingFakeLLM()
+    monkeypatch.setattr(tc, "threads_llm", fake)
+
+    async def fresh_search(_query):
+        return "KONTEKS BARU"
+
+    monkeypatch.setattr(tc, "search_context", fresh_search)
+
+    await tc.apply_smart_revision(
+        "draf lama",
+        "cek berita baru",
+        search_context_info="KONTEKS LAMA",
+    )
+
+    revision_prompt = fake.captured[-1]
+    assert "KONTEKS BARU" in revision_prompt
+    assert "KONTEKS LAMA" not in revision_prompt
+
+
+@pytest.mark.asyncio
+async def test_revision_does_not_restore_global_context_from_old_draft(monkeypatch):
+    fake = _FakeLLM()
+    monkeypatch.setattr(tc, "threads_llm", fake)
+
+    old_store = getattr(tc, "_draft_contexts", None)
+    if old_store is not None:
+        old_store.clear()
+        old_store["draf yang sama"] = "KONTEKS REQUEST LAMA"
+
+    await tc.apply_smart_revision("draf yang sama", "bikin lebih pendek")
+
+    revision_prompt = fake.captured[-1]
+    assert "KONTEKS REQUEST LAMA" not in revision_prompt

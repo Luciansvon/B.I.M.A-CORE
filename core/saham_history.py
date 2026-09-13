@@ -107,3 +107,75 @@ def get_today_trades(market: str | None = None) -> list[dict]:
     """Trade hari ini (WIB), opsional filter market."""
     since = datetime.now(WIB).strftime("%Y-%m-%dT00:00:00")
     return get_trades_since(since, market)
+
+
+def get_trade_summary(market: str | None = None) -> dict[str, float | int]:
+    """Ringkasan realized P&L SELL; BUY tidak dihitung sebagai hasil jual."""
+    conn = _get_conn()
+    try:
+        where = "WHERE market = ?" if market else ""
+        params = (market,) if market else ()
+        row = conn.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(
+                    CASE WHEN action = 'SELL' AND realized_pnl > 0
+                    THEN realized_pnl ELSE 0 END
+                ), 0) AS total_profit,
+                COALESCE(SUM(
+                    CASE WHEN action = 'SELL' AND realized_pnl < 0
+                    THEN realized_pnl ELSE 0 END
+                ), 0) AS total_loss,
+                COALESCE(SUM(
+                    CASE WHEN action = 'SELL'
+                    THEN realized_pnl ELSE 0 END
+                ), 0) AS realized_pnl,
+                COALESCE(SUM(
+                    CASE WHEN action = 'SELL' THEN 1 ELSE 0 END
+                ), 0) AS sell_count
+            FROM paper_trades
+            {where}
+            """,
+            params,
+        ).fetchone()
+        return {
+            "total_profit": float(row[0]),
+            "total_loss": float(row[1]),
+            "realized_pnl": float(row[2]),
+            "sell_count": int(row[3]),
+        }
+    finally:
+        conn.close()
+
+
+def get_recent_trades(
+    limit: int = 5,
+    market: str | None = None,
+) -> list[dict]:
+    """Trade terbaru, dibatasi agar laporan Discord tetap ringkas."""
+    safe_limit = max(0, int(limit))
+    conn = _get_conn()
+    try:
+        if market:
+            cur = conn.execute(
+                """
+                SELECT * FROM paper_trades
+                WHERE market = ?
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ?
+                """,
+                (market, safe_limit),
+            )
+        else:
+            cur = conn.execute(
+                """
+                SELECT * FROM paper_trades
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            )
+        columns = [item[0] for item in cur.description]
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()

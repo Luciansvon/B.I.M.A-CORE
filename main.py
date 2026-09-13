@@ -3,9 +3,13 @@ import importlib
 import logging
 import os
 import sys
+from dotenv import load_dotenv
 
-import uvloop
-uvloop.install()
+load_dotenv()
+
+if sys.platform != "win32":
+    import uvloop
+    uvloop.install()
 
 # Sentry error tracking — no-op kalau SENTRY_DSN ga di-set di .env.
 # Set SENTRY_DSN di .env (https://sentry.io free tier 5k events/bulan) buat aktif.

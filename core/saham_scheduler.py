@@ -30,6 +30,12 @@ logger = logging.getLogger('bima_core')
 
 WIB = ZoneInfo("Asia/Jakarta")
 
+SAHAM_JOB_DEFAULTS = {
+    "misfire_grace_time": 120,
+    "coalesce": True,
+    "max_instances": 1,
+}
+
 # === Watchlist (3 group) ===
 WATCHLIST_IDX = [
     # Banking
@@ -668,6 +674,8 @@ async def _paper_trading_tick(market: str) -> None:
         results = await asyncio.to_thread(run_tick, market)
         if results:
             logger.info(f"[PAPER TRADER] {market}: {len(results)} trade(s) executed")
+        else:
+            logger.info(f"[PAPER TRADER] {market}: tick completed, no trade")
     except Exception as e:
         logger.error(f"[PAPER TRADER] Tick error ({market}): {e}", exc_info=True)
 
@@ -712,7 +720,10 @@ def start_saham_scheduler(client):
         logger.warning("[SAHAM SCHEDULER] SAHAM_CHANNEL_ID belum di-set, scheduler tidak start")
         return None
 
-    scheduler = AsyncIOScheduler(timezone=WIB)
+    scheduler = AsyncIOScheduler(
+        timezone=WIB,
+        job_defaults=SAHAM_JOB_DEFAULTS,
+    )
     scheduler.add_job(
         send_digest,
         CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone=WIB),

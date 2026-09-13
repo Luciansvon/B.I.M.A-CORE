@@ -27,7 +27,7 @@ matplotlib
 mcpadapt
 openai>=1.12.0
 numpy<2.3
-uvloop
+uvloop; sys_platform != 'win32'
 loguru
 sentry-sdk[fastapi]
 apprise

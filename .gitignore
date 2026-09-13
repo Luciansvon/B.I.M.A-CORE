@@ -33,6 +33,8 @@ outputs/browser_use/profile_marketplace/
 
 # Personal notes / vault (private)
 Bima_Vault/
+BIMA_VAULT/
+bima_vault/
 
 # Generated artifacts
 chart_*.png

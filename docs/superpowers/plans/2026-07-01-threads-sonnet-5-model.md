@@ -25,7 +25,7 @@
 - Modify: `core/threads_commands.py`
 - Modify: `AI_sosmed/core/threads_commands.py`
 - Modify: `AI_sosmed/.env.example`
-- Modify: `docs/error_solutions.md`
+- Modify: `docs/ERROR_SOLUTIONS.md`
 
 ## Tasks
 
@@ -59,7 +59,7 @@ THREADS_LLM_MODEL=anthropic/claude-sonnet-5
 
 ### Task 4: Log Error/Solution
 
-- [x] Add a short entry to `docs/error_solutions.md` explaining old Sonnet 4.6 config and fix to Sonnet 5.
+- [x] Add a short entry to `docs/ERROR_SOLUTIONS.md` explaining old Sonnet 4.6 config and fix to Sonnet 5.
 
 ### Task 5: Verify
 

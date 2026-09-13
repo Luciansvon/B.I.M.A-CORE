@@ -12,6 +12,11 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 GREEN = "\033[0;32m"
 RED = "\033[0;31m"
 YELLOW = "\033[1;33m"
@@ -100,8 +105,14 @@ def _check_environment(report: CheckReport) -> None:
     from dotenv import load_dotenv
 
     load_dotenv(BASE_DIR / ".env")
+    router_key = os.environ.get("NINEROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+    if router_key:
+        provider = "9Router" if os.environ.get("NINEROUTER_API_KEY") else "OpenRouter"
+        report.ok(f"{provider} API Key: configured")
+    else:
+        report.fail("Router API (NINEROUTER_API_KEY / OPENROUTER_API_KEY) NOT SET!")
+
     variables = {
-        "OPENROUTER_API_KEY": ("OpenRouter API (LLM)", True),
         "DISCORD_TOKEN": ("Discord Bot Token", True),
         "SERPER_API_KEY": ("Serper (Google Search)", False),
         "GEMINI_API_KEY": ("Gemini API", False),

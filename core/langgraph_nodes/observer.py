@@ -182,10 +182,11 @@ def _format_search_for_llm(search: dict) -> str:
 def _get_instructor_client() -> instructor.AsyncInstructor:
     global _client_singleton
     if _client_singleton is None:
-        api_key = os.environ.get("OPENROUTER_API_KEY")
+        api_key = os.environ.get("NINEROUTER_API_KEY") or os.environ.get("ROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENROUTER_API_KEY missing di env")
-        raw = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+            raise RuntimeError("Router API key missing di env")
+        base_url = os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
+        raw = AsyncOpenAI(base_url=base_url, api_key=api_key)
         _client_singleton = instructor.from_openai(raw, mode=instructor.Mode.JSON)
     return _client_singleton
 

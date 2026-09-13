@@ -16,6 +16,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from core.langgraph_nodes.state import BimaState
 from core.langgraph_nodes.llm_config import default_llm
+from core.langgraph_nodes.manager import _is_lightweight_chat
 
 logger = logging.getLogger('bima_core')
 
@@ -84,6 +85,8 @@ async def context_summarizer_node(state: BimaState) -> dict:
 def should_summarize(state: BimaState) -> str:
     """Conditional entry point router. Return next node name."""
     if os.environ.get("ENABLE_SUMMARIZATION", "true").lower() != "true":
+        return "classifier_node"
+    if _is_lightweight_chat(state.get("user_request", "")):
         return "classifier_node"
     messages = state.get("messages", [])
     if len(messages) > _threshold():

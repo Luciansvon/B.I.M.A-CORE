@@ -16,7 +16,7 @@ from core.threads_commands import (
     publish_post_to_threads,
     ViralAnalysisTool
 )
-from core.permission_gate import request_permission, PermissionTimeoutError
+from core.permission_gate import request_permission_with_revision, PermissionTimeoutError
 
 logger = logging.getLogger('bima_core.threads_scheduler')
 WIB = ZoneInfo("Asia/Jakarta")
@@ -95,7 +95,7 @@ Kembalikan HANYA kata "SAFE" jika aman untuk diposting otomatis, atau "UNSAFE" j
             [SystemMessage(content=system_prompt), HumanMessage(content=f"Topik: {topic}\nDraf Postingan: {draft_text}")]
         )
         result = resp.content.strip().upper()
-        return "SAFE" in result
+        return result == "SAFE"
     except Exception as e:
         logger.warning(f"[THREADS_SCHEDULER] Gagal melakukan safety check LLM: {e}")
         return False  # Fallback ke false untuk aman
@@ -147,7 +147,8 @@ _TOPIC_STOPWORDS = {
     "dan", "atau", "itu", "ini", "pada", "untuk", "dari", "dengan", "punya",
     "tidak", "gak", "nggak", "adalah", "the", "of", "and", "or", "kecepatan",
     "kemampuan", "jenis", "macam", "cara", "soal", "hal", "ikan", "hewan",
-    "binatang", "burung", "benda", "makanan", "minuman",
+    "binatang", "burung", "benda", "makanan", "minuman", "topik", "judul",
+    "baru", "lama", "benar",
 }
 
 # Sudut pandang acak buat ngedorong LLM keluar dari trivia hewan default.
@@ -239,44 +240,15 @@ def save_scientific_fact(topic: str, context: str, facts_path: str | None = None
     except Exception as e:
         logger.warning(f"[THREADS_SCHEDULER] Gagal menyimpan fakta baru ke database: {e}")
 
-async def generate_random_interesting_fact_topic() -> tuple[str, str]:
-    """Menghasilkan topik berupa fakta unik/menarik dari database lokal atau LLM (fallback)."""
+async def generate_random_interesting_fact_topic(
+    facts_path: str | None = None,
+) -> tuple[str, str]:
+    """Buat topik baru; data lokal hanya menjadi denylist anti-pengulangan."""
     import json
-    facts_path = os.path.join(os.path.dirname(__file__), "scientific_facts.json")
-    
-    # Inisialisasi file database jika belum ada
-    if not os.path.exists(facts_path):
-        try:
-            with open(facts_path, "w", encoding="utf-8") as f:
-                json.dump(DEFAULT_FACTS, f, indent=2, ensure_ascii=False)
-            logger.info("[THREADS_SCHEDULER] Inisialisasi database fakta ilmiah dengan data scraping Quora.")
-        except Exception as e:
-            logger.warning(f"[THREADS_SCHEDULER] Gagal menginisialisasi database fakta: {e}")
+    if facts_path is None:
+        facts_path = os.path.join(os.path.dirname(__file__), "scientific_facts.json")
 
-    recent_topics = _load_recent_topics()
-
-    # Coba ambil dari database lokal (70% peluang jika file terbaca)
-    try:
-        if os.path.exists(facts_path) and random.random() < 0.7:
-            with open(facts_path, "r", encoding="utf-8") as f:
-                facts = json.load(f)
-            if facts:
-                # Saring fakta yang subjeknya baru aja dipakai biar gak ngulang.
-                # Kalau semua kesaring (DB kecil), balik pakai daftar penuh.
-                fresh = [
-                    fct for fct in facts
-                    if not any(_topics_related(fct.get("topic", ""), r) for r in recent_topics)
-                ]
-                pool = fresh if fresh else facts
-                selected = random.choice(pool)
-                _record_recent_topic(selected["topic"])
-                logger.info(f"[THREADS_SCHEDULER] Menggunakan fakta ilmiah dari database lokal: '{selected['topic']}'")
-                return selected["topic"], selected["context"]
-    except Exception as e:
-        logger.warning(f"[THREADS_SCHEDULER] Gagal mengambil fakta dari database lokal: {e}")
-
-    # Sisanya (30% atau jika gagal), buat baru menggunakan LLM
-    logger.info("[THREADS_SCHEDULER] Menghasilkan fakta baru menggunakan LLM...")
+    logger.info("[THREADS_SCHEDULER] Menghasilkan topik baru tanpa memakai konteks lama...")
     system_prompt = """Lu adalah asisten ide B.I.M.A Core.
 Tugas lu adalah memberikan satu ide TOPIK berupa FAKTA MENARIK, FAKTA UNIK, atau LIFE HACK yang aman, seru, dan cocok dibahas oleh anak magang Gen-Z desain furnitur & tech enthusiast.
 
@@ -303,13 +275,14 @@ Kembalikan HANYA teks JSON tersebut tanpa markdown, tanpa penjelasan tambahan.""
         from core.langgraph_nodes.llm_config import default_llm
         from langchain_core.messages import SystemMessage, HumanMessage
 
-        # Kumpulkan topik yang udah pernah dibahas (recent + DB) jadi daftar larangan
-        # supaya LLM gak balik lagi ke trivia populer yang itu-itu aja (mis. hiu).
-        known_topics: list[str] = list(recent_topics)
+        # Kumpulkan JUDUL lama saja sebagai denylist. Context lama tidak masuk prompt.
+        known_topics: list[str] = list(_load_recent_topics())
         try:
             if os.path.exists(facts_path):
                 with open(facts_path, "r", encoding="utf-8") as f:
                     known_topics += [fct.get("topic", "") for fct in json.load(f)]
+            else:
+                known_topics += [fct.get("topic", "") for fct in DEFAULT_FACTS]
         except Exception:
             pass
         # Buang duplikat, dahulukan yang terbaru, batasi biar prompt gak kepanjangan.
@@ -322,36 +295,52 @@ Kembalikan HANYA teks JSON tersebut tanpa markdown, tanpa penjelasan tambahan.""
                 avoid.append(t)
         avoid = avoid[:40]
 
-        nudge = f"Kali ini WAJIB ambil sudut pandang dari kategori: {random.choice(_FACT_ANGLES)}."
-        if avoid:
-            nudge += (
-                "\n\nDAFTAR TOPIK YANG SUDAH PERNAH DIBAHAS. JANGAN ulang subjek/tema yang "
-                "sama atau mirip dengan salah satu di bawah ini, cari yang BENER-BENER beda "
-                "(termasuk jangan bahas subjek hewan yang udah ada, contoh: kalau 'hiu' udah "
-                "ada di daftar, jangan bahas hiu lagi):\n- " + "\n- ".join(avoid)
+        topic = ""
+        for attempt in range(3):
+            nudge = (
+                f"Percobaan {attempt + 1}/3. Kali ini WAJIB ambil sudut pandang dari "
+                f"kategori: {random.choice(_FACT_ANGLES)}."
             )
+            if avoid:
+                nudge += (
+                    "\n\nDAFTAR TOPIK YANG SUDAH PERNAH DIBAHAS. JANGAN ulang subjek/tema "
+                    "yang sama atau mirip dengan salah satu di bawah ini, cari yang "
+                    "BENER-BENER beda:\n- " + "\n- ".join(avoid)
+                )
 
-        resp = await asyncio.to_thread(
-            default_llm.invoke,
-            [SystemMessage(content=system_prompt), HumanMessage(content=nudge)]
-        )
-        content = resp.content.strip()
-        if content.startswith("```"):
-            content = content.replace("```json", "").replace("```", "").strip()
-        data = json.loads(content)
+            resp = await asyncio.to_thread(
+                default_llm.invoke,
+                [SystemMessage(content=system_prompt), HumanMessage(content=nudge)]
+            )
+            content = resp.content.strip()
+            if content.startswith("```"):
+                content = content.replace("```json", "").replace("```", "").strip()
+            data = json.loads(content)
+            candidate = str(data.get("topic", "")).strip()
+            if not candidate:
+                continue
+            if any(_topics_related(previous, candidate) for previous in known_topics if previous):
+                logger.info(
+                    f"[THREADS_SCHEDULER] Topik model masih duplikat, retry: {candidate}"
+                )
+                continue
+            topic = candidate
+            break
+        if not topic:
+            return "", ""
 
-        topic = data.get("topic", "")
-        context = data.get("context", "")
-
-        # Simpan fakta yang didraf ke database agar bisa digunakan lagi di masa depan
-        if topic and context:
-            save_scientific_fact(topic, context)
-            _record_recent_topic(topic)
-
+        # Fakta/konteks harus berasal dari pencarian request sekarang.
+        context = await search_context(topic)
+        if not context or context.startswith("Tidak ada konteks"):
+            logger.warning(
+                f"[THREADS_SCHEDULER] Skip topik tanpa konteks live 24 jam: {topic}"
+            )
+            return "", ""
+        _record_recent_topic(topic)
         return topic, context
     except Exception as e:
         logger.warning(f"[THREADS_SCHEDULER] Gagal menghasilkan fakta menarik dinamis dari LLM: {e}")
-        return "Asal-usul kursi bakso plastik", "Kursi bakso plastik yang ada bolongannya di tengah itu fungsinya biar gak vakum pas ditumpuk dan gampang diambil."
+        return "", ""
 
 from pathlib import Path
 
@@ -407,36 +396,14 @@ async def auto_post_threads(client):
         logger.warning("[THREADS_SCHEDULER] Skip auto post: THREADS_ACCESS_TOKEN tidak ditemukan di .env")
         return
 
-    # 1. Tentukan topik (fakta menarik vs personal yang aman)
-    use_fact = random.random() < 0.6  # 60% pakai fakta unik, 40% pakai personal aman
-    selected_topic = ""
-    selected_context = ""
-
-    if use_fact:
-        logger.info("[THREADS_SCHEDULER] Menghasilkan topik fakta menarik dinamis...")
-        selected_topic, selected_context = await generate_random_interesting_fact_topic()
-
+    # 1. Setiap job wajib menghasilkan topik baru. Jangan fallback ke bank lama.
+    logger.info("[THREADS_SCHEDULER] Menghasilkan topik baru dinamis...")
+    selected_topic, selected_context = await generate_random_interesting_fact_topic()
     if not selected_topic:
-        # Fallback atau 40% ke casual safe topics — filter dulu biar gak ngulang
-        recent_t = _load_recent_topics()
-        available_casual = [t for t in BIMA_CASUAL_TOPICS
-                            if not any(_topics_related(t, r) for r in recent_t)]
-        selected_topic = random.choice(available_casual if available_casual else BIMA_CASUAL_TOPICS)
-        selected_context = "Ini adalah topik kehidupan sehari-hari anak muda Gen-Z secara kasual (gadget, game PC, kopi, musik, desk setup)."
-        _record_recent_topic(selected_topic)
-        logger.info(f"[THREADS_SCHEDULER] Memilih topik kasual aman: '{selected_topic}'")
+        logger.warning("[THREADS_SCHEDULER] Skip auto post: topik baru gagal dibuat.")
+        return
 
-    # 2. Ambil pola viral yang sudah dipelajari
-    viral_context = ""
-    try:
-        from core import agentmemory_client
-        memories = await agentmemory_client.recall("[VIRAL_PATTERN]", limit=3)
-        if memories:
-            viral_context = f"\n=== POLA VIRAL YANG SUDAH DIPELAJARI (Terapkan teknik/strukturnya) ===\n{memories}\n=======================================================\n"
-    except Exception as e:
-        logger.warning(f"[THREADS_SCHEDULER] Gagal mengambil memori pola viral: {e}")
-
-    # 2.5 Deteksi mood dinamis untuk hari ini (Jakarta WIB)
+    # 2. Deteksi mood dinamis untuk hari ini (Jakarta WIB)
     mood = "santai"
     try:
         now = datetime.now(WIB)
@@ -455,10 +422,8 @@ async def auto_post_threads(client):
     # 3. Generate draf postingan
     user_prompt = f"""Topik/Inspirasi: {selected_topic}
 Konteks tambahan: {selected_context}
-{viral_context}
 Tulis draf postingan Threads yang sangat emosional, sarkas, menggunakan singkatan gaul, memakai kata "lu" dan "gua" (tanpa kata "loe" atau "gue").
-Aturan penting: Tulis dengan mood/vibe penulisan: {mood}.
-Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yang sesuai agar postingan berpotensi viral!"""
+Aturan penting: Tulis dengan mood/vibe penulisan: {mood}. Gunakan hanya topik dan konteks request ini."""
 
     try:
         draft_text = await generate_bima_draft(user_prompt)
@@ -467,8 +432,8 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
         return
 
     # Tentukan apakah postingan ini akan menyertakan gambar (misal: 40% kemungkinan)
-    # Khusus untuk fakta unik, visual sangat membantu engagement
-    include_image = use_fact and (random.random() < 0.40)
+    # Visual opsional untuk topik baru.
+    include_image = random.random() < 0.40
     image_url = None
     image_prompt = ""
     local_img_path = None      # path gambar lokal (cache atau hasil generate)
@@ -520,16 +485,18 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
     # 5. Kirim persetujuan via DM permission gate dengan raise_on_timeout=True
     is_timeout = False
     approved = False
+    revised = None
     details_text = f"🚨 [AUTO POST SCHEDULER] 🚨\n\n{draft_text}"
     if image_url:
         details_text += f"\n\n🖼️ **Gambar Terlampir**: {image_url}"
 
     try:
-        approved = await request_permission(
+        approved, revised = await request_permission_with_revision(
             discord_user_id=owner_id,
             action_type="THREADS_POST",
             details=details_text,
-            raise_on_timeout=True
+            raise_on_timeout=True,
+            revision_base=draft_text,
         )
     except PermissionTimeoutError:
         is_timeout = True
@@ -565,10 +532,7 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
                 pass
             return
     else:
-        # Ambil teks revisi jika ada
-        from core.permission_gate import get_revised_text
-        revised = get_revised_text(owner_id)
-        final_text = revised if revised else draft_text
+        final_text = revised if revised is not None else draft_text
 
     # 6. Publikasikan
     logger.info("[THREADS_SCHEDULER] Persetujuan diterima! Memposting ke Threads...")

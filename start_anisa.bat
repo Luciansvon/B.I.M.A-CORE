@@ -1,12 +1,15 @@
 @echo off
 title Membangunkan Sistem Anisa...
 
-echo [1/2] Menyalakan B.I.M.A Core di WSL...
+echo [1/2] Menyalakan B.I.M.A Core di Windows...
 echo        (Dashboard modern auto-start di port 8000)
-wsl -d Ubuntu -e bash -ic "cd /home/bima_lucian/BIMA_CORE && pm2 restart ANISA || pm2 start ecosystem.config.js"
+cd /d "%~dp0"
+call pm2 restart ecosystem.config.js || call pm2 start ecosystem.config.js
 
 echo [2/2] Memanggil Anisa Desktop Pet...
-start "Anisa Pet" python \\wsl.localhost\Ubuntu\home\bima_lucian\BIMA_CORE\frontend\anisa_pet_frontend.py
+if exist "frontend\anisa_pet_frontend.py" (
+    start "Anisa Pet" bima_env\Scripts\python.exe frontend\anisa_pet_frontend.py
+)
 
 echo.
 echo ============================================

@@ -39,7 +39,7 @@ async def _llm_init_spec(topic: str, user_request: str) -> dict:
     from openai import OpenAI
     import os
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("NINEROUTER_API_KEY")
     if not api_key:
         return _fallback_spec(topic or user_request)
 
@@ -74,7 +74,8 @@ ATURAN:
 - JANGAN ngarang fakta spesifik (statistik, angka, nama orang) — bilang "data perlu di-verify" kalau ragu.
 - Output HANYA JSON, tanpa markdown wrapper."""
 
-    client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+    base_url = os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
+    client = OpenAI(api_key=api_key, base_url=base_url)
     try:
         r = client.chat.completions.create(
             model=CANVAS_MODEL,
@@ -100,7 +101,7 @@ async def _llm_revise_spec(current_spec: dict, user_request: str) -> tuple[dict,
     from openai import OpenAI
     import os
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("NINEROUTER_API_KEY")
     if not api_key:
         return current_spec, "LLM gak available, spec gak berubah"
 
@@ -123,7 +124,8 @@ ATURAN:
 - Kalau user gak jelas / gak bisa interpret → balikin spec apa adanya + change_note "tidak ada perubahan, request gak jelas".
 - Output HANYA JSON, tanpa markdown wrapper."""
 
-    client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+    base_url = os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
+    client = OpenAI(api_key=api_key, base_url=base_url)
     user_msg = json.dumps(
         {"current_spec": current_spec, "revision_request": user_request},
         ensure_ascii=False,

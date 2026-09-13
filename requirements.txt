@@ -28,9 +28,9 @@ fpdf2
 openai>=1.12.0
 numpy<2.3
 fal-client
-uvloop
+uvloop; sys_platform != 'win32'
 loguru
-memray
+memray; sys_platform != 'win32'
 sentry-sdk[fastapi]
 apprise
 diskcache

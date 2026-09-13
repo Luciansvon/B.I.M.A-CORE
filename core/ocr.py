@@ -61,13 +61,14 @@ def extract_text_vlm(image_bytes: bytes) -> str:
     from config import VISUAL_MODEL_NAME
     from core.model_router import openrouter_extra_body
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("NINEROUTER_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY tidak tersedia untuk VLM OCR")
+        raise RuntimeError("Router API key tidak tersedia untuk VLM OCR")
 
     mime = _detect_image_mime(image_bytes)
     b64 = base64.b64encode(image_bytes).decode()
-    client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+    base_url = os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
+    client = OpenAI(api_key=api_key, base_url=base_url)
     resp = client.chat.completions.create(
         model=VISUAL_MODEL_NAME,
         extra_body=openrouter_extra_body("visual"),

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from core import saham_history as hist
@@ -33,6 +35,28 @@ def _fake_snapshot_factory(ticker_map):
             raise value
         return value
     return _snap
+
+
+def _trade_entry(
+    *,
+    ticker: str,
+    market: str,
+    action: str,
+    realized_pnl: float | None,
+) -> hist.TradeLogEntry:
+    return hist.TradeLogEntry(
+        ticker=ticker,
+        market=market,
+        action=action,
+        qty=100.0,
+        price=5_000.0,
+        score=50,
+        verdict="TEST",
+        reasoning="test",
+        realized_pnl=realized_pnl,
+        cash_after=10_000_000.0,
+        equity_after=10_000_000.0,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -164,6 +188,106 @@ def test_history_log_and_query_roundtrip():
     assert trades[0]["ticker"] == "BBCA.JK"
     assert trades[0]["action"] == "BUY"
     assert trades[0]["realized_pnl"] is None
+
+
+def test_trade_summary_splits_profit_loss_and_limits_recent():
+    hist.log_trade(
+        _trade_entry(
+            ticker="BBCA.JK", market="idx", action="SELL", realized_pnl=120_000.0
+        )
+    )
+    hist.log_trade(
+        _trade_entry(
+            ticker="BBNI.JK", market="idx", action="SELL", realized_pnl=-40_000.0
+        )
+    )
+    hist.log_trade(
+        _trade_entry(
+            ticker="BTC-USD", market="crypto", action="BUY", realized_pnl=None
+        )
+    )
+
+    summary = hist.get_trade_summary("idx")
+    recent = hist.get_recent_trades(limit=2)
+
+    assert summary == {
+        "total_profit": 120_000.0,
+        "total_loss": -40_000.0,
+        "realized_pnl": 80_000.0,
+        "sell_count": 2,
+    }
+    assert [trade["ticker"] for trade in recent] == ["BTC-USD", "BBNI.JK"]
+
+
+def test_account_report_shows_net_realized_and_floating_pnl(monkeypatch):
+    port.add_position("BBCA", 100, 5_000.0, account="paper")
+    pt._save_cash({"idx": 9_500_000.0, "global": 1_000.0, "crypto": 500.0})
+    hist.log_trade(
+        _trade_entry(
+            ticker="BBNI.JK", market="idx", action="SELL", realized_pnl=80_000.0
+        )
+    )
+    monkeypatch.setattr(
+        pt,
+        "fetch_snapshot",
+        _fake_snapshot_factory(
+            {"BBCA.JK": {"ticker": "BBCA.JK", "close": 5_500.0}}
+        ),
+    )
+
+    report = pt.build_account_report()
+
+    assert "PROFIT BERSIH TOTAL: **+Rp50.000 (+0,50%)**" in report
+    assert "Total profit jual: **+Rp80.000**" in report
+    assert "Total rugi jual: **Rp0**" in report
+    assert "Profit bersih terealisasi: **+Rp80.000**" in report
+    assert "Untung/rugi berjalan: **+Rp50.000**" in report
+    assert "Kekayaan sekarang: **Rp10.050.000**" in report
+    assert "**5 AKTIVITAS TERAKHIR**" in report
+    assert "Jual `BBNI.JK`" in report
+    assert "Simulasi ini belum menghitung fee broker dan settlement T+2." in report
+
+
+def test_account_report_does_not_guess_total_when_quote_missing(monkeypatch):
+    port.add_position("BBCA", 100, 5_000.0, account="paper")
+    pt._save_cash({"idx": 9_500_000.0, "global": 1_000.0, "crypto": 500.0})
+    monkeypatch.setattr(
+        pt,
+        "fetch_snapshot",
+        _fake_snapshot_factory({"BBCA.JK": RuntimeError("provider down")}),
+    )
+
+    report = pt.build_account_report()
+
+    assert "IDX — harga pasar belum lengkap" in report
+    assert "Profit/rugi bersih total belum bisa dihitung." in report
+    assert "PROFIT BERSIH TOTAL" not in report
+
+
+def test_money_and_percent_formatters_do_not_show_negative_zero():
+    assert pt._fmt_money(-0.001, "crypto", signed=True) == "$0,00"
+    assert pt._fmt_percent(-0.001) == "+0,00%"
+
+
+def test_daily_report_uses_detailed_account_summary(monkeypatch):
+    monkeypatch.setattr(pt, "fetch_snapshot", _fake_snapshot_factory({}))
+
+    report = pt.build_daily_report()
+
+    assert "DOMPET ANISA — PAPER TRADING" in report
+    assert "TRANSAKSI HARI INI" in report
+    assert "Modal awal:" in report
+    assert "HASIL BERSIH TOTAL:" in report
+
+
+def test_command_report_uses_shared_account_builder(monkeypatch):
+    from core import saham_commands as commands
+
+    monkeypatch.setattr(pt, "build_account_report", lambda: "shared-report")
+
+    report = asyncio.run(commands._build_paper_portfolio_report())
+
+    assert report == "shared-report"
 
 
 def test_portfolio_real_and_paper_accounts_are_isolated():

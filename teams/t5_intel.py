@@ -1,8 +1,13 @@
+import ast
 import os
 import logging
 import httpx
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
 
 from scrapling.fetchers import Fetcher, StealthyFetcher
 from crewai import Agent
@@ -19,6 +24,11 @@ from tools.agent_reach_tool import XReachTool, JinaReaderTool
 logger = logging.getLogger('bima_core')
 
 search_tool = SerperDevTool()
+news_search_tool = SerperDevTool(
+    country="id",
+    locale="id",
+    search_type="news",
+)
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 
@@ -386,6 +396,297 @@ def set_search_cache(query: str, result: str):
 
 init_cache_db()
 
+
+def _normalize_search_query(query: str) -> str:
+    normalized = (query or "").strip()
+    while (
+        len(normalized) >= 2
+        and normalized[0] == normalized[-1]
+        and normalized[0] in {'"', "'"}
+    ):
+        normalized = normalized[1:-1].strip()
+    return normalized
+
+
+def _search_result_has_items(result: object) -> bool:
+    payload = result
+    if isinstance(result, str):
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                payload = parser(result)
+                break
+            except (ValueError, SyntaxError, json.JSONDecodeError):
+                continue
+
+    if isinstance(payload, dict):
+        result_keys = (
+            "organic",
+            "news",
+            "places",
+            "images",
+            "answerBox",
+            "knowledgeGraph",
+        )
+        return any(bool(payload.get(key)) for key in result_keys)
+
+    return bool(result and len(str(result)) > 50)
+
+
+_NEWS_QUERY_PATTERN = re.compile(
+    r"\b(berita|news|kabar|headline)\b",
+    re.IGNORECASE,
+)
+_NEWS_PREVIEW_PATTERN = re.compile(
+    r"\b(live|jadwal|prediksi|preview|siaran langsung|live streaming)\b",
+    re.IGNORECASE,
+)
+_NEWS_COMPLETION_PATTERN = re.compile(
+    r"\b(hasil|juara|menang|kalahkan|skor akhir|usai|selesai)\b",
+    re.IGNORECASE,
+)
+_TITLE_STOPWORDS = {
+    "dan",
+    "dari",
+    "di",
+    "final",
+    "hasil",
+    "hari",
+    "jadwal",
+    "live",
+    "menang",
+    "pada",
+    "prediksi",
+    "siaran",
+    "skor",
+    "streaming",
+    "tanggal",
+    "vs",
+    "yang",
+    "juara",
+}
+_NEWS_QUERY_STOPWORDS = {
+    "berita",
+    "headline",
+    "hari",
+    "ini",
+    "kabar",
+    "news",
+    "terbaru",
+    "terkini",
+    "update",
+}
+
+
+def _is_news_query(query: str) -> bool:
+    return bool(_NEWS_QUERY_PATTERN.search(query or ""))
+
+
+def _news_query_terms(query: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", (query or "").lower())
+        if len(token) >= 2
+        and not token.isdigit()
+        and token not in _NEWS_QUERY_STOPWORDS
+    }
+
+
+def _parse_search_payload(result: object) -> dict:
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(result)
+            except (ValueError, SyntaxError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+    return {}
+
+
+def _news_age_hours(
+    date_text: str,
+    now: datetime | None = None,
+) -> float | None:
+    value = (date_text or "").strip()
+    if not value:
+        return None
+
+    normalized = value.lower().replace(",", ".")
+    relative_match = re.search(
+        r"(\d+(?:\.\d+)?)\s*"
+        r"(detik|second|seconds|menit|minute|minutes|"
+        r"jam|hour|hours|hari|day|days)",
+        normalized,
+    )
+    if relative_match:
+        amount = float(relative_match.group(1))
+        unit = relative_match.group(2)
+        if unit in {"detik", "second", "seconds"}:
+            return amount / 3600
+        if unit in {"menit", "minute", "minutes"}:
+            return amount / 60
+        if unit in {"jam", "hour", "hours"}:
+            return amount
+        return amount * 24
+    if normalized in {"kemarin", "yesterday"}:
+        return 24
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    published: datetime | None = None
+    try:
+        published = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            published = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            pass
+
+    if published is None:
+        translated = normalized
+        month_names = {
+            "januari": "january",
+            "februari": "february",
+            "maret": "march",
+            "mei": "may",
+            "juni": "june",
+            "juli": "july",
+            "agustus": "august",
+            "oktober": "october",
+            "desember": "december",
+        }
+        for indonesia, english in month_names.items():
+            translated = translated.replace(indonesia, english)
+        for date_format in (
+            "%d %B %Y",
+            "%d %b %Y",
+            "%B %d. %Y",
+            "%b %d. %Y",
+        ):
+            try:
+                published = datetime.strptime(translated, date_format)
+                break
+            except ValueError:
+                continue
+
+    if published is None:
+        return None
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=current.tzinfo)
+    return (current - published.astimezone(current.tzinfo)).total_seconds() / 3600
+
+
+def _title_terms(title: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", (title or "").lower())
+        if len(token) > 2
+        and not token.isdigit()
+        and token not in _TITLE_STOPWORDS
+    }
+
+
+def _suppress_stale_event_previews(items: list[dict]) -> list[dict]:
+    completed_terms = [
+        _title_terms(str(item.get("title", "")))
+        for item in items
+        if _NEWS_COMPLETION_PATTERN.search(str(item.get("title", "")))
+    ]
+    if not completed_terms:
+        return items
+
+    filtered = []
+    for item in items:
+        title = str(item.get("title", ""))
+        if not _NEWS_PREVIEW_PATTERN.search(title):
+            filtered.append(item)
+            continue
+        preview_terms = _title_terms(title)
+        matches_finished_event = any(
+            len(preview_terms & terms) >= 2
+            and len(preview_terms & terms)
+            / max(1, min(len(preview_terms), len(terms)))
+            >= 0.75
+            for terms in completed_terms
+        )
+        if not matches_finished_event:
+            filtered.append(item)
+    return filtered
+
+
+def _filter_recent_news_results(items: list[dict]) -> list[dict]:
+    fresh = []
+    seen_links = set()
+    for item in items:
+        age_hours = _news_age_hours(str(item.get("date", "")))
+        link = str(item.get("link", ""))
+        if age_hours is None or age_hours < -1 or age_hours > 24:
+            continue
+        if link and link in seen_links:
+            continue
+        if link:
+            seen_links.add(link)
+        fresh.append(item)
+    return _suppress_stale_event_previews(fresh)
+
+
+def _tavily_news_results(query: str) -> list[dict]:
+    if not TAVILY_API_KEY:
+        return []
+    try:
+        response = httpx.post(
+            "https://api.tavily.com/search",
+            json={
+                "api_key": TAVILY_API_KEY,
+                "query": query,
+                "search_depth": "basic",
+                "topic": "news",
+                "time_range": "day",
+                "country": "indonesia",
+                "max_results": 5,
+            },
+            timeout=15,
+        )
+        if response.status_code != 200:
+            return []
+        results = []
+        query_terms = _news_query_terms(query)
+        for item in response.json().get("results", []):
+            content_terms = set(
+                re.findall(
+                    r"[a-z0-9]+",
+                    (
+                        f"{item.get('title', '')} "
+                        f"{item.get('content', '')}"
+                    ).lower(),
+                )
+            )
+            if query_terms and not query_terms.intersection(content_terms):
+                continue
+            link = str(item.get("url", ""))
+            results.append(
+                {
+                    "title": item.get("title", ""),
+                    "link": link,
+                    "snippet": item.get("content", ""),
+                    "date": (
+                        item.get("published_date")
+                        or item.get("publishedDate")
+                        or ""
+                    ),
+                    "source": urlparse(link).netloc,
+                }
+            )
+        return results
+    except Exception as e:
+        logger.warning(f"[INTEL] Tavily news cross-check gagal: {e}")
+        return []
+
+
 class SmartSearchTool(BaseTool):
     name: str = "Smart Search Tool"
     description: str = """Pencarian cerdas dengan auto-retry. Otomatis coba berbagai sumber.
@@ -394,11 +695,16 @@ class SmartSearchTool(BaseTool):
 
     def _run(self, query: str) -> str:
         import time
+        query = _normalize_search_query(query)
+        is_news_query = _is_news_query(query)
         cache_key = query.lower().strip()
+        if is_news_query:
+            cache_key = f"news:v2:{cache_key}"
         cached = get_search_cache(cache_key)
         if cached:
             ts, cached_result = cached
-            if time.time() - ts < 3600:
+            cache_ttl = 300 if is_news_query else 3600
+            if time.time() - ts < cache_ttl:
                 return f"[DARI CACHE]\n{cached_result}"
 
         # Augmentasi query untuk pertanyaan harga: arahkan Serper ke listing marketplace.
@@ -410,14 +716,49 @@ class SmartSearchTool(BaseTool):
             search_query = f"{query} site:tokopedia.com OR site:shopee.co.id OR site:bukalapak.com"
 
         # Chain 1: Serper (Google Search) — paling reliable
+        serper_result = None
         try:
-            result = search_tool.run(search_query=search_query)
-            if result and len(str(result)) > 50:
-                result_str = str(result)
+            search_kwargs = {"search_query": search_query}
+            if is_news_query:
+                search_kwargs["search_type"] = "news"
+            active_search_tool = (
+                news_search_tool if is_news_query else search_tool
+            )
+            serper_result = active_search_tool.run(**search_kwargs)
+            if not is_news_query and _search_result_has_items(serper_result):
+                result_str = str(serper_result)
                 set_search_cache(cache_key, result_str)
                 return result_str
         except Exception as e:
             print(f"[INTEL] Serper error/habis: {e}")
+
+        if is_news_query:
+            serper_news = _parse_search_payload(serper_result).get("news", [])
+            tavily_news = _tavily_news_results(query)
+            fresh_news = _filter_recent_news_results(
+                [
+                    item
+                    for item in [*serper_news, *tavily_news]
+                    if isinstance(item, dict)
+                ]
+            )
+            if fresh_news:
+                result_str = str(
+                    {
+                        "searchParameters": {
+                            "q": query,
+                            "type": "news",
+                            "timeRange": "24h",
+                        },
+                        "news": fresh_news,
+                    }
+                )
+                set_search_cache(cache_key, result_str)
+                return result_str
+            return (
+                f"❌ Tidak ada berita terverifikasi dalam 24 jam terakhir "
+                f"untuk query: '{query}'."
+            )
 
         # Chain 2: Tavily API (Cadangan jika Serper gagal/habis limit)
         if TAVILY_API_KEY:

@@ -3,9 +3,10 @@ import logging
 from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import BaseCallbackHandler
 from dotenv import load_dotenv
-from core.model_router import DAILY_MODEL, model_profile
 
 load_dotenv()
+
+from core.model_router import DAILY_MODEL, USE_9ROUTER, model_profile
 
 logger = logging.getLogger('bima_core')
 
@@ -42,8 +43,19 @@ def compress_context(text: str, target_ratio: float = 0.4) -> str:
         logger.debug(f"[HEADROOM] Compression failed (non-fatal): {e}")
         return text
 
-# Menggunakan OpenRouter API (sesuai config.py Anda yang lama)
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+# Menggunakan 9Router API
+ROUTER_API_KEY = (
+    os.environ.get("NINEROUTER_API_KEY")
+    or os.environ.get("ROUTER_API_KEY")
+    or os.environ.get("OPENROUTER_API_KEY")
+)
+_default_base_url = "http://127.0.0.1:20128/v1"
+ROUTER_BASE_URL = (
+    os.environ.get("NINEROUTER_BASE_URL")
+    or os.environ.get("ROUTER_BASE_URL")
+    or os.environ.get("OPENROUTER_BASE_URL")
+    or _default_base_url
+)
 
 
 def get_langchain_llm(
@@ -54,15 +66,16 @@ def get_langchain_llm(
     reasoning_effort: str | None = None,
 ) -> ChatOpenAI:
     # LangChain ChatOpenAI kirim model_name apa adanya ke OpenRouter,
-    # JANGAN pakai prefix "openrouter/" (itu khusus CrewAI/LiteLLM).
-    if model_name.startswith("openrouter/"):
+    # JANGAN pakai prefix "openrouter/" (itu khusus CrewAI/LiteLLM),
+    # KECUALI jika lewat 9Router proxy yang membutuhkan prefix penyedia.
+    if model_name.startswith("openrouter/") and not USE_9ROUTER:
         model_name = model_name.split("/", 1)[1]
 
     # T1-D: opt-in OpenRouter usage tracking — cost muncul di response.usage.cost
     kwargs = {
         "model": model_name,
-        "openai_api_key": OPENROUTER_API_KEY,
-        "openai_api_base": "https://openrouter.ai/api/v1",
+        "openai_api_key": ROUTER_API_KEY,
+        "openai_api_base": ROUTER_BASE_URL,
         "max_retries": 2,
     }
     if max_tokens is not None:
@@ -70,7 +83,7 @@ def get_langchain_llm(
     if reasoning_effort:
         kwargs["reasoning_effort"] = reasoning_effort
     extra_body: dict[str, object] = {}
-    if fallbacks:
+    if fallbacks and not USE_9ROUTER:
         extra_body["models"] = [model_name, *fallbacks]
     if os.environ.get("ENABLE_COST_GUARDRAILS", "false").lower() == "true":
         extra_body["usage"] = {"include": True}

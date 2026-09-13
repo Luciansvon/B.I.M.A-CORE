@@ -1,10 +1,10 @@
-"""Tests untuk perbaikan loop approval komentar Threads & LRU context store.
+"""Tests untuk perbaikan loop approval komentar Threads.
 
 Bug yang dicegah:
   - Komentar yang ditolak/timeout gak pernah ditandai 'replied' → scanner (tiap
     5 menit) nge-prompt komentar yang sama selamanya. Fix: simpan reply_id di
     setiap keputusan terminal (termasuk tolak/timeout).
-  - _draft_contexts dict tumbuh tanpa batas → memory leak. Fix: LRU bounded.
+  - Konteks draf global bisa bocor antar-request → jangan simpan global.
 """
 from unittest import mock
 
@@ -13,30 +13,8 @@ import pytest
 import core.threads_commands as tc
 
 
-def test_bounded_context_store_evicts_oldest():
-    store = tc._BoundedContextStore(max_size=3)
-    store["a"] = "1"
-    store["b"] = "2"
-    store["c"] = "3"
-    store["d"] = "4"  # harus buang "a" (paling lama)
-    assert "a" not in store
-    assert list(store.keys()) == ["b", "c", "d"]
-    assert len(store) == 3
-
-
-def test_bounded_context_store_reinsert_refreshes_lru():
-    store = tc._BoundedContextStore(max_size=2)
-    store["a"] = "1"
-    store["b"] = "2"
-    store["a"] = "1b"  # akses ulang "a" → jadi paling baru
-    store["c"] = "3"   # harus buang "b", bukan "a"
-    assert "b" not in store
-    assert "a" in store and store["a"] == "1b"
-
-
-def test_module_draft_contexts_is_bounded():
-    # _draft_contexts global harus instance bounded store, bukan dict biasa.
-    assert isinstance(tc._draft_contexts, tc._BoundedContextStore)
+def test_module_has_no_cross_request_draft_context_store():
+    assert not hasattr(tc, "_draft_contexts")
 
 
 @pytest.mark.asyncio
@@ -52,8 +30,11 @@ async def test_rejected_comment_is_marked_replied(monkeypatch):
                         mock.AsyncMock(return_value=(False, "")))
     monkeypatch.setattr(tc, "generate_bima_draft",
                         mock.AsyncMock(return_value="draf balasan"))
-    # request_permission diimpor ke namespace threads_commands
-    monkeypatch.setattr(tc, "request_permission", mock.AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        tc,
+        "request_permission_with_revision",
+        mock.AsyncMock(return_value=(False, None)),
+    )
     # cegah panggilan jaringan ke agentmemory
     monkeypatch.setattr("core.agentmemory_client.recall",
                         mock.AsyncMock(return_value=None), raising=False)

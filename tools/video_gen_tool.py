@@ -49,11 +49,11 @@ class VideoGenTool(BaseTool):
         return f"FAILED|OpenRouter: {result[7:100]} / fal.ai: {fal_result[7:100]}"
 
     def _try_openrouter(self, prompt: str) -> str:
-        api_key = os.environ.get("OPENROUTER_API_KEY")
+        from core.model_router import get_router_credentials
+        api_key, base = get_router_credentials()
+        base = base.rstrip("/")
         if not api_key:
-            return "FAILED|OPENROUTER_API_KEY belum diset"
-
-        base = "https://openrouter.ai/api/v1"
+            return "FAILED|Router API Key belum diset"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

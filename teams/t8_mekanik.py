@@ -187,10 +187,12 @@ Perbaiki kode tersebut.
 KEMBALIKAN HANYA kode Python yang sudah diperbaiki, tanpa penjelasan, tanpa markdown backticks."""
 
                         try:
+                            from core.model_router import get_router_credentials
+                            _m_key, _m_base = get_router_credentials()
                             resp = httpx.post(
-                                "https://openrouter.ai/api/v1/chat/completions",
+                                f"{_m_base.rstrip('/')}/chat/completions",
                                 headers={
-                                    "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY')}",
+                                    "Authorization": f"Bearer {_m_key}",
                                     "Content-Type": "application/json"
                                 },
                                 json={

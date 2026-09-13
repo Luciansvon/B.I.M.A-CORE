@@ -21,7 +21,17 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
-const { shouldHandleMessage } = require('./message_filter');
+const {
+    shouldHandleMessage,
+    resolveMessageContext,
+    resolveReplyChatId,
+} = require('./message_filter');
+const {
+    THINKING_PREVIEW,
+    formatAnisaResponse,
+    deliverFirstChunk,
+    resolveSentPreview,
+} = require('./message_preview');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 // ============================================================
@@ -532,6 +542,9 @@ client.on('disconnected', (reason) => {
 // MESSAGE HANDLER
 // ============================================================
 async function handleMessage(msg) {
+    let stage = 'filter';
+    let reply = content => msg.reply(content);
+    let previewMessage = null;
     try {
         const text = msg.body?.trim() || '';
         const lower = text.toLowerCase();
@@ -543,8 +556,22 @@ async function handleMessage(msg) {
         // tidak bisa masuk ke catch lalu memicu recursive error reply.
         if (!shouldHandleMessage(msg, prefix, sttActive)) return;
 
-        const chat = await msg.getChat();
-        if (chat.isGroup) return;
+        stage = 'chat-context';
+        const { chatId, isGroup, chat } = await resolveMessageContext(
+            msg,
+            error => log('WARN', `Chat context fallback: ${error.message || error}`),
+        );
+        if (!chatId || isGroup) return;
+        stage = 'reply-target';
+        const replyChatId = await resolveReplyChatId(
+            client,
+            chatId,
+            error => log('WARN', `Reply target fallback: ${error.message || error}`),
+        );
+        reply = (content, options = {}) => (
+            client.sendMessage(replyChatId, content, options)
+        );
+        const replyMessage = { reply };
 
         // Resolve sender ke nomor telepon (handle @lid hash WhatsApp)
         let senderPhone = '';
@@ -578,12 +605,12 @@ async function handleMessage(msg) {
             const pw = afterPrefix.substring('login'.length).trim();
             const effPw = getEffectivePassword();
             if (!effPw) {
-                await msg.reply('⚠️ Password belum di-set di server. Hubungi admin.');
+                await reply('⚠️ Password belum di-set di server. Hubungi admin.');
             } else if (pw === effPw) {
                 login(msg.from, true);
-                await msg.reply(`🔓 Login OK. Session permanen — pakai \`${prefix} logout\` kalau mau keluar.\n\nLanjut: \`${prefix} <pesan>\``);
+                await reply(`🔓 Login OK. Session permanen — pakai \`${prefix} logout\` kalau mau keluar.\n\nLanjut: \`${prefix} <pesan>\``);
             } else {
-                await msg.reply('❌ Password salah.');
+                await reply('❌ Password salah.');
             }
             return;
         }
@@ -591,33 +618,33 @@ async function handleMessage(msg) {
         // Logout: "/bot logout"
         if (afterLower === 'logout') {
             logout(msg.from);
-            await msg.reply('🔒 Logout.');
+            await reply('🔒 Logout.');
             return;
         }
 
         // Gate: wajib login kalau password di-set
         if (getEffectivePassword() && !isAuthed(msg.from)) {
-            await msg.reply(`🔒 Login dulu: \`${prefix} login <password>\``);
+            await reply(`🔒 Login dulu: \`${prefix} login <password>\``);
             return;
         }
 
         // Public commands (setelah lolos gate)
         if (afterLower === 'help' || afterLower === 'bantuan') {
-            await msg.reply(getHelpMessage()); return;
+            await reply(getHelpMessage()); return;
         }
         if (afterLower === 'ping') {
             const t = Date.now();
             try {
                 await axios.get(`${CONFIG.bridgeUrl}/health`, { timeout: 5000 });
-                await msg.reply(`🏓 Pong! (${Date.now() - t}ms)`);
-            } catch { await msg.reply('🔌 Backend tidak merespons.'); }
+                await reply(`🏓 Pong! (${Date.now() - t}ms)`);
+            } catch { await reply('🔌 Backend tidak merespons.'); }
             return;
         }
         if (afterLower === 'status') {
             try {
                 const r = await axios.get(`${CONFIG.bridgeUrl}/health`, { timeout: 5000 });
-                await msg.reply(`📊 Backend: OK | Busy: ${r.data.busy ? 'Ya' : 'Tidak'}`);
-            } catch { await msg.reply('🔌 Backend tidak merespons.'); }
+                await reply(`📊 Backend: OK | Busy: ${r.data.busy ? 'Ya' : 'Tidak'}`);
+            } catch { await reply('🔌 Backend tidak merespons.'); }
             return;
         }
         // Arm STT 60 detik — voice note berikutnya bakal di-transcribe via faster-whisper.
@@ -626,21 +653,21 @@ async function handleMessage(msg) {
         if (['stt', 'tts', 'voice', 'suara', 'v', 'note', 'vn'].includes(afterLower)) {
             sttArmed.set(msg.from, Date.now() + STT_ARM_TTL_MS);
             log('INFO', `STT armed for ${msg.from} (TTL ${STT_ARM_TTL_MS / 1000}s)`);
-            await msg.reply('🎤 Voice mode aktif 60 detik. Kirim voice note — Anisa bales pakai voice juga.');
+            await reply('🎤 Voice mode aktif 60 detik. Kirim voice note — Anisa bales pakai voice juga.');
             return;
         }
 
         // Admin commands — semua require user udah lolos gate (whitelist + login kalo password aktif)
         if (afterLower === 'wl' || afterLower.startsWith('wl ')) {
-            await handleWlCommand(msg, afterPrefix.substring(2).trim(), senderPhone);
+            await handleWlCommand(replyMessage, afterPrefix.substring(2).trim(), senderPhone);
             return;
         }
         if (afterLower === 'password' || afterLower.startsWith('password ')) {
-            await handlePasswordCommand(msg, afterPrefix.substring(8).trim());
+            await handlePasswordCommand(replyMessage, afterPrefix.substring(8).trim());
             return;
         }
         if (afterLower === 'session' || afterLower.startsWith('session ')) {
-            await handleSessionCommand(msg, afterPrefix.substring(7).trim(), senderPhone);
+            await handleSessionCommand(replyMessage, afterPrefix.substring(7).trim(), senderPhone);
             return;
         }
 
@@ -649,7 +676,23 @@ async function handleMessage(msg) {
         if (!body && !msg.hasMedia) return;
         if (isRateLimited(senderId)) return;
 
-        await chat.sendStateTyping();
+        stage = 'thinking-preview';
+        previewMessage = await reply(
+            THINKING_PREVIEW,
+            { waitUntilMsgSent: true },
+        );
+        if (!previewMessage) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+            previewMessage = await resolveSentPreview(
+                client,
+                replyChatId,
+                previewMessage,
+                THINKING_PREVIEW,
+                error => log('WARN', `Preview lookup fallback: ${error.message || error}`),
+            );
+        }
+
+        if (chat) await chat.sendStateTyping().catch(() => {});
 
         // Download attachment
         const attachmentPaths = [];
@@ -670,20 +713,26 @@ async function handleMessage(msg) {
         log('INFO', `→ Anisa: "${perintah.substring(0, 80) || '[voice note → STT]'}"`);
 
         // Keep "typing..." indicator hidup selama LangGraph proses (re-trigger tiap 8s)
-        const typingInterval = setInterval(() => {
+        const typingInterval = chat ? setInterval(() => {
             chat.sendStateTyping().catch(() => {});
-        }, 8000);
+        }, 8000) : null;
 
         let result;
         try {
+            stage = 'bridge-request';
             result = await sendToAnisa(perintah, attachmentPaths);
         } finally {
-            clearInterval(typingInterval);
-            await chat.clearState().catch(() => {});
+            if (typingInterval) clearInterval(typingInterval);
+            if (chat) await chat.clearState().catch(() => {});
         }
 
         if (!result?.response) {
-            await msg.reply('😵 Tidak ada respons. Coba lagi.');
+            await deliverFirstChunk(
+                previewMessage,
+                formatAnisaResponse('😵 Tidak ada respons. Coba lagi.'),
+                reply,
+                error => log('WARN', `Preview edit fallback: ${error.message || error}`),
+            );
             return;
         }
 
@@ -696,12 +745,25 @@ async function handleMessage(msg) {
 
         let chunks = [];
         if (!skipTextReply) {
-            chunks = smartChunks(result.response);
-            await msg.reply(chunks[0]);
+            stage = 'final-response';
+            chunks = smartChunks(formatAnisaResponse(result.response));
+            await deliverFirstChunk(
+                previewMessage,
+                chunks[0],
+                reply,
+                error => log('WARN', `Preview edit fallback: ${error.message || error}`),
+            );
             for (let i = 1; i < chunks.length; i++) {
                 await new Promise(r => setTimeout(r, 500));
-                await chat.sendMessage(chunks[i]);
+                await reply(chunks[i]);
             }
+        } else {
+            await deliverFirstChunk(
+                previewMessage,
+                formatAnisaResponse('🎤 Jawaban dikirim lewat voice note.'),
+                reply,
+                error => log('WARN', `Preview edit fallback: ${error.message || error}`),
+            );
         }
 
         // Kirim voice note kalau ada
@@ -709,7 +771,7 @@ async function handleMessage(msg) {
             try {
                 const voiceMedia = MessageMedia.fromFilePath(voiceFile);
                 await new Promise(r => setTimeout(r, 300));
-                await chat.sendMessage(voiceMedia, { sendAudioAsVoice: true });
+                await reply(voiceMedia, { sendAudioAsVoice: true });
             } catch (e) { log('WARN', `Gagal kirim voice note: ${e.message}`); }
         }
 
@@ -720,7 +782,7 @@ async function handleMessage(msg) {
                     if (fs.existsSync(fp)) {
                         const media = MessageMedia.fromFilePath(fp);
                         await new Promise(r => setTimeout(r, 300));
-                        await chat.sendMessage(media, { caption: `📎 ${path.basename(fp)}` });
+                        await reply(media, { caption: `📎 ${path.basename(fp)}` });
                     }
                 } catch (e) { log('WARN', `Gagal kirim file: ${e.message}`); }
             }
@@ -728,8 +790,18 @@ async function handleMessage(msg) {
 
         log('INFO', `✓ ${chunks.length} chunk, ${result.output_files?.length || 0} files${voiceFile ? ` + voice(${voiceMode})` : ''}`);
     } catch (error) {
-        log('ERROR', `${error.message}`);
-        try { await msg.reply('❌ WhatsApp gagal memproses pesan. Coba sekali lagi.'); } catch {}
+        log('ERROR', `${stage}: ${error.stack || error.message || error}`);
+        try {
+            await deliverFirstChunk(
+                previewMessage,
+                formatAnisaResponse('❌ WhatsApp gagal memproses pesan. Coba sekali lagi.'),
+                reply,
+                previewError => log(
+                    'WARN',
+                    `Preview error fallback: ${previewError.message || previewError}`,
+                ),
+            );
+        } catch {}
     }
 }
 

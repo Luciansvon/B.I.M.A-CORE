@@ -10,7 +10,6 @@ def test_threads_reply_prompt_contains_context_and_style_rules():
         reply_username="user123",
         reply_text="wkwk relate bgt",
         post_text="laptop gua kipasnya udah kayak nyerah",
-        viral_context="\n=== POLA VIRAL ===\npendek, punchy\n",
     )
 
     assert "@user123" in prompt
@@ -68,7 +67,11 @@ async def test_reply_to_comment_flow_sends_human_like_prompt_to_generator(monkey
     monkeypatch.setattr(tc, "evaluate_auto_reply", mock.AsyncMock(return_value=(False, "")))
     monkeypatch.setattr(tc, "generate_bima_draft", fake_generate_bima_draft)
     monkeypatch.setattr(tc, "_save_replied_comment", lambda rid: None)
-    monkeypatch.setattr(tc, "request_permission", mock.AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        tc,
+        "request_permission_with_revision",
+        mock.AsyncMock(return_value=(False, None)),
+    )
     monkeypatch.setattr("core.agentmemory_client.recall", mock.AsyncMock(return_value=None), raising=False)
 
     result = await tc.reply_to_comment_flow(

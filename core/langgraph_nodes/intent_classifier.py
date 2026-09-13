@@ -68,13 +68,24 @@ _VIDEO_GEN = re.compile(
 # Image generation: trigger eksplisit "bikin/buat/generate gambar" atau slash command.
 # Cek SEBELUM generic seniman patterns supaya gen image gak ke-route ke HTML pipeline.
 _IMAGE_GEN = re.compile(
-    # Cabang A: verba + noun ("bikin gambar", "generate image", "buat ilustrasi", dll)
-    r'\b(bikin|buat|generate|render|visualis\w+|illustrat\w+|ilustras\w+)\b.{0,40}\b(gambar|image|ilustrasi|picture|art|foto|illustration)\b'
+    # Cabang A: verba + noun ("bikin gambar", "generate image", "buatkan ilustrasi", dll)
+    r'\b(bikin\w*|buat\w*|generate|render|visualis\w+|illustrat\w+|ilustras\w+)\b.{0,40}\b(gambar|image|ilustrasi|picture|art|foto|illustration)\b'
     # Cabang B: verba khusus image gen yang udah implisit ("gambarin X", "gambarkan Y")
     r'|\bgambar(in|kan|kn)\b'
     r'|\billustrate\b'
     # Cabang C: slash command
     r'|^\s*/anisa\s+(gambar|image|foto)\b',
+    re.IGNORECASE,
+)
+
+_IMAGE_NEGATED = re.compile(
+    r'\b(bukan|jangan|gak|ga|tidak|nggak|bukanlah)\b.{0,25}\b(gambar|foto|image|ilustrasi)\b',
+    re.IGNORECASE,
+)
+
+_HTML_GEN = re.compile(
+    r'\b(bikin\w*|buat\w*|generate|rancang\w*|desain\w*)\b.{0,40}\b(html|web|dashboard|landing\s+page|tampilan\s+web|halaman\s+web)\b'
+    r'|\b(html|dashboard|landing\s+page)\b',
     re.IGNORECASE,
 )
 
@@ -146,11 +157,16 @@ def classify_intent(user_request: str, has_attachment: bool) -> tuple[list[str],
     if _RUN_CODE.search(text):
         return ["mekanik"], 0.90, "eksekusi kode"
 
+    # HTML / Web / Dashboard gen
+    if _HTML_GEN.search(text):
+        return ["seniman"], 0.92, "html gen"
+
     # Video gen DULU karena lebih spesifik (kata "video" >> "gambar" prio)
     if _VIDEO_GEN.search(text):
         return ["seniman"], 0.93, "video gen"
 
-    if _IMAGE_GEN.search(text):
+    image_negated = bool(_IMAGE_NEGATED.search(text))
+    if not image_negated and _IMAGE_GEN.search(text):
         return ["seniman"], 0.93, "image gen"
 
     if _PROMPT_OPTIMIZE.search(text):

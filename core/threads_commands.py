@@ -3,43 +3,43 @@ import re
 import logging
 import httpx
 import asyncio
-from collections import OrderedDict
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from tools.last30days_tool import Last30DaysResearchTool
 from crewai.tools import BaseTool
 from core.langgraph_nodes.llm_config import default_llm, get_langchain_llm
-from core.permission_gate import request_permission
+from core.model_router import THREADS_MODEL
+from core.permission_gate import request_permission_with_revision
 
 logger = logging.getLogger('bima_core.threads')
 
-# Cache global untuk menyimpan topik tren per user
-# user_id -> list of {"title": "...", "snippet": "..."}
-_cached_trends = {}
-
-# Map untuk melacak search_context_info per draf postingan agar groundings terjaga saat revisi.
-# Pakai LRU bounded biar gak bocor memori di bot yang nyala berhari-hari: tiap draf/revisi
-# nambah entri, jadi tanpa batas dict ini tumbuh terus.
-class _BoundedContextStore(OrderedDict):
-    """Dict ber-LRU sederhana — simpan maksimal `max_size` entri konteks draf,
-    entri paling lama dibuang begitu lewat batas."""
-
-    def __init__(self, max_size: int = 200):
-        super().__init__()
-        self._max_size = max_size
-
-    def __setitem__(self, key, value):
-        if key in self:
-            self.move_to_end(key)
-        super().__setitem__(key, value)
-        while len(self) > self._max_size:
-            self.popitem(last=False)
+# Cache pilihan tren hanya berlaku singkat dan sekali pakai.
+TREND_CACHE_TTL_SECONDS = 300
+_cached_trends: dict[str, tuple[float, list[dict]]] = {}
 
 
-_draft_contexts = _BoundedContextStore(max_size=200)
+def _store_trends(user_id: str, trends: list[dict], now: float | None = None) -> None:
+    _cached_trends[user_id] = (time.monotonic() if now is None else now, trends)
 
-# Inisialisasi Threads-specific LLM (default: Claude Sonnet 5 via OpenRouter)
-threads_llm = get_langchain_llm(os.environ.get("THREADS_LLM_MODEL", "anthropic/claude-sonnet-5"), max_tokens=1000)
+
+def _consume_trends(user_id: str, now: float | None = None) -> list[dict] | None:
+    cached = _cached_trends.pop(user_id, None)
+    if not cached:
+        return None
+    cached_at, trends = cached
+    current = time.monotonic() if now is None else now
+    if current - cached_at > TREND_CACHE_TTL_SECONDS:
+        return None
+    return trends
+
+# Inisialisasi Threads-specific LLM (default: Gemini 3.8 Flash High via 9Router)
+threads_llm = get_langchain_llm(
+    os.environ.get("THREADS_LLM_MODEL", THREADS_MODEL),
+    max_tokens=1000,
+)
 
 BIMA_SYSTEM_PROMPT = """Role: Lu adalah anak muda Gen-Z, tech enthusiast, dan gadget geek umum yang nulis postingan buat Threads. Lu suka ngulik teknologi, game PC/konsol, kopi, musik, dan random thoughts sehari-hari.
 
@@ -305,7 +305,7 @@ async def fetch_indonesian_trends() -> list[dict]:
         logger.warning("[THREADS] SERPER_API_KEY tidak ditemukan untuk pencarian tren.")
         return []
     
-    url = "https://google.serper.dev/search"
+    url = "https://google.serper.dev/news"
     headers = {
         "X-API-KEY": api_key,
         "Content-Type": "application/json"
@@ -313,54 +313,135 @@ async def fetch_indonesian_trends() -> list[dict]:
     
     # Kueri untuk berita viral umum & game di Indonesia
     queries = [
-        "berita viral hari ini indonesia terbaru",
-        "tren game populer indonesia terbaru 2026"
+        "berita viral Indonesia hari ini",
+        "tren game populer Indonesia hari ini",
     ]
     
     trends = []
     async with httpx.AsyncClient() as client:
         for query in queries:
             try:
-                payload = {"q": query, "num": 3, "gl": "id", "hl": "id"}
+                payload = {"q": query, "num": 5, "gl": "id", "hl": "id", "tbs": "qdr:d"}
                 resp = await client.post(url, json=payload, headers=headers, timeout=10)
                 if resp.status_code == 200:
-                    organic = resp.json().get("organic", [])
-                    for item in organic:
-                        title = item.get("title", "")
-                        snippet = item.get("snippet", "")
-                        if title and snippet:
-                            trends.append({"title": title, "snippet": snippet})
+                    trends.extend(_filter_fresh_news(resp.json().get("news", [])))
+                elif resp.status_code in {401, 403}:
+                    logger.error("[THREADS_TRENDS] Serper menolak credential API.")
+                elif resp.status_code == 429:
+                    logger.warning("[THREADS_TRENDS] Serper kena rate limit (429).")
+                elif resp.status_code >= 500:
+                    logger.warning(
+                        f"[THREADS_TRENDS] Serper sedang bermasalah ({resp.status_code})."
+                    )
+                else:
+                    logger.warning(
+                        f"[THREADS_TRENDS] Status Serper tidak terduga: {resp.status_code}."
+                    )
             except Exception as e:
                 logger.error(f"[THREADS_TRENDS] Gagal mencari query '{query}': {e}")
                 
-    return trends[:4]  # Ambil top 4 tren saja
+    unique: list[dict] = []
+    seen: set[str] = set()
+    for item in trends:
+        key = str(item.get("link") or item.get("title", "")).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique[:4]
+
+
+def _news_age_hours(date_text: str, now: datetime | None = None) -> float | None:
+    value = (date_text or "").strip()
+    if not value:
+        return None
+    lowered = value.lower()
+    if lowered in {"just now", "baru saja"}:
+        return 0.0
+    if lowered in {"yesterday", "kemarin"}:
+        return None
+
+    relative = re.search(
+        r"(\d+)\s*(minute|minutes|min|menit|hour|hours|jam|day|days|hari)\b",
+        lowered,
+    )
+    if relative:
+        amount = float(relative.group(1))
+        unit = relative.group(2)
+        if unit in {"minute", "minutes", "min", "menit"}:
+            age_hours = amount / 60
+            return age_hours if age_hours < 24 else None
+        if unit in {"hour", "hours", "jam"}:
+            return amount if amount < 24 else None
+        # Label berbasis hari dibulatkan oleh provider dan bisa sudah >24 jam.
+        return None
+
+    current = now or datetime.now(timezone.utc)
+    published = None
+    try:
+        published = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            published = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    return (current - published.astimezone(current.tzinfo)).total_seconds() / 3600
+
+
+def _filter_fresh_news(items: list[dict], max_age_hours: float = 24) -> list[dict]:
+    fresh = []
+    for item in items:
+        age_hours = _news_age_hours(str(item.get("date", "")))
+        if age_hours is None or age_hours < -1 or age_hours > max_age_hours:
+            continue
+        if item.get("title") and item.get("snippet"):
+            fresh.append(item)
+    return fresh
 
 async def search_context(topic: str) -> str:
-    """Mengambil konteks fakta dari Google Search untuk topik tertentu."""
+    """Mengambil konteks berita terverifikasi maksimal 24 jam untuk satu request."""
     api_key = os.environ.get("SERPER_API_KEY")
     if not api_key:
-        return "Tidak ada konteks internet tambahan."
+        return "Tidak ada konteks baru terverifikasi dalam 24 jam terakhir."
     
-    url = "https://google.serper.dev/search"
+    url = "https://google.serper.dev/news"
     headers = {
         "X-API-KEY": api_key,
         "Content-Type": "application/json"
     }
-    payload = {"q": topic, "num": 4, "gl": "id", "hl": "id"}
+    payload = {"q": topic, "num": 6, "gl": "id", "hl": "id", "tbs": "qdr:d"}
     
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload, headers=headers, timeout=10)
             if resp.status_code == 200:
-                organic = resp.json().get("organic", [])
+                news = _filter_fresh_news(resp.json().get("news", []))
                 context_lines = []
-                for item in organic:
-                    context_lines.append(f"- {item.get('title')}: {item.get('snippet')}")
-                return "\n".join(context_lines)
+                for item in news:
+                    source = item.get("source", "sumber tidak diketahui")
+                    date = item.get("date", "")
+                    context_lines.append(
+                        f"- {item.get('title')} ({source}, {date}): {item.get('snippet')}"
+                    )
+                if context_lines:
+                    return "\n".join(context_lines)
+            elif resp.status_code in {401, 403}:
+                logger.error("[THREADS_CONTEXT] Serper menolak credential API.")
+            elif resp.status_code == 429:
+                logger.warning("[THREADS_CONTEXT] Serper kena rate limit (429).")
+            elif resp.status_code >= 500:
+                logger.warning(
+                    f"[THREADS_CONTEXT] Serper sedang bermasalah ({resp.status_code})."
+                )
+            else:
+                logger.warning(
+                    f"[THREADS_CONTEXT] Status Serper tidak terduga: {resp.status_code}."
+                )
     except Exception as e:
         logger.error(f"[THREADS_CONTEXT] Gagal mencari konteks untuk '{topic}': {e}")
         
-    return "Tidak ada konteks internet tambahan."
+    return "Tidak ada konteks baru terverifikasi dalam 24 jam terakhir."
 
 
 async def url_is_fetchable(url: str, timeout: float = 8.0) -> bool:
@@ -495,8 +576,6 @@ async def publish_post_to_threads(text: str, token: str, reply_to_id: str | None
 
 async def apply_smart_revision(draft_text: str, user_reply: str, search_context_info: str = "") -> str:
     """Memproses teks balasan revisi dari Bima secara cerdas menggunakan LLM."""
-    if not search_context_info:
-        search_context_info = _draft_contexts.get(draft_text.strip(), "")
 
     # Cek apakah feedback Bima meminta pencarian/browsing baru
     detected_query = ""
@@ -524,7 +603,7 @@ Kembalikan HANYA kueri pencarian atau string kosong. Tanpa penjelasan, tanpa tan
         logger.info(f"[THREADS_REVISION] Bima meminta browsing baru untuk kueri: '{detected_query}'")
         new_context = await search_context(detected_query)
         if new_context:
-            search_context_info = f"{search_context_info}\n\n=== HASIL BROWSING BARU ({detected_query}) ===\n{new_context}"
+            search_context_info = f"=== HASIL BROWSING BARU ({detected_query}) ===\n{new_context}"
             logger.info("[THREADS_REVISION] Berhasil mendapatkan konteks browsing baru.")
 
     system_prompt = f"""Lu adalah Anisa, asisten nulis B.I.M.A Core.
@@ -594,7 +673,6 @@ Jangan memberikan penjelasan, tanda kutip bungkus di luar tag, atau kata pengant
             if len(revised_text) <= 500:
                 if len(revised_text) > 480:
                     revised_text = await shorten_draft_cleanly(revised_text)
-                _draft_contexts[revised_text.strip()] = search_context_info
                 return revised_text
             logger.warning(f"[THREADS_REVISION] Hasil revisi terlalu panjang ({len(revised_text)} karakter) pada percobaan {attempt + 1}. Retrying...")
             system_prompt += f"\nSTRICT CONSTRAINT: Your previous revision output was too long ({len(revised_text)} characters). Rewrite it to be under 500 characters!"
@@ -603,7 +681,6 @@ Jangan memberikan penjelasan, tanda kutip bungkus di luar tag, atau kata pengant
             
     # Fallback ke input as-is, truncated cleanly
     fallback_text = await shorten_draft_cleanly(clean_bima_text(user_reply))
-    _draft_contexts[fallback_text.strip()] = search_context_info
     return fallback_text
 
 async def handle_threads_command(message, args: str, bot_client) -> None:
@@ -626,7 +703,7 @@ async def handle_threads_command(message, args: str, bot_client) -> None:
             await progress.edit(content="🤷 Gagal mengambil tren. Coba ketik topiknya langsung, contoh: `!threads nilai dolar naik`")
             return
             
-        _cached_trends[user_id] = trends
+        _store_trends(user_id, trends)
         
         reply_lines = ["🔥 **Berita Viral & Tren Terkini Hari Ini:**"]
         for idx, t in enumerate(trends, 1):
@@ -657,7 +734,7 @@ async def handle_threads_command(message, args: str, bot_client) -> None:
     
     if clean_args.isdigit():
         idx = int(clean_args) - 1
-        user_cache = _cached_trends.get(user_id)
+        user_cache = _consume_trends(user_id)
         if user_cache and 0 <= idx < len(user_cache):
             selected_topic = user_cache[idx]["title"]
             selected_context = user_cache[idx]["snippet"]
@@ -674,15 +751,6 @@ async def handle_threads_command(message, args: str, bot_client) -> None:
     # Generate draf postingan Threads
     progress = await message.reply("✍️ *Sedang menulis draf postingan ala kepribadian lu...*")
     
-    viral_context = ""
-    try:
-        from core import agentmemory_client
-        memories = await agentmemory_client.recall("[VIRAL_PATTERN]", limit=3)
-        if memories:
-            viral_context = f"\n=== POLA VIRAL YANG SUDAH PIPELAJARI (Terapkan teknik/strukturnya) ===\n{memories}\n=======================================================\n"
-    except Exception as e:
-        logger.warning(f"[THREADS_GEN] Gagal mengambil memori pola viral: {e}")
-
     no_strip_prompt = ""
     if no_strip:
         no_strip_prompt = "\nConstraint: JANGAN menggunakan tanda strip (-), en-dash (–), atau em-dash (—) sama sekali dalam postingan! Gunakan tanda koma atau spasi sebagai pemisah jika diperlukan."
@@ -690,13 +758,11 @@ async def handle_threads_command(message, args: str, bot_client) -> None:
     user_prompt = f"""Topik: {selected_topic}
 Fakta/Konteks Tambahan:
 {selected_context}
-{viral_context}
 Tulis draf postingan Threads yang sangat emosional, sarkas, menggunakan singkatan gaul, memakai kata "lu" dan "gua" (tanpa kata "loe" atau "gue").{no_strip_prompt}
-Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yang sesuai agar postingan berpotensi viral!"""
+Gunakan hanya topik dan konteks request ini."""
 
     try:
         draft_text = await generate_bima_draft(user_prompt, no_strip=no_strip)
-        _draft_contexts[draft_text.strip()] = selected_context
         await progress.delete()
     except Exception as e:
         logger.error(f"[THREADS_GEN] Gagal memanggil LLM: {e}")
@@ -744,20 +810,18 @@ Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yan
     if image_url:
         details_text += f"\n\n🖼️ **Gambar Terlampir**: {image_url}"
 
-    approved = await request_permission(
+    approved, revised = await request_permission_with_revision(
         discord_user_id=user_id,
         action_type="THREADS_POST",
-        details=details_text
+        details=details_text,
+        revision_base=draft_text,
     )
     
     if not approved:
         await message.reply("❌ **Tindakan Ditolak:** Postingan Threads dibatalkan oleh Bima.")
         return
 
-    # Ambil teks revisi jika ada
-    from core.permission_gate import get_revised_text
-    revised = get_revised_text(user_id)
-    final_text = revised if revised else draft_text
+    final_text = revised if revised is not None else draft_text
         
     # Jika disetujui, publikasikan ke Threads API secara riil
     progress = await message.reply("🚀 *Persetujuan diterima! Mempublikasikan postingan ke Threads...*")
@@ -792,16 +856,6 @@ async def draft_and_post_flow(topic: str, user_id: str) -> str:
     # 1. Cari konteks fakta untuk topik
     context = await search_context(topic)
 
-    # 1.5 Cari pola viral yang sudah dipelajari
-    viral_context = ""
-    try:
-        from core import agentmemory_client
-        memories = await agentmemory_client.recall("[VIRAL_PATTERN]", limit=3)
-        if memories:
-            viral_context = f"\n=== POLA VIRAL YANG SUDAH DIPELAJARI (Terapkan teknik/strukturnya) ===\n{memories}\n=======================================================\n"
-    except Exception as e:
-        logger.warning(f"[THREADS_GEN] Gagal mengambil memori pola viral: {e}")
-
     # 2. Buat draf postingan
     no_strip_prompt = ""
     if no_strip:
@@ -810,32 +864,28 @@ async def draft_and_post_flow(topic: str, user_id: str) -> str:
     user_prompt = f"""Topik: {topic}
 Fakta/Konteks Tambahan:
 {context}
-{viral_context}
 Tulis draf postingan Threads yang sangat emosional, sarkas, menggunakan singkatan gaul, memakai kata "lu" dan "gua" (tanpa kata "loe" atau "gue").{no_strip_prompt}
-Jika ada pola viral di atas, terapkan teknik hook, spasi, format, atau emosi yang sesuai agar postingan berpotensi viral!"""
+Gunakan hanya topik dan konteks request ini."""
 
     try:
         draft_text = await generate_bima_draft(user_prompt, no_strip=no_strip)
-        _draft_contexts[draft_text.strip()] = context
     except Exception as e:
         logger.error(f"[THREADS_GEN] Gagal memanggil LLM: {e}")
         return f"❌ Gagal membuat draf: `{e}`"
 
     # 3. Minta persetujuan lewat permission gate (Discord DM)
     logger.info(f"[THREADS_TOOL] Meminta persetujuan Bima untuk postingan: '{draft_text[:50]}...'")
-    approved = await request_permission(
+    approved, revised = await request_permission_with_revision(
         discord_user_id=user_id,
         action_type="THREADS_POST",
-        details=draft_text
+        details=draft_text,
+        revision_base=draft_text,
     )
     
     if not approved:
         return "❌ **Tindakan Ditolak:** Postingan Threads dibatalkan oleh Bima."
 
-    # Ambil teks revisi jika ada
-    from core.permission_gate import get_revised_text
-    revised = get_revised_text(user_id)
-    final_text = revised if revised else draft_text
+    final_text = revised if revised is not None else draft_text
         
     # 4. Publikasikan ke Threads API secara riil
     try:
@@ -912,7 +962,6 @@ def _build_threads_reply_prompt(
     reply_username: str,
     reply_text: str,
     post_text: str,
-    viral_context: str = "",
 ) -> str:
     """Build prompt khusus balasan komentar Threads supaya gaya reply tidak kaku.
 
@@ -926,7 +975,6 @@ def _build_threads_reply_prompt(
     return f"""Komentar dari @{reply_username} pada postingan kita:
 Postingan Kita: "{post_text}"
 Komentar Dia: "{reply_text}"
-{viral_context}
 
 Tugas:
 Tulis SATU draf balasan Threads yang nyambung, natural, kayak manusia bales komentar temen di kolom reply. Lu lagi nanggepin, bukan bikin konten.
@@ -1063,27 +1111,15 @@ async def reply_to_comment_flow(reply_id: str, reply_text: str, reply_username: 
         except Exception as e:
             logger.error(f"[THREADS_REPLY] Gagal posting balasan otomatis: {e}. Lanjut ke approval manual.")
 
-    # Cari pola viral yang dipelajari
-    viral_context = ""
-    try:
-        from core import agentmemory_client
-        memories = await agentmemory_client.recall("[VIRAL_PATTERN]", limit=2)
-        if memories:
-            viral_context = f"\n=== POLA VIRAL YANG SUDAH DIPELAJARI ===\n{memories}\n=======================================\n"
-    except Exception:
-        pass
-
     # Buat draf balasan
     user_prompt = _build_threads_reply_prompt(
         reply_username=reply_username,
         reply_text=reply_text,
         post_text=post_text,
-        viral_context=viral_context,
     )
 
     try:
         draft_text = await generate_threads_reply_draft(user_prompt)
-        _draft_contexts[draft_text.strip()] = f"Postingan Kita: {post_text}\nKomentar Dia: {reply_text}"
     except Exception as e:
         return f"❌ Gagal membuat draf balasan: {e}"
 
@@ -1098,10 +1134,11 @@ async def reply_to_comment_flow(reply_id: str, reply_text: str, reply_username: 
     )
 
     # Minta persetujuan
-    approved = await request_permission(
+    approved, revised = await request_permission_with_revision(
         discord_user_id=user_id,
         action_type="THREADS_REPLY",
-        details=details
+        details=details,
+        revision_base=draft_text,
     )
 
     if not approved:
@@ -1110,9 +1147,7 @@ async def reply_to_comment_flow(reply_id: str, reply_text: str, reply_username: 
         _save_replied_comment(reply_id)
         return "❌ Balasan Threads dibatalkan oleh Bima."
 
-    from core.permission_gate import get_revised_text
-    revised = get_revised_text(user_id)
-    final_text = revised if revised else draft_text
+    final_text = revised if revised is not None else draft_text
 
     try:
         post_id = await publish_post_to_threads(final_text, token, reply_to_id=reply_id)

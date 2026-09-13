@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+import sys
 
 import pytest
 
@@ -46,15 +48,147 @@ def test_local_arsip_query_uses_qwen_query_prompt(monkeypatch: pytest.MonkeyPatc
     assert calls == [{"text": "preferensi musik", "prompt_name": "query"}]
 
 
-def test_cloud_query_falls_back_to_plain_encode(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_arsip_cloud_backend_can_override_other_domains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_BACKEND", "local")
+    monkeypatch.setenv("EMBEDDING_BACKEND_ARSIP", "cloud")
+    monkeypatch.setenv("EMBEDDING_MODEL_ARSIP", "qwen/qwen3-embedding-8b")
+    monkeypatch.setenv("EMBEDDING_DIM_ARSIP", "1024")
+
+    embedder = Embedder("arsip")
+
+    assert embedder.backend == "cloud"
+    assert embedder.model_name == "qwen/qwen3-embedding-8b"
+    assert embedder.dim == 1024
+
+
+def test_cloud_query_sends_dimension_and_query_input_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    class FakeEmbeddings:
+        def create(self, **kwargs: object) -> object:
+            calls.append(dict(kwargs))
+            return SimpleNamespace(
+                data=[SimpleNamespace(embedding=[0.1] * 1024)]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            self.embeddings = FakeEmbeddings()
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
     embedder = Embedder("arsip")
     embedder.backend = "cloud"
-    seen: list[str] = []
-    monkeypatch.setattr(embedder, "encode", lambda text: seen.append(text) or [0.1])
+    embedder.model_name = "qwen/qwen3-embedding-8b"
+    embedder.dim = 1024
+    embedder._cache = {}
 
-    embedder.encode_query("halo")
+    vector = embedder.encode_query("preferensi musik")
 
-    assert seen == ["halo"]
+    assert vector.shape == (1024,)
+    assert calls == [
+        {
+            "model": "qwen/qwen3-embedding-8b",
+            "input": "preferensi musik",
+            "dimensions": 1024,
+            "extra_body": {"input_type": "query"},
+        }
+    ]
+
+
+def test_cloud_document_batch_uses_one_api_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    class FakeEmbeddings:
+        def create(self, **kwargs: object) -> object:
+            calls.append(dict(kwargs))
+            inputs = kwargs["input"]
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(embedding=[float(index)] * 1024)
+                    for index, _ in enumerate(inputs)
+                ]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            self.embeddings = FakeEmbeddings()
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+    embedder = Embedder("arsip")
+    embedder.backend = "cloud"
+    embedder.model_name = "qwen/qwen3-embedding-8b"
+    embedder.dim = 1024
+    embedder._cache = {}
+
+    vectors = embedder.encode(["dokumen satu", "dokumen dua"])
+
+    assert vectors.shape == (2, 1024)
+    assert vectors[1, 0] == 1.0
+    assert calls == [
+        {
+            "model": "qwen/qwen3-embedding-8b",
+            "input": ["dokumen satu", "dokumen dua"],
+            "dimensions": 1024,
+            "extra_body": {"input_type": "document"},
+        }
+    ]
+
+
+def test_pending_vault_docs_are_embedded_in_one_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    class FakeEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            calls.append(texts)
+            return [[float(index), 1.0] for index, _ in enumerate(texts)]
+
+    monkeypatch.setattr(t3_arsip, "embedder", FakeEmbedder())
+    pending = [
+        {"filename": "a.md", "embedding_text": "dokumen a"},
+        {"filename": "b.md", "embedding_text": "dokumen b"},
+    ]
+
+    docs = t3_arsip._embed_pending_docs(pending)
+
+    assert calls == [["dokumen a", "dokumen b"]]
+    assert docs == [
+        {"filename": "a.md", "vector": [0.0, 1.0]},
+        {"filename": "b.md", "vector": [1.0, 1.0]},
+    ]
+
+
+def test_disabled_reranker_does_not_construct_local_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[tuple] = []
+
+    class FakeCrossEncoder:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            constructed.append((args, kwargs))
+
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        SimpleNamespace(CrossEncoder=FakeCrossEncoder),
+    )
+    monkeypatch.setattr(t3_arsip, "_reranker", None)
+
+    assert t3_arsip._get_reranker() is None
+    assert constructed == []
 
 
 def test_bm25_cache_loads_once_and_invalidates(monkeypatch: pytest.MonkeyPatch) -> None:

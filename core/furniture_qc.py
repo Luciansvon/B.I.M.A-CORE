@@ -892,8 +892,8 @@ async def review_diff_from_bytes(
     )
 
     client = OpenAI(
-        api_key=os.environ.get("OPENROUTER_API_KEY"),
-        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ.get("NINEROUTER_API_KEY") or os.environ.get("ROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY"),
+        base_url=os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1"),
     )
 
     import stamina
@@ -1164,8 +1164,8 @@ async def _review_from_bytes(
         raise ValueError("Tidak ada halaman/image yg bisa dibaca dari file")
 
     client = OpenAI(
-        api_key=os.environ.get("OPENROUTER_API_KEY"),
-        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ.get("NINEROUTER_API_KEY") or os.environ.get("ROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY"),
+        base_url=os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1"),
     )
 
     # 1. Jalankan Checker Agent untuk tiap halaman secara paralel (max 5 paralel sekaligus via Semaphore)

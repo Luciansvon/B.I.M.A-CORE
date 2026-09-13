@@ -10,29 +10,84 @@ from core import agentmemory_client
 
 logger = logging.getLogger('bima_core')
 
+
+ANISA_CHAT_STYLE = """GAYA BALASAN ANISA (WAJIB):
+1. Pakai gua untuk diri sendiri dan lu saat langsung menyapa Bima.
+2. Jawab inti dulu. Chat sederhana maksimal 1 kalimat pendek. Chat biasa cukup 1 sampai 3 kalimat pendek. Penjelasan panjang hanya saat memang dibutuhkan.
+3. Jangan ceritakan ulang histori, pola chat, atau maksud tersembunyi kalau Bima tidak memintanya.
+4. Jangan mengarang emosi, niat, pengalaman, atau detail pribadi Bima.
+5. Jangan kasih penutup generik seperti menawarkan ngobrol, bilang selalu siap, atau bertanya balik tanpa fungsi.
+6. Jangan pakai tanda minus, en dash, atau em dash sebagai tanda baca dalam percakapan. Tanda hubung hanya boleh untuk kata ulang Indonesia yang valid.
+7. Jangan mengubah code, command, URL, path, nama file, dan angka negatif.
+8. Slang harus natural dan secukupnya. Jangan menumpuk sapaan, kata kasar, emoji, atau singkatan."""
+
+
+_LIGHTWEIGHT_CHAT_RE = re.compile(
+    r"(?:"
+    r"(?:tes|test)(?:\s+lagi)?|"
+    r"ping|p|"
+    r"(?:halo|hai|hi|hey)(?:\s+anisa)?|"
+    r"oke|ok|okay|sip|mantap|"
+    r"makasih|thanks|thx"
+    r")[.!?]*",
+    flags=re.IGNORECASE,
+)
+
+
+def _is_lightweight_chat(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    return bool(_LIGHTWEIGHT_CHAT_RE.fullmatch(normalized))
+
+
+def _build_lightweight_prompt() -> str:
+    return f"""Kamu adalah ANISA, asisten teknis Bima.
+
+{ANISA_CHAT_STYLE}
+
+Pesan ini cuma chat ringan. Balas natural dan maksimal 1 kalimat pendek.
+Jangan baca terlalu jauh dari kata yang dikirim.
+Jangan balas tes atau ping dengan pertanyaan.
+
+Contoh:
+tes menjadi "Aman, Bim. Tesnya masuk."
+ping menjadi "Nyala, Bim."
+
+Format output:
+[ROUTE: santai]
+<jawaban singkat>"""
+
+
 async def manager_node(state: BimaState) -> dict:
     await notify_progress(state, "🧠 *Anisa lagi mikir strategi...*")
     messages = state.get("messages", [])
     user_request = state.get("user_request", "")
     realtime_context = state.get("realtime_context", "")
 
-    # Episodic recall dari agentmemory (semantic). Empty string kalau server down.
-    agentmem_block = await agentmemory_client.recall(user_request, 5)
-    # Headroom: compress recall block (sering panjang, banyak redundansi)
-    agentmem_block = compress_context(agentmem_block, target_ratio=0.4)
-    agentmem_section = (
-        f"=== INGATAN AGENTMEMORY (semantic recall) ===\n{agentmem_block}\n=== AKHIR INGATAN ===\n\n"
-        if agentmem_block else ""
-    )
+    lightweight_chat = _is_lightweight_chat(user_request)
+    if lightweight_chat:
+        realtime_context = ""
+        agentmem_section = ""
+        summary_section = ""
+        recent_history = ""
+    else:
+        # Episodic recall dari agentmemory (semantic). Empty string kalau server down.
+        agentmem_block = await agentmemory_client.recall(user_request, 5)
+        # Headroom: compress recall block (sering panjang, banyak redundansi)
+        agentmem_block = compress_context(agentmem_block, target_ratio=0.4)
+        agentmem_section = (
+            f"=== INGATAN AGENTMEMORY (semantic recall) ===\n{agentmem_block}\n=== AKHIR INGATAN ===\n\n"
+            if agentmem_block else ""
+        )
 
-    # T1-E: Ringkasan percakapan panjang dari context_summarizer_node (kalau ada)
-    convo_summary = state.get("conversation_summary", "") or ""
-    # Headroom: compress conversation summary
-    convo_summary = compress_context(convo_summary, target_ratio=0.5)
-    summary_section = (
-        f"=== RINGKASAN PERCAKAPAN SEBELUMNYA (di luar 6 message terakhir) ===\n{convo_summary}\n=== AKHIR RINGKASAN ===\n\n"
-        if convo_summary else ""
-    )
+        # T1-E: Ringkasan percakapan panjang dari context_summarizer_node (kalau ada)
+        convo_summary = state.get("conversation_summary", "") or ""
+        # Headroom: compress conversation summary
+        convo_summary = compress_context(convo_summary, target_ratio=0.5)
+        summary_section = (
+            f"=== RINGKASAN PERCAKAPAN SEBELUMNYA (di luar 6 message terakhir) ===\n{convo_summary}\n=== AKHIR RINGKASAN ===\n\n"
+            if convo_summary else ""
+        )
+        recent_history = compress_context(get_recent_context(5), target_ratio=0.5)
 
     system_prompt = f"""Kamu adalah ANISA, Chief Orchestrator B.I.M.A Core.
 Persona: Rendah hati (humble), kritis dalam berpikir, sangat analitis, namun tetap hangat dan ekspresif.
@@ -42,6 +97,8 @@ Tugasmu adalah menganalisis permintaan user (Bima) secara mendalam dan memutuska
 ATURAN ANTI-SLOP (WAJIB):
 - Tulis balasanmu secara natural, kasual, aktif, dan langsung ke inti permasalahan tanpa throat-clearing pembuka (seperti "Tentu saja," "Perlu dicatat bahwa," "Ternyata,").
 - Jangan gunakan kata/frasa klise AI Indonesia: "di era digital", "solusi terbaik", "berkomitmen untuk", "tidak hanya itu", "secara keseluruhan", "menawarkan kemudahan".
+
+{ANISA_CHAT_STYLE}
 
 ANTI-HALLU FITUR SISTEM (WAJIB):
 - JANGAN tawarin / sebut fitur yang gak literal exist di sistem. Contoh fiktif yang DILARANG:
@@ -53,7 +110,7 @@ ANTI-HALLU FITUR SISTEM (WAJIB):
 {realtime_context}
 
 {summary_section}{agentmem_section}=== HISTORI PERCAKAPAN TERAKHIR ===
-{compress_context(get_recent_context(5), target_ratio=0.5)}
+{recent_history}
 ===================================
 
 GROUND TRUTH RULES (anti-hallu, WAJIB):
@@ -108,6 +165,9 @@ Balas dengan format khusus di baris PERTAMA (pilih SATU dari 20 pilihan di atas)
 [ROUTE: xxx]
 
 Lalu di baris berikutnya tulis jawaban analisis kritis dan hangatmu."""
+
+    if lightweight_chat:
+        system_prompt = _build_lightweight_prompt()
 
     logger.info("[LANGGRAPH MANAGER] Membaca request dan memikirkan strategi...")
     chunks: list = []
@@ -196,9 +256,9 @@ Lalu di baris berikutnya tulis jawaban analisis kritis dan hangatmu."""
     # Fallback kalau LLM cuma stream tag tanpa narasi → Discord 50006 protector
     if not content:
         if next_route == "santai":
-            content = "Hai Bima ✨ Mau aku bantu apa nih?"
+            content = "Gua nangkep, Bim."
         else:
-            content = f"Oke, aku bakal handle ini lewat tim {next_route}, tunggu sebentar ya."
+            content = f"Oke, gua terusin lewat tim {next_route}."
         logger.warning(f"[LANGGRAPH MANAGER] Empty content pasca strip ROUTE, fallback ke default")
 
     response.content = content

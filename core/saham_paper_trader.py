@@ -20,11 +20,17 @@ from pathlib import Path
 
 from teams.t9_saham import DecisionEngineTool
 from core.saham_scheduler import (
-    fetch_snapshot, _fmt_price, _is_idx, _is_crypto,
+    fetch_snapshot, _is_idx, _is_crypto,
     WATCHLIST_IDX, WATCHLIST_GLOBAL, WATCHLIST_CRYPTO,
 )
 from core.saham_portfolio import add_position, remove_position, list_positions, aggregate
-from core.saham_history import TradeLogEntry, log_trade, get_today_trades
+from core.saham_history import (
+    TradeLogEntry,
+    get_recent_trades,
+    get_today_trades,
+    get_trade_summary,
+    log_trade,
+)
 
 logger = logging.getLogger('bima_core')
 
@@ -221,58 +227,187 @@ def run_tick(market: str) -> list[TradeResult]:
     return results
 
 
-def _fmt_bucket(value: float, market: str) -> str:
-    if market == "idx":
-        return f"Rp{value:,.0f}"
-    return f"${value:,.2f}"
+def _fmt_number(value: float, decimals: int = 0) -> str:
+    rendered = f"{abs(value):,.{decimals}f}"
+    return rendered.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _fmt_money(value: float, market: str, *, signed: bool = False) -> str:
+    prefix = "Rp" if market == "idx" else "$"
+    decimals = 0 if market == "idx" else 2
+    display_value = round(float(value), decimals)
+    if signed and display_value:
+        sign = "+" if display_value > 0 else "-"
+    else:
+        sign = "-" if display_value < 0 else ""
+    return f"{sign}{prefix}{_fmt_number(display_value, decimals)}"
+
+
+def _fmt_percent(value: float) -> str:
+    display_value = round(float(value), 2)
+    if display_value == 0:
+        display_value = 0.0
+    return f"{display_value:+.2f}%".replace(".", ",")
+
+
+def _bucket_snapshot(
+    market: str,
+    cash: dict[str, float],
+    positions: dict[str, dict],
+) -> dict:
+    bucket_positions = {
+        ticker: info
+        for ticker, info in positions.items()
+        if _bucket_of(ticker) == market
+    }
+    marked_positions: list[dict] = []
+    complete = True
+    market_value = 0.0
+    cost_basis = 0.0
+    for ticker, info in bucket_positions.items():
+        try:
+            snapshot = fetch_snapshot(ticker)
+        except Exception:
+            snapshot = None
+        if not snapshot or snapshot.get("close") is None:
+            complete = False
+            continue
+        current = float(snapshot["close"])
+        value = current * float(info["qty"])
+        cost = float(info["total_cost"])
+        market_value += value
+        cost_basis += cost
+        marked_positions.append(
+            {
+                "ticker": ticker,
+                "qty": float(info["qty"]),
+                "avg_price": float(info["avg_price"]),
+                "current": current,
+                "pnl": value - cost,
+                "pnl_pct": ((value - cost) / cost * 100) if cost else 0.0,
+            }
+        )
+    bucket_cash = float(cash.get(market, STARTING_CASH[market]))
+    equity = bucket_cash + market_value if complete else None
+    floating_pnl = market_value - cost_basis if complete else None
+    return {
+        "cash": bucket_cash,
+        "starting_cash": float(STARTING_CASH[market]),
+        "equity": equity,
+        "floating_pnl": floating_pnl,
+        "positions": marked_positions,
+        "complete": complete,
+    }
+
+
+def build_account_report(*, include_today_trades: bool = False) -> str:
+    """Laporan lengkap rekening V1 aktif tanpa menggabungkan mata uang."""
+    cash = _load_cash()
+    positions = aggregate(list_positions(account="paper"))
+    lines = ["🤖 **DOMPET ANISA — PAPER TRADING**"]
+
+    if include_today_trades:
+        trades = get_today_trades()
+        lines.extend(["", "**TRANSAKSI HARI INI**"])
+        if not trades:
+            lines.append("Tidak ada transaksi hari ini.")
+        else:
+            for trade in trades:
+                action = "Beli" if trade["action"] == "BUY" else "Jual"
+                lines.append(
+                    f"{action} `{trade['ticker']}` {trade['qty']:.4f} "
+                    f"@ {_fmt_money(trade['price'], trade['market'])}"
+                )
+
+    for market in ("idx", "global", "crypto"):
+        bucket = _bucket_snapshot(market, cash, positions)
+        summary = get_trade_summary(market)
+        lines.extend(
+            [
+                "",
+                f"**{market.upper()}**",
+                f"Modal awal: **{_fmt_money(bucket['starting_cash'], market)}**",
+                f"Kas tersedia: **{_fmt_money(bucket['cash'], market)}**",
+            ]
+        )
+        if bucket["complete"]:
+            equity = float(bucket["equity"])
+            net_pnl = equity - float(bucket["starting_cash"])
+            net_pct = (
+                net_pnl / float(bucket["starting_cash"]) * 100
+                if bucket["starting_cash"]
+                else 0.0
+            )
+            total_label = (
+                "PROFIT BERSIH TOTAL"
+                if net_pnl > 0
+                else "RUGI BERSIH TOTAL"
+                if net_pnl < 0
+                else "HASIL BERSIH TOTAL"
+            )
+            lines.extend(
+                [
+                    f"Kekayaan sekarang: **{_fmt_money(equity, market)}**",
+                    f"{total_label}: **{_fmt_money(net_pnl, market, signed=True)} "
+                    f"({_fmt_percent(net_pct)})**",
+                    f"Total profit jual: **"
+                    f"{_fmt_money(float(summary['total_profit']), market, signed=True)}**",
+                    f"Total rugi jual: **"
+                    f"{_fmt_money(float(summary['total_loss']), market, signed=True)}**",
+                    f"Profit bersih terealisasi: **"
+                    f"{_fmt_money(float(summary['realized_pnl']), market, signed=True)}**",
+                    f"Untung/rugi berjalan: **"
+                    f"{_fmt_money(float(bucket['floating_pnl']), market, signed=True)}**",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"{market.upper()} — harga pasar belum lengkap.",
+                    "Profit/rugi bersih total belum bisa dihitung.",
+                ]
+            )
+
+        if not bucket["positions"] and bucket["complete"]:
+            lines.append("Posisi terbuka: tidak ada.")
+        else:
+            for position in bucket["positions"]:
+                lines.append(
+                    f"`{position['ticker']}` {position['qty']:.4f} @ "
+                    f"{_fmt_money(position['avg_price'], market)} → "
+                    f"{_fmt_money(position['current'], market)} | "
+                    f"{_fmt_money(position['pnl'], market, signed=True)} "
+                    f"({_fmt_percent(position['pnl_pct'])})"
+                )
+
+    lines.extend(["", "**5 AKTIVITAS TERAKHIR**"])
+    recent_trades = get_recent_trades(limit=5)
+    if not recent_trades:
+        lines.append("Anisa belum melakukan transaksi.")
+    else:
+        for trade in recent_trades:
+            action = "Beli" if trade["action"] == "BUY" else "Jual"
+            result = ""
+            if trade["action"] == "SELL":
+                result = (
+                    " | hasil "
+                    f"{_fmt_money(float(trade['realized_pnl'] or 0), trade['market'], signed=True)}"
+                )
+            lines.append(
+                f"{action} `{trade['ticker']}` {trade['qty']:.4f} @ "
+                f"{_fmt_money(float(trade['price']), trade['market'])}{result}"
+            )
+
+    lines.extend(
+        [
+            "",
+            "Catatan: Simulasi ini belum menghitung fee broker dan settlement T+2. "
+            "Angka tersebut tidak dibuat-buat.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_daily_report() -> str:
-    """Recap harian: transaksi hari ini + saldo & floating P&L tiap bucket."""
-    trades = get_today_trades()
-    cash = _load_cash()
-    positions = list_positions(account="paper")
-    agg = aggregate(positions)
-
-    lines = ["🤖 **Anisa Paper Trading — Recap Harian**\n"]
-
-    if trades:
-        lines.append("📋 **Transaksi hari ini:**")
-        for t in trades:
-            price_str = _fmt_price(t["price"], t["ticker"])
-            if t["action"] == "SELL" and t["realized_pnl"] is not None:
-                sign = "+" if t["realized_pnl"] >= 0 else ""
-                label = "Untung" if t["realized_pnl"] >= 0 else "Rugi"
-                emoji = "🟢" if t["realized_pnl"] >= 0 else "🔴"
-                pnl_str = f" — {label} {sign}{t['realized_pnl']:,.0f}"
-            else:
-                emoji = "🟢"
-                pnl_str = ""
-            lines.append(
-                f"{emoji} {t['action']} {t['qty']:.4f} `{t['ticker']}` @ {price_str} "
-                f"(skor {t['score']}){pnl_str}"
-            )
-        lines.append("")
-    else:
-        lines.append("📭 Tidak ada transaksi hari ini.\n")
-
-    lines.append("💰 **Saldo & Floating P&L:**")
-    for market in ("idx", "global", "crypto"):
-        bucket_cash = cash.get(market, STARTING_CASH[market])
-        bucket_positions = {t: v for t, v in agg.items() if _bucket_of(t) == market}
-        floating_value = 0.0
-        floating_lines = []
-        for ticker, info in bucket_positions.items():
-            snap = fetch_snapshot(ticker)
-            current = snap["close"] if snap else info["avg_price"]
-            floating_value += current * info["qty"]
-            pnl_pct = (current - info["avg_price"]) / info["avg_price"] * 100 if info["avg_price"] else 0.0
-            floating_lines.append(f"    `{ticker}`: {pnl_pct:+.2f}%")
-        equity = bucket_cash + floating_value
-        lines.append(
-            f"  **{market.upper()}** — kas {_fmt_bucket(bucket_cash, market)} + "
-            f"floating {_fmt_bucket(floating_value, market)} = **{_fmt_bucket(equity, market)}**"
-        )
-        lines.extend(floating_lines)
-
-    return "\n".join(lines)
+    """Recap harian dan ringkasan dompet dari satu sumber perhitungan."""
+    return build_account_report(include_today_trades=True)

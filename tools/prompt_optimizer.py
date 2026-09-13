@@ -117,16 +117,16 @@ class PromptOptimizerTool(BaseTool):
             f"task_type: {task_type}\n\n"
             f"prompt_to_optimize:\n```\n{raw_prompt}\n```"
         )
-
         try:
             from openai import OpenAI
-            api_key = os.environ.get("OPENROUTER_API_KEY")
+            from core.model_router import get_router_credentials
+            api_key, base_url = get_router_credentials()
             if not api_key:
-                return "FAILED|OPENROUTER_API_KEY gak diset di .env"
+                return "FAILED|Router API Key belum diset di .env"
 
             client = OpenAI(
                 api_key=api_key,
-                base_url="https://openrouter.ai/api/v1",
+                base_url=base_url,
             )
             response = client.chat.completions.create(
                 model=_DEFAULT_MODEL,

@@ -3,21 +3,36 @@
 Subcommands:
     !arsip help                              — list commands
     !arsip hubungkan                         — connect wiki links and clean formatting
-    !arsip index                             — rebuild vector store index
+    !arsip index                             — incremental vector index sync
+    !arsip reindex --full                    — full vector index rebuild
 """
+
 import asyncio
 import logging
-from pathlib import Path
 
-logger = logging.getLogger('bima_core')
+logger = logging.getLogger("bima_core")
 
 HELP_TEXT = """📚 **`!arsip` — Perintah Vault & Catatan**
 ```
-!arsip help       → tampilkan bantuan ini
-!arsip hubungkan  → sambungkan [[WikiLink]] semantik & rapikan catatan
-!arsip index      → indeks ulang semua catatan di vault ke database vector
+!arsip help            → tampilkan bantuan ini
+!arsip hubungkan       → sambungkan [[WikiLink]] semantik & rapikan catatan
+!arsip index           → sinkronkan file baru/berubah (incremental)
+!arsip reindex --full  → rebuild seluruh database vector
 ```
 """
+
+
+def _format_result(result: str) -> str:
+    status, separator, detail = result.partition("|")
+    if not separator:
+        return result
+    icon = {
+        "SUCCESS": "✅",
+        "SKIPPED": "ℹ️",
+        "PARTIAL": "⚠️",
+        "FAILED": "❌",
+    }.get(status, "ℹ️")
+    return f"{icon} {detail}"
 
 
 async def handle_arsip_command(message, args: str, bot_client=None) -> bool:
@@ -32,20 +47,37 @@ async def handle_arsip_command(message, args: str, bot_client=None) -> bool:
 
     try:
         if sub in {"hubungkan", "rapih", "rapihkan", "link"}:
-            await message.reply("⏳ *Anisa sedang memproses vault Obsidian (sambung link semantik & rapikan format)...*")
+            await message.reply(
+                "⏳ *Anisa sedang memproses vault Obsidian "
+                "(sambung link semantik & rapikan format)...*"
+            )
             from teams.t3_arsip import VaultLinkerTool
+
             result = await asyncio.to_thread(VaultLinkerTool()._run)
             await message.reply(result)
             return True
 
         if sub in {"index", "reindex"}:
-            await message.reply("⏳ *Anisa sedang mengindeks ulang vault ke database vector...*")
+            full_rebuild = sub == "reindex" and "--full" in {
+                part.lower() for part in parts[1:]
+            }
+            mode = "full rebuild" if full_rebuild else "sinkronisasi incremental"
+            await message.reply(
+                f"⏳ *Anisa sedang menjalankan {mode} vault ke database vector...*"
+            )
             from teams.t3_arsip import index_vault
-            await asyncio.to_thread(index_vault)
-            await message.reply("✅ Vault berhasil diindeks ulang!")
+
+            result = await asyncio.to_thread(
+                index_vault,
+                full_rebuild=full_rebuild,
+            )
+            await message.reply(_format_result(result))
             return True
 
-        await message.reply(f"❌ Subcommand `{sub}` tidak dikenal. Ketik `!arsip help` untuk bantuan.")
+        await message.reply(
+            f"❌ Subcommand `{sub}` tidak dikenal. "
+            "Ketik `!arsip help` untuk bantuan."
+        )
         return True
 
     except Exception as e:

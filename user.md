@@ -1,13 +1,29 @@
 # Profil Pengguna: Bima
 
-## Karakteristik
-- **Peran**: Solo Developer & Pemilik proyek BIMA_CORE.
-- **Bahasa Preferensi**: Bahasa Indonesia santai (casual), komunikatif, dan langsung ke intinya.
-- **Tingkat Pemahaman Coding**: Kurang memahami konsep fundamental coding yang terlalu rumit. Lebih menyukai penjelasan yang praktis, menggunakan analogi, dan menghindari istilah teknis yang terlalu abstrak (atau menyertakan penjelasan sederhana jika terpaksa menggunakan istilah teknis).
-- **Gaya Komunikasi**: Menyukai interaksi yang bersahabat, terstruktur, dan tidak bertele-tele.
-
-## Catatan Tambahan
-- Selalu berikan penjelasan sistem dengan gaya bahasa sehari-hari.
-- Fokus pada *fitur apa yang bisa dilakukan* daripada *bagaimana kode tersebut berjalan di belakang layar* (kecuali jika ditanyakan secara spesifik).
-- **Preferensi Riset**: Menyukai riset yang mendalam dengan banyak sumber (minimal 10+ sumber/referensi) yang divalidasi silang dari berbagai platform (seperti GitHub, Reddit, dan forum komunitas) untuk memastikan data tersebut valid dan terupdate.
-
+- **Nama**: Bima (User)
+- **Pemahaman Coding**: Tidak memahami dasar-dasar atau fundamental coding secara mendalam.
+- **Gaya Komunikasi**:
+  - Lebih menyukai penjelasan yang sederhana, langsung ke inti, dan menggunakan analogi sehari-hari jika membahas hal teknis.
+  - Menggunakan bahasa santai/gaul Indonesia (misal: "gua", "lu").
+  - Menolak penjelasan yang terlalu berbelit-belit atau penuh dengan istilah teknis pemrograman (seperti API, database, routing, dll.) tanpa penjelasan sederhana.
+- **Pendekatan Interaksi**:
+  - Selalu jelaskan langkah-langkah kerja dengan bahasa Indonesia yang santai, bersahabat, dan mudah dimengerti.
+  - Hindari istilah-istilah pemrograman yang rumit. Jika terpaksa menggunakan istilah teknis, berikan penjelasan sederhana atau gunakan analogi.
+- **Konteks Proyek Terkini**:
+  - Bima memindahkan proyek BIMA_CORE ke folder proyek Windows permanen (`C:\Users\shint\projects\BIMA_CORE`).
+  - Distro WSL sebelumnya sudah tidak aktif/dihapus, sehingga target operasional adalah membuat bot berjalan lancar di lingkungan Windows asli.
+  - Bima mengira istilah "bridge" adalah jembatan jaringan antara WSL dan Windows. Perlu dijelaskan dengan analogi bahwa jembatan yang dimaksud di proyek ini adalah penghubung WhatsApp ke otak bot, dan sifatnya opsional jika hanya memakai Discord.
+  - Model AI tidak lagi memakai model lama bawaan (seperti Qwen/Sonnet), melainkan sepenuhnya diarahkan ke kombinasi `Combowombo` yang sudah dibuat Bima di 9Router.
+  - Folder brankas catatan Obsidian (`BIMA_VAULT`) telah dipindahkan keluar dari OneDrive dan dimasukkan langsung ke dalam folder proyek (`C:\Users\shint\projects\BIMA_CORE\BIMA_VAULT\Penyimpanan`) agar kuota OneDrive tidak penuh.
+  - Bima menyetel model pencarian catatan (*embedding*) di 9Router memakai `openrouter/qwen/qwen3-embedding-8b`.
+  - Bima sempat mengira catatan berulang di log PM2 adalah tanda bot macet karena model pencarian belum terhubung. Perlu dijelaskan bahwa log berulang itu hanya detak jantung pemantau dan bot sedang dalam kondisi siaga menunggu pesan masuk.
+  - Bot sempat memunculkan error model karena setelan file rahasia (.env) terlambat dibaca saat program pertama kali dinyalakan. Setelah urutan pembacaan diperbaiki tepat di detik pertama, bot langsung terhubung ke setelan Combowombo 9Router dan sukses diajak ngobrol santai.
+- **Preferensi Panggilan & Identitas**:
+  - **DILARANG** memanggil "Mas Bima". Panggil langsung "Bima" atau gunakan bahasa santai/akrab ("lu/kamu"). Bima sangat tidak suka dipanggil "Mas Bima".
+  - Aplikasi mobile di HP harus beroperasi sebagai **Agent Harness** yang sadar lingkungan: memahami bahwa ia berjalan langsung di dalam smartphone Android Bima, memiliki akses nyata ke penyimpanan/file lokal (kelola file sampah, folder Download, dll.), dan tidak boleh menjawab seolah-olah bot web yang tidak punya akses sistem.
+- **Integritas & Kejujuran Mutlak**:
+  - **DILARANG KERAS** membuat klaim palsu, output rekaan/bohongan (mock static text), atau berpura-pura sebuah fungsi sistem (file manager, web search, remote command) sudah bekerja padahal cuma berupa teks template.
+  - Jika suatu fungsi belum terhubung ke sistem fisik Android atau belum mampu dijalankan, WAJIB jujur dan terus terang menjelaskan apa yang kurang. Bima sangat membenci manipulasi output dan klaim tidak bertanggung jawab.
+  - Bima menegaskan bahwa aplikasi mobile Android (Anisa di HP) WAJIB memiliki akses penuh ke seluruh file penyimpanan HP (bukan cuma folder cache aplikasi). Anisa harus bisa jelajah folder (Download, Dokumen, dll.), baca file, dan kelola file di seluruh memori HP lewat izin All Files Access (MANAGE_EXTERNAL_STORAGE).
+  - Bima memantau aktivitas dan kegagalan bot langsung dari aplikasi Discord ANISA APP (misal kegagalan pembuatan gambar).
+  - Seluruh model gambar dan pencarian web dialihkan agar terpusat ke 9Router lokal miliknya.

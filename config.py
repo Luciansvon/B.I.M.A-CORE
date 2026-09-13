@@ -1,6 +1,13 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from crewai import LLM
 from core.model_router import (
     VISUAL_MODEL,
@@ -19,12 +26,32 @@ OBSIDIAN_PATH = os.environ.get("OBSIDIAN_PATH", str(BASE_DIR / "vault"))
 # MCP client config — dipake core.mcp_client_manager.init_manager()
 MCP_CLIENTS_CONFIG = BASE_DIR / "config_mcp.json"
 
-# Validasi environment
-_api_key = os.environ.get("OPENROUTER_API_KEY")
+# Validasi environment router (9Router)
+_api_key = (
+    os.environ.get("NINEROUTER_API_KEY")
+    or os.environ.get("ROUTER_API_KEY")
+    or os.environ.get("OPENROUTER_API_KEY")
+)
+
+_default_base_url = "http://127.0.0.1:20128/v1"
+_base_url = (
+    os.environ.get("NINEROUTER_BASE_URL")
+    or os.environ.get("ROUTER_BASE_URL")
+    or os.environ.get("OPENROUTER_BASE_URL")
+    or _default_base_url
+)
+
+if _api_key:
+    os.environ["NINEROUTER_API_KEY"] = _api_key
+    os.environ["OPENROUTER_API_KEY"] = _api_key
+if _base_url:
+    os.environ["NINEROUTER_BASE_URL"] = _base_url
+    os.environ["OPENROUTER_BASE_URL"] = _base_url
+
 if not _api_key:
-    print("[CONFIG] ⚠️  OPENROUTER_API_KEY tidak ditemukan di .env!")
+    print("[CONFIG] ⚠️  API Key 9Router (NINEROUTER_API_KEY) tidak ditemukan di .env!")
 else:
-    print(f"[CONFIG] ✅ API Key terdeteksi ({len(_api_key)} chars)")
+    print(f"[CONFIG] ✅ 9Router API Key terdeteksi ({len(_api_key)} chars) | Endpoint: {_base_url}")
 
 # Inisialisasi LLM secara terpusat
 def get_llm(
@@ -42,7 +69,7 @@ def get_llm(
     return LLM(
         model=model_name,
         api_key=_api_key,
-        base_url="https://openrouter.ai/api/v1",
+        base_url=_base_url,
         **kwargs,
     )
 

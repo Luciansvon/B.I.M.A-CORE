@@ -18,9 +18,8 @@ from tools.obsidian_formats import VaultBaseTool, VaultCanvasTool
 
 logger = logging.getLogger('bima_core')
 
-# Switch local/cloud via env EMBEDDING_BACKEND=local|cloud (default local).
-# Cloud (bge-m3) dim=1024, local (all-MiniLM-L6-v2) dim=384 — kalau ganti backend,
-# WAJIB drop & re-index folder vault_index/ supaya schema cocok.
+# Backend arsip dapat dioverride via EMBEDDING_BACKEND_ARSIP.
+# Kalau model/dimensi berubah, full rebuild vault_index wajib dilakukan.
 embedder = get_embedder("arsip")
 _db = None
 _db_lock = threading.Lock()
@@ -41,21 +40,28 @@ def _get_db():
     return _db
 
 _reranker = None
+_reranker_lock = threading.Lock()
 
 
 def _get_reranker():
     global _reranker
+    enabled = os.environ.get("RERANKER_ENABLED", "true").strip().lower()
+    if enabled in {"0", "false", "no", "off"}:
+        return None
     if _reranker is None:
-        import torch
-        from sentence_transformers import CrossEncoder
-        # Reranker RAG search. Default GPU kalau tersedia — di CPU ~5x lebih lambat
-        # (rerank 10 kandidat: ~4770ms CPU vs ~980ms GPU). Dengan F5-TTS dimatikan,
-        # VRAM RTX 3050 4GB cukup buat embedder Qwen3 (~1.25GB) + reranker bareng.
-        # Override manual via env RERANKER_DEVICE (mis. "cpu" kalau VRAM dipakai proses lain).
-        # Model: bge-reranker-v2-m3 (multilingual) — recall RAG Indonesia jauh lebih baik.
-        model = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
-        device = os.environ.get("RERANKER_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
-        _reranker = CrossEncoder(model, device=device)
+        with _reranker_lock:
+            if _reranker is None:
+                import torch
+                from sentence_transformers import CrossEncoder
+
+                model = os.environ.get(
+                    "RERANKER_MODEL",
+                    "BAAI/bge-reranker-v2-m3",
+                )
+                device = os.environ.get("RERANKER_DEVICE") or (
+                    "cuda" if torch.cuda.is_available() else "cpu"
+                )
+                _reranker = CrossEncoder(model, device=device)
     return _reranker
 
 
@@ -159,6 +165,26 @@ def _document_embedding_text(filename: str, heading: str, content: str) -> str:
     return f"Document: {filename}\nSection: {heading}\nContent: {content}"
 
 
+def _embed_pending_docs(pending_docs: list[dict]) -> list[dict]:
+    if not pending_docs:
+        return []
+    vectors = embedder.encode(
+        [str(doc["embedding_text"]) for doc in pending_docs]
+    )
+    embedded_docs: list[dict] = []
+    for doc, vector in zip(pending_docs, vectors):
+        embedded = {
+            key: value
+            for key, value in doc.items()
+            if key != "embedding_text"
+        }
+        embedded["vector"] = (
+            vector.tolist() if hasattr(vector, "tolist") else list(vector)
+        )
+        embedded_docs.append(embedded)
+    return embedded_docs
+
+
 def _set_bm25_index(index) -> None:
     global _bm25_index
     with _bm25_lock:
@@ -179,11 +205,12 @@ def _get_bm25_index():
     return _bm25_index
 
 
-def _index_vault_unlocked(full_rebuild: bool = False) -> None:
+def _index_vault_unlocked(full_rebuild: bool = False) -> str:
     vault = Path(OBSIDIAN_PATH)
     if not vault.exists():
-        print(f"[ARSIP] Folder vault tidak ditemukan: {vault}")
-        return
+        message = f"Folder vault tidak ditemukan: {vault}"
+        print(f"[ARSIP] {message}")
+        return f"FAILED|{message}"
 
     _drop_legacy_table_if_needed()
     existing = {} if full_rebuild else _read_existing_mtime()
@@ -206,14 +233,13 @@ def _index_vault_unlocked(full_rebuild: bool = False) -> None:
                 continue
             for idx, ch in enumerate(chunks):
                 embedding_text = _document_embedding_text(file.name, ch["heading"], ch["content"])
-                vec = embedder.encode(embedding_text).tolist()
                 new_docs.append({
                     "filename": file.name,
                     "path": path_str,
                     "chunk_id": idx,
                     "heading": ch["heading"],
                     "content": ch["content"],
-                    "vector": vec,
+                    "embedding_text": embedding_text,
                     "mtime": mtime,
                 })
             if path_str in existing:
@@ -224,29 +250,43 @@ def _index_vault_unlocked(full_rebuild: bool = False) -> None:
         except Exception as e:
             print(f"[ARSIP] Skip {file.name}: {e}")
 
+    try:
+        new_docs = _embed_pending_docs(new_docs)
+    except Exception as e:
+        print(f"[ARSIP] Embedding batch gagal: {e}")
+        return f"FAILED|Embedding batch gagal: {e}"
+
     if full_rebuild:
         if not new_docs:
             print("[ARSIP] Vault kosong, full rebuild dibatalkan.")
-            return
+            return "SKIPPED|Vault kosong, full rebuild dibatalkan."
         try:
             _get_db().create_table("vault", data=new_docs, mode="overwrite")
             _rebuild_bm25_index()
             print(f"[ARSIP] Full rebuild selesai: {len(new_docs)} chunk.")
+            return (
+                f"SUCCESS|Full rebuild selesai: {len(new_docs)} chunk "
+                f"dari {n_new} catatan."
+            )
         except Exception as e:
             print(f"[ARSIP] Full rebuild gagal: {e}")
-        return
+            return f"FAILED|Full rebuild gagal: {e}"
 
     if not _table_exists():
         if not new_docs:
             print("[ARSIP] Vault kosong, belum ada catatan untuk diindex.")
-            return
+            return "SKIPPED|Vault kosong, belum ada catatan untuk diindex."
         try:
             _get_db().create_table("vault", data=new_docs, mode='overwrite')
             print(f"[ARSIP] {len(new_docs)} chunk dari {n_new} catatan berhasil diindex (full).")
             _rebuild_bm25_index()
+            return (
+                f"SUCCESS|Index awal selesai: {len(new_docs)} chunk "
+                f"dari {n_new} catatan."
+            )
         except Exception as e:
             print(f"[ARSIP] Gagal create tabel vault: {e}")
-        return
+            return f"FAILED|Gagal membuat tabel vault: {e}"
 
     try:
         tbl = _get_db().open_table("vault")
@@ -260,13 +300,19 @@ def _index_vault_unlocked(full_rebuild: bool = False) -> None:
             tbl.add(new_docs)
         print(f"[ARSIP] Re-index: {n_new} file baru, {n_updated} file diupdate, {n_skipped} file di-skip (unchanged).")
         _rebuild_bm25_index()
+        return (
+            "SUCCESS|Index incremental selesai: "
+            f"{n_new} file baru, {n_updated} file diupdate, "
+            f"{n_skipped} file unchanged."
+        )
     except Exception as e:
         print(f"[ARSIP] Incremental update gagal: {e}")
+        return f"FAILED|Index incremental gagal: {e}"
 
 
-def index_vault(full_rebuild: bool = False) -> None:
+def index_vault(full_rebuild: bool = False) -> str:
     with _index_lock:
-        _index_vault_unlocked(full_rebuild)
+        return _index_vault_unlocked(full_rebuild)
 
 
 def _rebuild_bm25_index():
@@ -390,12 +436,19 @@ def search_vault(query: str, top_k: int = 3) -> str:
     gate_ok = True
     try:
         reranker = _get_reranker()
-        pairs = [(query, str(c['content'])) for c in candidates]
-        rerank_scores = reranker.predict(pairs)
-        scored = sorted(zip(rerank_scores, candidates), key=lambda x: float(x[0]), reverse=True)
-        top_scored = scored[:top_k]
-        top = [c for _, c in top_scored]
-        gate_ok = _passes_relevance_gate([s for s, _ in top_scored])
+        if reranker is None:
+            top = candidates[:top_k]
+        else:
+            pairs = [(query, str(c['content'])) for c in candidates]
+            rerank_scores = reranker.predict(pairs)
+            scored = sorted(
+                zip(rerank_scores, candidates),
+                key=lambda x: float(x[0]),
+                reverse=True,
+            )
+            top_scored = scored[:top_k]
+            top = [c for _, c in top_scored]
+            gate_ok = _passes_relevance_gate([s for s, _ in top_scored])
     except Exception as e:
         logger.warning(f"[ARSIP] Rerank gagal ({e}). Pakai urutan hybrid.")
         top = candidates[:top_k]
@@ -680,11 +733,13 @@ class VaultSearchTool(BaseTool):
 
 class VaultIndexTool(BaseTool):
     name: str = "Vault Index Tool"
-    description: str = "Re-index semua catatan di vault. Gunakan kalau ada catatan baru."
+    description: str = (
+        "Sinkronkan file baru/berubah ke index secara incremental. "
+        "Tidak membuat WikiLink."
+    )
 
     def _run(self, query: str = "") -> str:
-        index_vault()
-        return "Vault berhasil diindex ulang!"
+        return index_vault()
 
 def backup_file(filepath: Path) -> Path | None:
     backup_path: Path | None = None
@@ -889,7 +944,9 @@ def _index_vault_safe():
     # Prewarm jalur retrieval biar query pertama tidak kena cold-start.
     try:
         embedder.encode_query("warmup")
-        _get_reranker().predict([("warmup", "warmup")])
+        reranker = _get_reranker()
+        if reranker is not None:
+            reranker.predict([("warmup", "warmup")])
         _get_bm25_index()
     except Exception as e:
         logger.warning(f"[ARSIP] Prewarm retrieval gagal: {e}")

@@ -18,8 +18,8 @@ from tools.slide_generator import SlideGeneratorTool
 def _gemini_vision(image_b64: str, content_type: str, prompt: str, max_tokens: int = 1500) -> str:
     from openai import OpenAI
     client = OpenAI(
-        api_key=os.environ.get("OPENROUTER_API_KEY"),
-        base_url="https://openrouter.ai/api/v1"
+        api_key=os.environ.get("OPENROUTER_API_KEY") or os.environ.get("NINEROUTER_API_KEY"),
+        base_url=os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
     )
     result = client.chat.completions.create(
         model=VISUAL_MODEL_NAME,
@@ -388,8 +388,8 @@ class AudioTranscriber(BaseTool):
                 audio_b64 = base64.b64encode(f.read()).decode('utf-8')
 
             client = OpenAI(
-                api_key=os.environ.get("OPENROUTER_API_KEY"),
-                base_url="https://openrouter.ai/api/v1"
+                api_key=os.environ.get("OPENROUTER_API_KEY") or os.environ.get("NINEROUTER_API_KEY"),
+                base_url=os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
             )
 
             result = client.chat.completions.create(
@@ -647,8 +647,8 @@ class ImageAnalyzerTool(BaseTool):
             
             from openai import OpenAI
             client = OpenAI(
-                api_key=os.environ.get("OPENROUTER_API_KEY"),
-                base_url="https://openrouter.ai/api/v1"
+                api_key=os.environ.get("OPENROUTER_API_KEY") or os.environ.get("NINEROUTER_API_KEY"),
+                base_url=os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
             )
             
             result = client.chat.completions.create(
@@ -711,8 +711,8 @@ class ImageToCodeTool(BaseTool):
             
             from openai import OpenAI
             client = OpenAI(
-                api_key=os.environ.get("OPENROUTER_API_KEY"),
-                base_url="https://openrouter.ai/api/v1"
+                api_key=os.environ.get("OPENROUTER_API_KEY") or os.environ.get("NINEROUTER_API_KEY"),
+                base_url=os.environ.get("NINEROUTER_BASE_URL") or os.environ.get("OPENROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
             )
             
             result = client.chat.completions.create(

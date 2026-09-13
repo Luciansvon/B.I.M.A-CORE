@@ -115,7 +115,13 @@ class SlideGeneratorTool(BaseTool):
             if chromes:
                 playwright_chrome = str(chromes[0])
 
-        chrome_path = playwright_chrome or "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"
+        if sys.platform == "win32":
+            win_chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
+            if not win_chrome.exists():
+                win_chrome = Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe")
+            chrome_path = playwright_chrome or (str(win_chrome) if win_chrome.exists() else shutil.which("chrome") or "")
+        else:
+            chrome_path = playwright_chrome or "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"
         
         env = {
             **os.environ,
