@@ -84,7 +84,9 @@ class PromptOptimizerTool(BaseTool):
     {
         "prompt": "prompt mentah yang mau di-optimize",
         "target_model": "claude" | "gpt" | "gemini" (opsional, default gpt),
-        "task_type": "code" | "writing" | "analysis" | "general" (opsional, default general)
+        "task_type": "code" | "writing" | "analysis" | "general" (opsional, default general),
+        "temperature": 0.0 sampai 1.5 (opsional, default 0.7 untuk variasi fleksibel),
+        "style_flavor": "concise" | "creative" | "balanced" (opsional)
     }
     Output: markdown dengan score 6-axis + critique + rewrite + reasoning."""
 
@@ -102,6 +104,17 @@ class PromptOptimizerTool(BaseTool):
         if target_model not in ("claude", "gpt", "gemini"):
             target_model = "gpt"
         task_type = (data.get("task_type") or "general").lower()
+        style_flavor = (data.get("style_flavor") or "").strip()
+
+        # Fleksibilitas temperature: default 0.7 agar hasil bervariasi dan tidak kaku
+        temp_input = data.get("temperature")
+        if temp_input is not None:
+            try:
+                temperature = max(0.0, min(1.5, float(temp_input)))
+            except (ValueError, TypeError):
+                temperature = 0.7
+        else:
+            temperature = float(os.environ.get("PROMPT_OPTIMIZER_TEMPERATURE", "0.7"))
 
         system_prompt = _load_template("critique_system.md")
         if not system_prompt:
@@ -112,9 +125,11 @@ class PromptOptimizerTool(BaseTool):
         if pattern_ref:
             system_prompt = f"{system_prompt}\n\n---\n\n## Reference Patterns ({target_model})\n\n{pattern_ref}"
 
+        flavor_line = f"style_flavor: {style_flavor}\n" if style_flavor else ""
         user_msg = (
             f"target_model: {target_model}\n"
-            f"task_type: {task_type}\n\n"
+            f"task_type: {task_type}\n"
+            f"{flavor_line}\n"
             f"prompt_to_optimize:\n```\n{raw_prompt}\n```"
         )
         try:
@@ -135,7 +150,7 @@ class PromptOptimizerTool(BaseTool):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
-                temperature=0.3,
+                temperature=temperature,
                 max_tokens=2500,
                 response_format={"type": "json_object"},
             )

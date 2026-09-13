@@ -48,6 +48,7 @@ Tulis prompt baru yang ningkatin score min +20 poin. Wajib:
    - **claude**: pakai XML tag (`<task>`, `<constraints>`, `<output_format>`, `<examples>`). Inline reasoning trigger ("pikir step-by-step sebelum jawab").
    - **gpt**: markdown section dengan `##` headers. Use "Role:", "Task:", "Constraints:", "Output:".
    - **gemini**: hybrid — markdown headers + concrete examples bias. Few-shot kuat.
+6. Variasikan formulasi dan struktur kalimat secara fleksibel dan kreatif — jangan terpaku pada template yang kaku atau monoton.
 
 Kalau `task_type=code`: tambahin "balas hanya kode tanpa penjelasan kecuali diminta".
 Kalau `task_type=writing`: tambahin tone + audience constraint.

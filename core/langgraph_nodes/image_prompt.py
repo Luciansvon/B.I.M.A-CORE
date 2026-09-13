@@ -14,7 +14,56 @@ Riset dasar (Jul 2026):
 """
 from __future__ import annotations
 
+import random
 import re
+
+# Kumpulan variasi dinamis untuk disuntikkan ke peracik prompt gambar agar tidak monoton:
+LIGHTING_VARIATIONS: tuple[str, ...] = (
+    "soft overcast natural daylight from a side window",
+    "warm golden hour sunlight with gentle elongated shadows",
+    "bright natural midday daylight with crisp clean shadows",
+    "dim cozy warm incandescent room light with gentle shadows",
+    "cool blue-hour evening twilight with subtle ambient window glow",
+    "directional side-lighting revealing rich material texture",
+    "morning dawn sunlight casting gentle diffuse gradients",
+    "subtle rainy day indoor lighting with soft ambient tones",
+)
+
+ANGLE_VARIATIONS: tuple[str, ...] = (
+    "eye-level casual viewpoint",
+    "slightly low-angle perspective looking gently upward",
+    "gentle high-angle shot looking downward at a slight tilt",
+    "intimate close-up emphasizing tactile material details",
+    "candid slightly off-center handheld snapshot framing",
+    "wide environmental composition showing lived-in surrounding space",
+    "over-the-shoulder casual point of view",
+)
+
+TEXTURE_IMPERFECTION_VARIATIONS: tuple[str, ...] = (
+    "subtle natural film grain and slight motion blur on movements",
+    "gentle dust motes visible in light beam, authentic everyday clutter",
+    "subtle lens flare, genuine lived-in background context",
+    "light reflections on surfaces, natural uneven lighting",
+    "organic handheld camera feel, gentle natural shadow falloff",
+    "tactile realistic textures on surfaces with subtle imperfections",
+)
+
+LENS_VARIATIONS: tuple[str, ...] = (
+    "smartphone camera (approx 26mm equivalent)",
+    "35mm documentary film lens",
+    "50mm natural eye-level lens with organic depth",
+    "85mm portrait lens with soft natural background separation",
+    "compact 28mm street camera snapshot",
+)
+
+THREADS_LOCAL_VARIATIONS: tuple[str, ...] = (
+    "warung kopi pinggir jalan with plastic chairs and warm fluorescent bulb",
+    "small Indonesian home office room with ceramic tile floor and louvre window",
+    "cluttered desk in a kost room with charger cables and electric fan",
+    "terrace of an Indonesian house in the afternoon with potted plants",
+    "small workshop with tools and sawdust under afternoon tropical heat",
+    "cozy living room corner with batik curtain and natural side window light",
+)
 
 # Keyword spam yang justru men-trigger gaya "AI slop" di image model modern.
 # Ini safety net deterministik — larangan utamanya udah ada di system prompt,
@@ -139,18 +188,49 @@ _THREADS_SYSTEM = (
 )
 
 
-def build_system_prompt(has_ref: bool = False) -> str:
+def get_dynamic_creative_cues(is_threads: bool = False) -> str:
+    """Hasilkan arahan kreatif acak agar output prompt gambar bervariasi dan tidak seragam."""
+    lighting = random.choice(LIGHTING_VARIATIONS)
+    angle = random.choice(ANGLE_VARIATIONS)
+    imperfection = random.choice(TEXTURE_IMPERFECTION_VARIATIONS)
+    lens = random.choice(LENS_VARIATIONS)
+
+    if is_threads:
+        local_vibe = random.choice(THREADS_LOCAL_VARIATIONS)
+        return (
+            f"\n\nPANDUAN VARIASI DINAMIS (eksplorasi arah visual unik ini):\n"
+            f"- Setting lokal: {local_vibe}\n"
+            f"- Karakter cahaya: {lighting}\n"
+            f"- Sudut/Framing: {angle}\n"
+            f"- Imperfeksi alami: {imperfection}"
+        )
+
+    return (
+        f"\n\nPANDUAN VARIASI DINAMIS (eksplorasi arah visual unik ini):\n"
+        f"- Karakter cahaya: {lighting}\n"
+        f"- Sudut/Komposisi: {angle}\n"
+        f"- Pilihan lensa/kamera: {lens}\n"
+        f"- Imperfeksi alami: {imperfection}"
+    )
+
+
+def build_system_prompt(has_ref: bool = False, dynamic: bool = True) -> str:
     """System prompt buat prompt-expander LLM (txt2img atau img2img)."""
-    return _IMG2IMG_SYSTEM if has_ref else _TXT2IMG_SYSTEM
+    base = _IMG2IMG_SYSTEM if has_ref else _TXT2IMG_SYSTEM
+    if dynamic:
+        return f"{base}{get_dynamic_creative_cues(is_threads=False)}"
+    return base
 
 
-def build_threads_system_prompt() -> str:
+def build_threads_system_prompt(dynamic: bool = True) -> str:
     """System prompt buat image prompt generator postingan Threads.
 
     Beda dari txt2img biasa: input-nya draf postingan (bukan request langsung),
     wajib grounding setting Indonesia, dan larangan keras teks terbaca di gambar.
     Output LLM: prompt polos tanpa tag CASUAL|CLEAN.
     """
+    if dynamic:
+        return f"{_THREADS_SYSTEM}{get_dynamic_creative_cues(is_threads=True)}"
     return _THREADS_SYSTEM
 
 

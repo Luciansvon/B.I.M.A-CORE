@@ -23,6 +23,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 from teams.t7_html_templates import render_template
 import json
+import random
 import re
 
 async def _craft_image_prompt(user_request: str, has_ref: bool = False) -> str:
@@ -41,7 +42,12 @@ async def _craft_image_prompt(user_request: str, has_ref: bool = False) -> str:
     base = (user_request or "").strip()
     if not base:
         return base
-    style_prefix = os.environ.get("IMAGE_GEN_STYLE_PREFIX", "").strip()
+    raw_style_prefix = os.environ.get("IMAGE_GEN_STYLE_PREFIX", "").strip()
+    selected_prefix = ""
+    if raw_style_prefix:
+        prefixes = [p.strip() for p in re.split(r"[|,]", raw_style_prefix) if p.strip()]
+        if prefixes:
+            selected_prefix = random.choice(prefixes)
 
     try:
         resp = await asyncio.to_thread(
@@ -56,8 +62,8 @@ async def _craft_image_prompt(user_request: str, has_ref: bool = False) -> str:
         if not crafted:
             return base
 
-        if is_casual and style_prefix and style_prefix.lower() not in crafted.lower():
-            crafted = f"{style_prefix}, {crafted}"
+        if is_casual and selected_prefix and selected_prefix.lower() not in crafted.lower():
+            crafted = f"{selected_prefix}, {crafted}"
 
         logger.info(f"[IMAGE_GEN] Prompt expanded ({'CASUAL' if is_casual else 'CLEAN'}): '{base[:40]}...' → '{crafted[:60]}...'")
         return crafted

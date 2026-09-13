@@ -286,3 +286,42 @@ async def test_craft_empty_request_passthrough(monkeypatch):
     assert await sn._craft_image_prompt("") == ""
     assert await sn._craft_image_prompt("   ") == ""
     llm.invoke.assert_not_called()
+
+
+def test_dynamic_creative_cues_injection():
+    from core.langgraph_nodes.image_prompt import get_dynamic_creative_cues, build_system_prompt
+
+    cues = get_dynamic_creative_cues()
+    assert "PANDUAN VARIASI DINAMIS" in cues
+    assert "Karakter cahaya:" in cues
+
+    prompt = build_system_prompt(has_ref=False, dynamic=True)
+    assert "PANDUAN VARIASI DINAMIS" in prompt
+
+
+def test_dynamic_creative_cues_produce_variations():
+    from core.langgraph_nodes.image_prompt import get_dynamic_creative_cues
+
+    cues_set = {get_dynamic_creative_cues() for _ in range(20)}
+    # Dari 20 pemanggilan acak, harus menghasilkan setidaknya beberapa variasi berbeda (tidak konstan/hardcoded)
+    assert len(cues_set) > 1
+
+
+@pytest.mark.asyncio
+async def test_craft_multi_style_prefix_random_choice(monkeypatch):
+    import core.langgraph_nodes.seniman as sn
+
+    monkeypatch.setenv("IMAGE_GEN_STYLE_PREFIX", "gaya_satu | gaya_dua | gaya_tiga")
+    monkeypatch.setattr(sn, "seniman_llm", _fake_llm("CASUAL|kopi susu"))
+
+    chosen_prefixes = set()
+    for _ in range(15):
+        out = await sn._craft_image_prompt("kopi")
+        assert any(out.startswith(f"{g}, ") for g in ("gaya_satu", "gaya_dua", "gaya_tiga"))
+        for g in ("gaya_satu", "gaya_dua", "gaya_tiga"):
+            if out.startswith(f"{g}, "):
+                chosen_prefixes.add(g)
+
+    # Memastikan lebih dari 1 pilihan prefix terpilih secara acak
+    assert len(chosen_prefixes) > 1
+
