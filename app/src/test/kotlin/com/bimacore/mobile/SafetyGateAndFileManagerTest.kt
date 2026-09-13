@@ -78,4 +78,24 @@ class SafetyGateAndFileManagerTest {
         assertTrue(moveDest.exists())
         assertFalse("Berkas asal harus sudah berpindah", copyDest.exists())
     }
+
+    @Test
+    fun testScanStorageDetailsAndCacheClearing() {
+        val dummyCache = tempFolder.newFolder("app_cache")
+        val dummyFile = File(dummyCache, "dummy_temp.log")
+        dummyFile.writeText("sample temporary data")
+
+        fileManager.cacheDir = dummyCache
+        val scanResult = fileManager.scanStorageDetails("cache")
+        assertEquals("cache", scanResult.targetFolder)
+        assertEquals(1, scanResult.fileCount)
+        assertTrue(scanResult.totalSizeBytes > 0L)
+        assertTrue(scanResult.sampleFiles.contains("dummy_temp.log"))
+
+        // Bersihkan cache fisik
+        val (success, freed) = fileManager.clearAppCache()
+        assertTrue(success)
+        assertTrue(freed > 0L)
+        assertEquals(0L, fileManager.getAppCacheSize())
+    }
 }

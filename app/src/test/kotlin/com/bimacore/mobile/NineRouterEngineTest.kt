@@ -41,17 +41,11 @@ class NineRouterEngineTest {
     }
 
     @Test
-    fun testRouteIntentDetection() {
-        assertEquals(RouteType.FILE_MANAGER, routerEngine.detectRoute("tolong bersihkan berkas unduhan"))
-        assertEquals(RouteType.FILE_MANAGER, routerEngine.detectRoute("bisa bantu aku bersihin sampah di hp ku?"))
-        assertEquals(RouteType.MEMORY_SYNC, routerEngine.detectRoute("sinkronkan memori ke laptop"))
-        assertEquals(RouteType.SUMMARIZER, routerEngine.detectRoute("catat ide baru untuk proyek meja"))
-        assertEquals(RouteType.WEB_INTEL, routerEngine.detectRoute("cari info berita teknologi terbaru"))
-        assertEquals(RouteType.LIFESTYLE, routerEngine.detectRoute("bagaimana cuaca hari ini"))
-        assertEquals(RouteType.DESIGN_ART, routerEngine.detectRoute("beri ide desain ruang tamu minimalis"))
-        assertEquals(RouteType.LAPTOP_BRIDGE, routerEngine.detectRoute("jalankan koding berat di server laptop"))
-        assertEquals(RouteType.MARKET_PULSE, routerEngine.detectRoute("cek harga saham IDX hari ini"))
-        assertEquals(RouteType.ANISA_MANAGER, routerEngine.detectRoute("halo selamat pagi"))
+    fun testAgentHarnessDirectsConversationsToAnisa() {
+        // Semua pesan umum masuk ke AnisaManagerRoute yang akan mengevaluasi tools
+        assertEquals(RouteType.ANISA_MANAGER, routerEngine.detectRoute("tolong bersihkan berkas unduhan"))
+        assertEquals(RouteType.ANISA_MANAGER, routerEngine.detectRoute("bisa bantu aku bersihin sampah di hp ku?"))
+        assertEquals(RouteType.ANISA_MANAGER, routerEngine.detectRoute("halo Anisa"))
     }
 
     @Test
@@ -63,8 +57,11 @@ class NineRouterEngineTest {
     }
 
     @Test
-    fun testDispatchToFileManagerWithSafetyGate() = runBlocking {
-        val response = routerEngine.dispatch("tolong rapikan berkas di folder Download")
+    fun testDirectExecutionOfFileManager() = runBlocking {
+        val response = routerEngine.executeDirect(
+            RouteType.FILE_MANAGER,
+            RouteRequest(prompt = "tolong rapikan berkas di folder Download")
+        )
         assertEquals(RouteType.FILE_MANAGER, response.routeUsed)
         assertNotNull("Harus menghasilkan kartu konfirmasi berkas", response.actionCard)
         assertEquals("CLEAN", response.actionCard?.actionType)

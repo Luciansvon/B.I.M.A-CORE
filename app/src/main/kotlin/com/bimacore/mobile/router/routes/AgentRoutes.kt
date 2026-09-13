@@ -21,7 +21,11 @@ import java.util.Locale
  * Jalur 1: Anisa Manager — Otak Utama yang terhubung langsung ke 9Router port 20128 di laptop.
  * Menggunakan standar OpenAI API (/v1/chat/completions) dengan model Combowombo.
  */
-class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
+class AnisaManagerRoute(
+    private val memoryStore: MemoryStore,
+    private val fileManager: FileManager,
+    private val syncAdapter: CloudSyncAdapter
+) : AgentRoute {
     override val routeType = RouteType.ANISA_MANAGER
 
     companion object {
@@ -60,33 +64,266 @@ class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
         }
 
         val endpoint = "$baseUrl/chat/completions"
-        return callNineRouterChat(prompt, routerKey, endpoint, nama)
+        return callNineRouterChat(prompt, routerKey, endpoint, baseUrl, nama)
+    }
+
+    private fun getAvailableToolsJson(): JSONArray {
+        return JSONArray().apply {
+            // Tool 1: scan_phone_storage
+            put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", "scan_phone_storage")
+                    put("description", "Pindai direktori penyimpanan Android (cache aplikasi atau folder umum) untuk memeriksa ukuran dan berkas yang tersimpan.")
+                    put("parameters", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("target_folder", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "Jenis folder yang ingin dipindai: cache, downloads, atau internal")
+                                put("enum", JSONArray(listOf("cache", "downloads", "internal")))
+                            })
+                        })
+                        put("required", JSONArray(listOf("target_folder")))
+                    })
+                })
+            })
+
+            // Tool 2: clean_app_cache
+            put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", "clean_app_cache")
+                    put("description", "Hapus berkas-berkas cache sementara dari aplikasi BIMA CORE secara fisik dari penyimpanan HP.")
+                    put("parameters", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("confirm", JSONObject().apply {
+                                put("type", "boolean")
+                                put("description", "Set true jika pengguna meminta atau menyetujui pembersihan cache.")
+                            })
+                        })
+                        put("required", JSONArray(listOf("confirm")))
+                    })
+                })
+            })
+
+            // Tool 3: search_web
+            put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", "search_web")
+                    put("description", "Cari informasi web terbaru atau berita aktual menggunakan 9Router.")
+                    put("parameters", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("query", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "Kata kunci pencarian web.")
+                            })
+                        })
+                        put("required", JSONArray(listOf("query")))
+                    })
+                })
+            })
+
+            // Tool 4: sync_laptop_memory
+            put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", "sync_laptop_memory")
+                    put("description", "Sinkronisasikan ingatan dan fakta lokal HP dengan brankas laptop BIMA CORE.")
+                    put("parameters", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("action", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "Aksi sinkronisasi: sync atau status")
+                                put("enum", JSONArray(listOf("sync", "status")))
+                            })
+                        })
+                        put("required", JSONArray(listOf("action")))
+                    })
+                })
+            })
+
+            // Tool 5: save_note
+            put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", "save_note")
+                    put("description", "Simpan catatan, memo, atau ide pengguna ke memori penyimpanan lokal HP Bima.")
+                    put("parameters", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("key", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "Judul atau kata kunci catatan.")
+                            })
+                            put("content", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "Isi teks catatan yang ingin disimpan.")
+                            })
+                        })
+                        put("required", JSONArray(listOf("key", "content")))
+                    })
+                })
+            })
+        }
+    }
+
+    private suspend fun executeLocalTool(
+        name: String,
+        argumentsJson: String,
+        apiKey: String,
+        baseUrl: String
+    ): Pair<JSONObject, FileActionCard?> {
+        val args = try { JSONObject(argumentsJson) } catch (_: Exception) { JSONObject() }
+        var generatedCard: FileActionCard? = null
+
+        val resultObj = when (name) {
+            "scan_phone_storage" -> {
+                val target = args.optString("target_folder", "cache")
+                val scanResult = fileManager.scanStorageDetails(target)
+                val sizeStr = formatBytes(scanResult.totalSizeBytes)
+
+                if (scanResult.totalSizeBytes > 0L) {
+                    generatedCard = FileActionCard(
+                        title = "Pembersihan Cache Aplikasi",
+                        description = "Hapus berkas sementara ($sizeStr) pada direktori cache.",
+                        filePath = scanResult.scannedPath,
+                        actionType = "CLEAN",
+                        isConfirmed = false
+                    )
+                }
+
+                JSONObject().apply {
+                    put("status", "success")
+                    put("target_folder", scanResult.targetFolder)
+                    put("scanned_path", scanResult.scannedPath)
+                    put("total_size_bytes", scanResult.totalSizeBytes)
+                    put("total_size_human", sizeStr)
+                    put("file_count", scanResult.fileCount)
+                    put("sample_files", JSONArray(scanResult.sampleFiles))
+                    put("note", scanResult.note)
+                }
+            }
+            "clean_app_cache" -> {
+                val confirm = args.optBoolean("confirm", false)
+                if (confirm) {
+                    val (success, freed) = fileManager.clearAppCache()
+                    val sizeStr = formatBytes(freed)
+                    val remainingBytes = fileManager.getAppCacheSize()
+                    JSONObject().apply {
+                        put("status", if (success) "success" else "failed")
+                        put("freed_bytes", freed)
+                        put("freed_human", sizeStr)
+                        put("remaining_cache_bytes", remainingBytes)
+                        put("remaining_cache_human", formatBytes(remainingBytes))
+                        put("message", "Pembersihan berkas cache aplikasi berhasil dieksekusi secara fisik.")
+                    }
+                } else {
+                    JSONObject().apply {
+                        put("status", "pending_confirmation")
+                        put("message", "Pembersihan memerlukan konfirmasi dari Bima sebelum dihapus.")
+                    }
+                }
+            }
+            "search_web" -> {
+                val query = args.optString("query", "")
+                val searchResult = executeWebSearch(query, apiKey, baseUrl)
+                JSONObject().apply {
+                    put("status", "success")
+                    put("query", query)
+                    put("search_result", searchResult)
+                }
+            }
+            "sync_laptop_memory" -> {
+                val syncResult = syncAdapter.syncWithLaptopVault()
+                JSONObject().apply {
+                    put("status", "success")
+                    put("synced_items", syncResult.syncedFactsCount)
+                    put("message", syncResult.message)
+                    put("facts_summary", memoryStore.getFullContextSummary())
+                }
+            }
+            "save_note" -> {
+                val key = args.optString("key", "catatan_${System.currentTimeMillis() % 1000}")
+                val content = args.optString("content", "")
+                memoryStore.setFact(key, content)
+                JSONObject().apply {
+                    put("status", "success")
+                    put("key", key)
+                    put("content", content)
+                    put("message", "Catatan berhasil disimpan di memori HP.")
+                }
+            }
+            else -> {
+                JSONObject().apply {
+                    put("status", "unknown_tool")
+                    put("message", "Tool '$name' tidak dikenali oleh sistem HP.")
+                }
+            }
+        }
+        return Pair(resultObj, generatedCard)
+    }
+
+    private suspend fun executeWebSearch(query: String, apiKey: String, baseUrl: String): String = withContext(Dispatchers.IO) {
+        try {
+            val searchEndpoint = "$baseUrl/search"
+            val url = URL(searchEndpoint)
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 20_000
+                readTimeout = 20_000
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $apiKey")
+                doOutput = true
+            }
+            val body = JSONObject().apply {
+                put("model", "ag")
+                put("query", query)
+                put("search_type", "web")
+                put("max_results", 5)
+            }.toString()
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+            if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+            } else {
+                "Pencarian web tidak mengembalikan hasil (HTTP ${conn.responseCode})."
+            }
+        } catch (e: Exception) {
+            "Gagal melakukan pencarian web: ${e.message}"
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes <= 0L -> "0 B"
+            bytes < 1024L -> "$bytes B"
+            bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
+            else -> String.format(Locale.US, "%.1f MB", bytes.toDouble() / (1024.0 * 1024.0))
+        }
     }
 
     private suspend fun callNineRouterChat(
         userPrompt: String,
         apiKey: String,
         endpointUrl: String,
+        baseUrl: String,
         nama: String
     ): RouteResponse = withContext(Dispatchers.IO) {
         try {
-            val url = URL(endpointUrl)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = TIMEOUT_MS
-                readTimeout = TIMEOUT_MS
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer $apiKey")
-                doOutput = true
-            }
-
             val systemInstruction = """
                 Kamu adalah Anisa, asisten AI pribadi yang beroperasi langsung di dalam aplikasi Android BIMA CORE (Agent Harness) milik Bima.
                 Prinsip Utama:
-                1. DILARANG memanggil 'Mas Bima', selalu panggil 'Bima'.
-                2. Bicara santai, ringkas, bersahabat, dan solutif.
+                1. DILARANG memanggil 'Mas Bima', selalu panggil 'Bima' atau gunakan bahasa santai/akrab.
+                2. Bicara santai, ringkas, bersahabat, jujur, dan solutif.
                 3. Sadar lingkungan: kamu berjalan di smartphone Android miliknya.
-                4. Kejujuran mutlak: jangan pernah berpura-pura mengeksekusi sistem HP jika belum memiliki izinnya. Jelaskan fakta apa adanya.
+                4. Kejujuran mutlak: DILARANG mengarang status berkas, sampah, atau sistem HP jika belum menjalankan tool yang sesuai.
+                5. Gunakan tool yang tersedia untuk berinteraksi fisik dengan HP (seperti scan_phone_storage, clean_app_cache, search_web, sync_laptop_memory, save_note).
+                6. Jika Bima bertanya tentang file, sampah, atau minta membersihkan, panggil tool terkait terlebih dahulu, lalu simpulkan berdasarkan data nyata yang diperoleh.
+                7. Jelaskan fakta pembatasan sandbox Android secara transparan: aplikasi hanya bisa mengakses dan membersihkan cache miliknya sendiri secara langsung.
             """.trimIndent()
 
             val messages = JSONArray().apply {
@@ -100,46 +337,111 @@ class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
                 })
             }
 
-            val body = JSONObject().apply {
-                put("model", DEFAULT_MODEL)
-                put("messages", messages)
-                put("stream", false)
-            }.toString()
+            val tools = getAvailableToolsJson()
+            var activeRouteType = routeType
+            var finalCard: FileActionCard? = null
 
-            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+            // Multi-turn loop (max 5 iterations for tool calling)
+            for (turn in 0 until 5) {
+                val url = URL(endpointUrl)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = TIMEOUT_MS
+                    readTimeout = TIMEOUT_MS
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                    doOutput = true
+                }
 
-            val responseCode = conn.responseCode
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                val responseText = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                val json = JSONObject(responseText)
-                val choices = json.optJSONArray("choices")
-                val content = choices?.optJSONObject(0)?.optJSONObject("message")?.optString("content", "")?.trim() ?: ""
+                val body = JSONObject().apply {
+                    put("model", DEFAULT_MODEL)
+                    put("messages", messages)
+                    put("tools", tools)
+                    put("stream", false)
+                }.toString()
 
-                if (content.isNotEmpty()) {
-                    RouteResponse(textResponse = content, routeUsed = routeType)
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+
+                val responseCode = conn.responseCode
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    val responseText = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+                    val json = JSONObject(responseText)
+                    val choice = json.optJSONArray("choices")?.optJSONObject(0)
+                    val messageObj = choice?.optJSONObject("message")
+
+                    if (messageObj == null) {
+                        return@withContext RouteResponse(
+                            textResponse = "❓ Server 9Router merespons tanpa pesan yang valid.",
+                            routeUsed = activeRouteType,
+                            isSuccess = false
+                        )
+                    }
+
+                    val toolCalls = messageObj.optJSONArray("tool_calls")
+                    if (toolCalls != null && toolCalls.length() > 0) {
+                        // AI memutuskan untuk memanggil tool fisik!
+                        messages.put(messageObj) // Tambahkan assistant message yang memanggil tool
+
+                        for (i in 0 until toolCalls.length()) {
+                            val toolCall = toolCalls.getJSONObject(i)
+                            val callId = toolCall.getString("id")
+                            val fn = toolCall.getJSONObject("function")
+                            val fnName = fn.getString("name")
+                            val fnArgs = fn.optString("arguments", "{}")
+
+                            // Update active route sesuai tool yang dipicu
+                            when (fnName) {
+                                "scan_phone_storage", "clean_app_cache" -> activeRouteType = RouteType.FILE_MANAGER
+                                "search_web" -> activeRouteType = RouteType.WEB_INTEL
+                                "sync_laptop_memory" -> activeRouteType = RouteType.MEMORY_SYNC
+                                "save_note" -> activeRouteType = RouteType.SUMMARIZER
+                            }
+
+                            val (toolResultJson, card) = executeLocalTool(fnName, fnArgs, apiKey, baseUrl)
+                            if (card != null) {
+                                finalCard = card
+                            }
+
+                            // Tambahkan respons tool ke messages
+                            messages.put(JSONObject().apply {
+                                put("role", "tool")
+                                put("tool_call_id", callId)
+                                put("name", fnName)
+                                put("content", toolResultJson.toString())
+                            })
+                        }
+                        // Lanjutkan iterasi loop ke putaran berikutnya agar LLM membaca hasil tool
+                        continue
+                    } else {
+                        // LLM memberikan jawaban akhir berupa teks
+                        val content = messageObj.optString("content", "").trim()
+                        return@withContext RouteResponse(
+                            textResponse = if (content.isNotEmpty()) content else "✨ Selesai dikerjakan.",
+                            routeUsed = activeRouteType,
+                            actionCard = finalCard
+                        )
+                    }
+                } else if (responseCode == 401) {
+                    return@withContext RouteResponse(
+                        textResponse = "🔑 Kunci API 9-Router salah atau tidak valid. Periksa di menu samping → 'Kunci API', Bima.",
+                        routeUsed = routeType,
+                        isSuccess = false
+                    )
                 } else {
-                    RouteResponse(
-                        textResponse = "❓ Server 9Router menjawab tapi pesan kosong. Coba ulangi lagi ya Bima.",
+                    val errText = conn.errorStream?.bufferedReader()?.readText() ?: "HTTP $responseCode"
+                    return@withContext RouteResponse(
+                        textResponse = "❌ Server 9Router merespons HTTP $responseCode: ${errText.take(150)}",
                         routeUsed = routeType,
                         isSuccess = false
                     )
                 }
-            } else if (responseCode == 401) {
-                RouteResponse(
-                    textResponse = "🔑 Kunci API 9-Router salah atau tidak valid. " +
-                        "Periksa di menu samping → 'Kunci API', Bima.",
-                    routeUsed = routeType,
-                    isSuccess = false
-                )
-            } else {
-                val errText = conn.errorStream?.bufferedReader()?.readText() ?: "HTTP $responseCode"
-                RouteResponse(
-                    textResponse = "❌ Server 9Router merespons HTTP $responseCode. " +
-                        "Detail: ${errText.take(150)}",
-                    routeUsed = routeType,
-                    isSuccess = false
-                )
             }
+
+            RouteResponse(
+                textResponse = "⚠️ Mencapai batas putaran eksekusi alat tanpa respons akhir.",
+                routeUsed = activeRouteType,
+                actionCard = finalCard
+            )
         } catch (e: java.net.ConnectException) {
             RouteResponse(
                 textResponse = "🔌 Tidak bisa tersambung ke 9Router ($endpointUrl). " +
@@ -150,7 +452,7 @@ class AnisaManagerRoute(private val memoryStore: MemoryStore) : AgentRoute {
             )
         } catch (e: Exception) {
             RouteResponse(
-                textResponse = "❌ Kendala jaringan saat menghubungi 9Router: ${e.message?.take(100)}",
+                textResponse = "❌ Kendala saat menghubungi 9Router: ${e.message?.take(100)}",
                 routeUsed = routeType,
                 isSuccess = false
             )

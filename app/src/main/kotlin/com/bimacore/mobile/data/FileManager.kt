@@ -4,6 +4,15 @@ import com.bimacore.mobile.model.FileActionCard
 import com.bimacore.mobile.model.FileItem
 import java.io.File
 
+data class StorageScanResult(
+    val targetFolder: String,
+    val scannedPath: String,
+    val totalSizeBytes: Long,
+    val fileCount: Int,
+    val sampleFiles: List<String>,
+    val note: String
+)
+
 /**
  * Pengelola Berkas Android yang aman dan ramah pengguna.
  * Bekerja sama dengan UserSafetyGate untuk operasi berkas.
@@ -13,6 +22,62 @@ class FileManager(
     var cacheDir: File? = null,
     var externalCacheDir: File? = null
 ) {
+
+    fun scanStorageDetails(targetFolder: String = "cache"): StorageScanResult {
+        return when (targetFolder.lowercase()) {
+            "cache" -> {
+                val path = cacheDir?.absolutePath ?: "Internal Cache"
+                var totalBytes = 0L
+                val fileNames = mutableListOf<String>()
+                var count = 0
+
+                val collectFiles: (File?) -> Unit = { dir ->
+                    dir?.listFiles()?.forEach { file ->
+                        count++
+                        if (fileNames.size < 5) fileNames.add(file.name)
+                        totalBytes += if (file.isDirectory) getFolderSize(file) else file.length()
+                    }
+                }
+
+                collectFiles(cacheDir)
+                collectFiles(externalCacheDir)
+
+                StorageScanResult(
+                    targetFolder = "cache",
+                    scannedPath = path,
+                    totalSizeBytes = totalBytes,
+                    fileCount = count,
+                    sampleFiles = fileNames,
+                    note = "Aplikasi berjalan dalam sandbox Android. Berkas cache aplikasi BIMA CORE dapat dipindai dan dibersihkan secara langsung. Akses ke cache aplikasi lain dilindungi oleh sistem keamanan Android."
+                )
+            }
+            "downloads" -> {
+                val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                if (downloadDir != null && downloadDir.exists() && downloadDir.canRead()) {
+                    val files = downloadDir.listFiles() ?: emptyArray()
+                    val names = files.take(5).map { it.name }
+                    StorageScanResult(
+                        targetFolder = "downloads",
+                        scannedPath = downloadDir.absolutePath,
+                        totalSizeBytes = getFolderSize(downloadDir),
+                        fileCount = files.size,
+                        sampleFiles = names,
+                        note = "Folder Download umum berhasil diperiksa."
+                    )
+                } else {
+                    StorageScanResult(
+                        targetFolder = "downloads",
+                        scannedPath = downloadDir?.absolutePath ?: "/sdcard/Download",
+                        totalSizeBytes = 0L,
+                        fileCount = 0,
+                        sampleFiles = emptyList(),
+                        note = "Folder Download umum memerlukan izin akses penyimpanan perangkat (MANAGE_EXTERNAL_STORAGE) untuk membaca seluruh berkas bersama."
+                    )
+                }
+            }
+            else -> scanStorageDetails("cache")
+        }
+    }
 
     fun getFolderSize(dir: File?): Long {
         if (dir == null || !dir.exists()) return 0L
