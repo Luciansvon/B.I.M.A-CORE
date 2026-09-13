@@ -437,22 +437,26 @@ async function sendToAnisa(message, senderId, attachmentPaths = []) {
 // DOWNLOAD ATTACHMENT DARI WA
 // ============================================================
 async function downloadAttachment(msg) {
-    try {
-        if (!msg.hasMedia) return null;
-        const media = await msg.downloadMedia();
-        if (!media) return null;
+    if (!msg.hasMedia) return null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const media = await msg.downloadMedia();
+            if (media && media.data) {
+                const ext = mime.extension(media.mimetype) || 'bin';
+                const filename = `wa_${Math.random().toString(16).substring(2, 10)}.${ext}`;
+                const filepath = path.join(CONFIG.outputDir, filename);
+                fs.writeFileSync(filepath, Buffer.from(media.data, 'base64'));
 
-        const ext = mime.extension(media.mimetype) || 'bin';
-        const filename = `wa_${Math.random().toString(16).substring(2, 10)}.${ext}`;
-        const filepath = path.join(CONFIG.outputDir, filename);
-        fs.writeFileSync(filepath, Buffer.from(media.data, 'base64'));
-
-        log('INFO', `Attachment: ${filename} (${fs.statSync(filepath).size} bytes)`);
-        return filepath;
-    } catch (error) {
-        log('ERROR', `Gagal download attachment: ${error.message}`);
-        return null;
+                log('INFO', `Attachment: ${filename} (${fs.statSync(filepath).size} bytes)`);
+                return filepath;
+            }
+        } catch (error) {
+            log('WARN', `Percobaan ${attempt} download attachment gagal: ${error.message || error}`);
+        }
+        if (attempt < 3) await new Promise(r => setTimeout(r, 1000));
     }
+    log('ERROR', 'Gagal download attachment setelah 3 percobaan');
+    return null;
 }
 
 // ============================================================
@@ -560,8 +564,8 @@ async function handleMessage(msg) {
             const contact = await msg.getContact();
             senderPhone = contact?.number || '';
         } catch {}
-        const rawId = msg.from.replace('@c.us', '').replace('@lid', '');
-        const senderId = senderPhone || rawId;
+        const rawId = (msg.from || '').replace('@c.us', '').replace('@lid', '');
+        const senderId = senderPhone || rawId || (msg.author ? msg.author.replace('@c.us', '') : 'wa_user');
 
         const effOwners = getEffectiveOwners();
         if (effOwners.length &&
