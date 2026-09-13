@@ -21,7 +21,11 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
-const { shouldHandleMessage } = require('./message_filter');
+const {
+    shouldHandleMessage,
+    resolveMessageContext,
+    resolveReplyChatId,
+} = require('./message_filter');
 const {
     PROCESSING_MESSAGE,
     VOICE_READY_MESSAGE,
@@ -544,6 +548,7 @@ client.on('disconnected', (reason) => {
 // ============================================================
 async function handleMessage(msg) {
     let progressMessage = null;
+    let sendMsg = null;
     try {
         const text = msg.body?.trim() || '';
         const lower = text.toLowerCase();
@@ -555,8 +560,27 @@ async function handleMessage(msg) {
         // tidak bisa masuk ke catch lalu memicu recursive error reply.
         if (!shouldHandleMessage(msg, prefix, sttActive)) return;
 
-        const chat = await msg.getChat();
-        if (chat.isGroup) return;
+        const { chatId, isGroup, chat } = await resolveMessageContext(
+            msg,
+            error => log('WARN', `Chat context fallback: ${error.message || error}`),
+        );
+        if (!chatId || isGroup || chat?.isGroup) return;
+
+        const replyChatId = await resolveReplyChatId(
+            client,
+            chatId,
+            error => log('WARN', `Reply target fallback: ${error.message || error}`),
+        );
+        sendMsg = async (content, options = {}) => {
+            if (chat?.sendMessage) {
+                try {
+                    return await chat.sendMessage(content, options);
+                } catch (err) {
+                    log('WARN', `chat.sendMessage fallback ke client: ${err.message || err}`);
+                }
+            }
+            return await client.sendMessage(replyChatId, content, options);
+        };
 
         // Resolve sender ke nomor telepon (handle @lid hash WhatsApp)
         let senderPhone = '';
@@ -564,13 +588,18 @@ async function handleMessage(msg) {
             const contact = await msg.getContact();
             senderPhone = contact?.number || '';
         } catch {}
+        const replyPhone = (typeof replyChatId === 'string' && replyChatId.endsWith('@c.us'))
+            ? replyChatId.replace('@c.us', '')
+            : '';
+        senderPhone = senderPhone || replyPhone;
         const rawId = (msg.from || '').replace('@c.us', '').replace('@lid', '');
         const senderId = senderPhone || rawId || (msg.author ? msg.author.replace('@c.us', '') : 'wa_user');
 
         const effOwners = getEffectiveOwners();
         if (effOwners.length &&
             !effOwners.includes(senderPhone) &&
-            !effOwners.includes(rawId)) return;
+            !effOwners.includes(rawId) &&
+            !effOwners.includes(replyPhone)) return;
 
         // Voice note (ptt) bypass prefix HANYA kalau STT armed (user text "/bot stt" 60s terakhir).
         // Default: voice note tanpa armed = silent ignore (gak spam transcribe semua voice).
@@ -661,7 +690,7 @@ async function handleMessage(msg) {
         if (!body && !msg.hasMedia) return;
         if (isRateLimited(senderId)) return;
 
-        await chat.sendStateTyping();
+        if (chat?.sendStateTyping) await chat.sendStateTyping().catch(() => {});
 
         // Download attachment
         const attachmentPaths = [];
@@ -681,11 +710,20 @@ async function handleMessage(msg) {
 
         log('INFO', `→ Anisa: "${perintah.substring(0, 80) || '[voice note → STT]'}"`);
 
-        progressMessage = await msg.reply(PROCESSING_MESSAGE);
+        try {
+            progressMessage = await msg.reply(PROCESSING_MESSAGE);
+        } catch (pmError) {
+            log('WARN', `Gagal kirim progress message awal via reply: ${pmError.message || pmError}`);
+            try {
+                progressMessage = await sendMsg(PROCESSING_MESSAGE);
+            } catch (fallbackError) {
+                log('WARN', `Gagal kirim progress message awal via sendMsg: ${fallbackError.message || fallbackError}`);
+            }
+        }
 
         // Keep "typing..." indicator hidup selama LangGraph proses (re-trigger tiap 8s)
         const typingInterval = setInterval(() => {
-            chat.sendStateTyping().catch(() => {});
+            if (chat?.sendStateTyping) chat.sendStateTyping().catch(() => {});
         }, 8000);
 
         let result;
@@ -693,7 +731,7 @@ async function handleMessage(msg) {
             result = await sendToAnisa(perintah, senderId, attachmentPaths);
         } finally {
             clearInterval(typingInterval);
-            await chat.clearState().catch(() => {});
+            if (chat?.clearState) await chat.clearState().catch(() => {});
         }
 
         if (!result?.response) {
@@ -718,7 +756,7 @@ async function handleMessage(msg) {
             await updateProgressMessage(progressMessage, msg, chunks[0]);
             for (let i = 1; i < chunks.length; i++) {
                 await new Promise(r => setTimeout(r, 500));
-                await chat.sendMessage(chunks[i]);
+                await sendMsg(chunks[i]);
             }
         } else {
             await updateProgressMessage(progressMessage, msg, VOICE_READY_MESSAGE);
@@ -729,7 +767,7 @@ async function handleMessage(msg) {
             try {
                 const voiceMedia = MessageMedia.fromFilePath(voiceFile);
                 await new Promise(r => setTimeout(r, 300));
-                await chat.sendMessage(voiceMedia, { sendAudioAsVoice: true });
+                await sendMsg(voiceMedia, { sendAudioAsVoice: true });
             } catch (e) { log('WARN', `Gagal kirim voice note: ${e.message}`); }
         }
 
@@ -740,7 +778,7 @@ async function handleMessage(msg) {
                     if (fs.existsSync(fp)) {
                         const media = MessageMedia.fromFilePath(fp);
                         await new Promise(r => setTimeout(r, 300));
-                        await chat.sendMessage(media, { caption: `📎 ${path.basename(fp)}` });
+                        await sendMsg(media, { caption: `📎 ${path.basename(fp)}` });
                     }
                 } catch (e) { log('WARN', `Gagal kirim file: ${e.message}`); }
             }
@@ -757,6 +795,10 @@ async function handleMessage(msg) {
                     msg,
                     publicError,
                 );
+            } else if (typeof sendMsg === 'function') {
+                await sendMsg(publicError).catch(async () => {
+                    await msg.reply(publicError);
+                });
             } else {
                 await msg.reply(publicError);
             }
