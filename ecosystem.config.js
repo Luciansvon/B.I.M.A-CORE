@@ -82,7 +82,7 @@ module.exports = {
     {
       name: "9router-tunnel",
       script: "cloudflared",
-      args: `tunnel --config ${NULL_DEVICE} --protocol http2 --url http://127.0.0.1:20128`,
+      args: `tunnel run --protocol http2 --url http://127.0.0.1:20128 bima-untuk-anisa`,
       cwd: PROJECT_ROOT,
       watch: false,
       log_date_format: "YYYY-MM-DD HH:mm:ss",
